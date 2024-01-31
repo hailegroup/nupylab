@@ -12,6 +12,7 @@ import minimalmodbus
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
+
 class Eurotherm2000(minimalmodbus.Instrument):
     """Instrument class for Eurotherm 2000 series process controller.
 
@@ -193,7 +194,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
         def __init__(self, num_setpoints, read_float, write_float):
             """Create empty dictionary with access to read_float and
             write_float methods.
-            
+
             Args:
                 num_setpoints (int)  number of setpoints supported by
                     Eurotherm
@@ -244,14 +245,16 @@ class Eurotherm2000(minimalmodbus.Instrument):
 
             for seg in range(num_segments+1):
                 segment_offset = program_offset + seg*8
-                self.segments.append(self.Segment(segment_offset, read_register,
-                                                  write_register, read_float,
+                self.segments.append(self.Segment(segment_offset,
+                                                  read_register,
+                                                  write_register,
+                                                  read_float,
                                                   write_float)
                                      )
 
-
         class Segment(dict):
-            """A dictionary-like class for individual segments within a program.
+            """A dictionary-like class for individual segments within a
+            program.
 
             Segment values in key-value pairs are modified to behave similarly
             to other Eurotherm Python properties."""
@@ -283,32 +286,32 @@ class Eurotherm2000(minimalmodbus.Instrument):
                 """Translate to register values if necessary, then write
                 register."""
 
-                if self.offset==8192:
+                if self.offset == 8192:
                     log.warning("Program 0 is read-only.")
                     return
 
                 if self.registers is None:
                     seg_type_val = self.read_register(self.offset)
                     self.registers = SEGMENTS_LIST[seg_type_val]
-                    self.update({k:None for k in self.registers.keys()})
+                    self.update({k: None for k in self.registers.keys()})
 
                 if key not in self.registers:
                     log.warning("Parameter not in current segment type")
                     return
 
-                if val==self[key]: #ignore if value is unchanged
+                if val == self[key]:  # ignore if value is unchanged
                     return
 
-                if key=='Segment Type':
+                if key == 'Segment Type':
                     val = reverse_dict(SEGMENT_TYPE)[val]
-                    #Get new register offsets on type change and update values
+                    # Get new register offsets on type change and update values
                     self.registers = SEGMENTS_LIST[val]
                     self.clear()
-                    self.update({k:None for k in self.registers.keys()})
+                    self.update({k: None for k in self.registers.keys()})
                     return
-                
+
                 self.update({key, val})
-                
+
                 if key in FLOAT_PARAMETERS:
                     self.write_float(self.registers[key] + self.offset, val)
 
@@ -322,12 +325,13 @@ class Eurotherm2000(minimalmodbus.Instrument):
                     self.write_register(self.registers[key] + self.offset, val)
 
             def __getitem__(self, key):
-                """Read appropriate register and translate value if necessary."""
+                """Read appropriate register and translate value if
+                necessary."""
 
                 if self.registers is None:
                     seg_type_val = self.read_register(self.offset)
                     self.registers = SEGMENTS_LIST[seg_type_val]
-                    self.update({k:None for k in self.registers.keys()})
+                    self.update({k: None for k in self.registers.keys()})
 
                 if key not in self.registers:
                     log.warning("Parameter not in current segment type")
@@ -342,7 +346,8 @@ class Eurotherm2000(minimalmodbus.Instrument):
                         key_dict = word_list[0] + '_' + word_list[1]
                         val = globals()[key_dict][val]
 
-                self.update({key, val}) #So items() method behaves as expected
+                # So items() method behaves as expected
+                self.update({key, val})
                 return val
 
 
@@ -350,35 +355,36 @@ def reverse_dict(dict_):
     """Reverse the key/value status of a dict"""
     return {v: k for k, v in dict_.items()}
 
+
 SETPOINT_REGISTERS = (24, 25, 164, 165, 166, 167, 168, 169, 170,
                       171, 172, 173, 174, 175, 176, 177)
 
-GENERAL_REGISTERS = {"Holdback Type" : 0,
-                      "Holdback Value" : 1,
-                      "Ramp Units" : 2,
-                      "Dwell Units" : 3,
-                      "Program Cycles": 4}
+GENERAL_REGISTERS = {"Holdback Type": 0,
+                     "Holdback Value": 1,
+                     "Ramp Units": 2,
+                     "Dwell Units": 3,
+                     "Program Cycles": 4}
 
 END_REGISTERS = {"Segment Type": 0,
-                 "End Power" : 1,
-                 "End Type" : 3}
+                 "End Power": 1,
+                 "End Type": 3}
 
 RAMP_RATE_REGISTERS = {"Segment Type": 0,
-                       "Target Setpoint" : 1,
-                       "Rate" : 2}
+                       "Target Setpoint": 1,
+                       "Rate": 2}
 
 RAMP_TIME_REGISTERS = {"Segment Type": 0,
-                       "Target Setpoint" : 1,
-                       "Duration" : 2}
+                       "Target Setpoint": 1,
+                       "Duration": 2}
 
 DWELL_REGISTERS = {"Segment Type": 0,
-                   "Duration" : 1}
+                   "Duration": 1}
 
 STEP_REGISTERS = {"Segment Type": 0,
-                  "Target Setpoint" : 1}
+                  "Target Setpoint": 1}
 
 CALL_REGISTERS = {"Segment Type": 0,
-                  "Program Number" : 3}
+                  "Program Number": 3}
 
 HOLDBACK_TYPE = {0: 'None',
                  1: 'Low',

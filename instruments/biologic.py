@@ -84,31 +84,30 @@ except ImportError:
 # double    | c_double
 
 
-### Named tuples
+# Named tuples
 
-#:A named tuple used to defined a return data field for a technique
+# A named tuple used to defined a return data field for a technique
 DataField = namedtuple('DataField', ['name', 'type'])
-#:The TechniqueArgument instance, that are used as args arguments, are named
-#:tuples with the following fields (in order):
-#:
-#: * label (str): the argument label mentioned in the :ref:`specification
-#:   <specification>`
-#: * type (str): the type used in the :ref:`specification <specification>`
-#:   ('bool', 'single' and 'integer') and possibly wrap ``[]`` around to
-#:   indicate an array e.g. ``[bool]```
-#: * value: The value to be passed, will usually be forwarded from ``__init__``
-#:   args
-#: * check (str): The bounds check to perform (if any), possible values are
-#:   '>=', 'in' and 'in_float_range'
-#: * check_argument: The argument(s) for the bounds check. For 'in' should be a
-#:   float or int, for 'in' should be a sequence and for 'in_float_range'
-#:   should be a tuple of two floats
+# The TechniqueArgument instance, that are used as args arguments, are named
+# tuples with the following fields (in order):
+#
+# * label (str): the argument label mentioned in the :ref:`specification
+#   <specification>`
+# * type (str): the type used in the :ref:`specification <specification>`
+#   ('bool', 'single' and 'integer') and possibly wrap ``[]`` around to
+#   indicate an array e.g. ``[bool]```
+# * value: The value to be passed, will usually be forwarded from ``__init__``
+#   args
+# * check (str): The bounds check to perform (if any), possible values are
+#   '>=', 'in' and 'in_float_range'
+# * check_argument: The argument(s) for the bounds check. For 'in' should be a
+#   float or int, for 'in' should be a sequence and for 'in_float_range'
+#   should be a tuple of two floats
 TechniqueArgument = namedtuple(
     'TechniqueArgument', ['label', 'type', 'value', 'check', 'check_argument']
 )
 
 
-########## Instrument classes
 class GeneralPotentiostat:
     """General driver for the potentiostats that can be controlled by the
     EC-lib DLL
@@ -147,7 +146,8 @@ class GeneralPotentiostat:
         elif type_ in VMP3SERIES:
             self.series = 'vmp3'
         else:
-            message = 'Unrecognized device type: must be in SP300 or VMP3 series.'
+            message = ('Unrecognized device type: must be in SP300 or VMP3 '
+                       'series.')
             raise ECLibCustomException(-8000, message)
 
         self.address = address
@@ -256,10 +256,11 @@ class GeneralPotentiostat:
         )
         self.check_eclib_return_code(ret)
         if DEVICE_CODES[device_info.DeviceCode] != self._type:
-            message = (f"The device type ({DEVICE_CODES[device_info.DeviceCode]}) "
-                       f"returned from the device on connect does not match the "
-                       f"device type of the class ({self._type})."
-            )
+            message = (f"The device type "
+                       f"({DEVICE_CODES[device_info.DeviceCode]}) "
+                       f"returned from the device on connect does not match "
+                       f"the device type of the class ({self._type})."
+                       )
             raise ECLibCustomException(-9000, message)
         self._device_info = device_info
         return self.device_info
@@ -375,7 +376,8 @@ class GeneralPotentiostat:
         """ Return a message from the firmware of a channel """
         size = c_uint32(255)
         message = create_string_buffer(255)
-        ret = self._eclib.BL_GetMessage(self._id, channel, byref(message), byref(size))
+        ret = self._eclib.BL_GetMessage(self._id, channel, byref(message),
+                                        byref(size))
         self.check_eclib_return_code(ret)
         return message.value
 
@@ -396,7 +398,8 @@ class GeneralPotentiostat:
             filename, ext = os.path.splitext(technique.technique_filename)
             c_technique_file = create_string_buffer(filename + '4' + ext)
         else:
-            c_technique_file = create_string_buffer(technique.technique_filename)
+            c_technique_file = create_string_buffer(
+                technique.technique_filename)
 
         # Init TECCParams
         c_tecc_params = TECCParams()
@@ -493,7 +496,7 @@ class GeneralPotentiostat:
                 16), (0=False and 1=True), that indicates whether the channel
                 will be started. NOTE: The length of the list must correspond
                 to the number of channels supported by the equipment, not the
-                number of channels installed. In most cases it will be 1, 2, or 
+                number of channels installed. In most cases it will be 1, 2, or
                 16.
 
         Returns:
@@ -510,7 +513,7 @@ class GeneralPotentiostat:
             c_channels[i] = channel
         p_channels = cast(c_channels, POINTER(c_uint8))
         ret = self._eclib.BL_StartChannels(self._id, p_channels,
-                                          p_results, len(channels))
+                                           p_results, len(channels))
         self.check_eclib_return_code(ret)
         return list(c_results)
 
@@ -531,7 +534,7 @@ class GeneralPotentiostat:
                 16), (0=False and 1=True), that indicates whether the channel
                 will be stopped. NOTE: The length of the list must correspond
                 to the number of channels supported by the equipment, not the
-                number of channels installed. In most cases it will be 1, 2, or 
+                number of channels installed. In most cases it will be 1, 2, or
                 16.
 
         Returns:
@@ -563,7 +566,8 @@ class GeneralPotentiostat:
             dict: A dict of current values information
         """
         current_values = CurrentValues()
-        ret = self._eclib.BL_GetCurrentValues(self._id, channel, byref(current_values))
+        ret = self._eclib.BL_GetCurrentValues(self._id, channel,
+                                              byref(current_values))
         self.check_eclib_return_code(ret)
 
         # Convert the struct to a dict and translate a few values
@@ -628,7 +632,8 @@ class GeneralPotentiostat:
 
         """
         c_out_float = c_float()
-        ret = self._eclib.BL_ConvertNumericIntoSingle(numeric, byref(c_out_float))
+        ret = self._eclib.BL_ConvertNumericIntoSingle(numeric,
+                                                      byref(c_out_float))
         self.check_eclib_return_code(ret)
         return c_out_float.value
 
@@ -639,7 +644,7 @@ class GeneralPotentiostat:
             raise ECLibError(message, error_code)
 
 
-########## Auxillary classes
+# Auxillary classes
 class KBIOData:
     """Class used to represent data obtained with a get_data call
 
@@ -659,7 +664,8 @@ class KBIOData:
 
     """
 
-    def __init__(self, c_databuffer, c_data_infos, c_current_values, instrument):
+    def __init__(self, c_databuffer, c_data_infos, c_current_values,
+                 instrument):
         """Initialize the KBIOData object
 
         Args:
@@ -704,9 +710,9 @@ class KBIOData:
         for data_field in self.data_fields:
             setattr(self, data_field.name, [])
 
-        #Process data fields either have `t`  or `t_high` and `t_low`
+        # Process data fields either have `t`  or `t_high` and `t_low`
         if not hasattr(self, 't'):
-            self.time=[]
+            self.time = []
 
         # Parse the data
         self._parse_data(c_databuffer, c_current_values.TimeBase, instrument)
@@ -763,9 +769,8 @@ class KBIOData:
         # amount of colums. Get the index of the first item of each point by
         # getting the range from 0 til n_point * n_columns in jumps of
         # n_columns
-        for index in range(
-            0, self.number_of_points * self.number_of_columns, self.number_of_columns
-        ):
+        for index in range(0, self.number_of_points * self.number_of_columns,
+                           self.number_of_columns):
             # If there is a special time variable
             if hasattr(self, 'time'):
                 # Calculate the time
@@ -788,7 +793,8 @@ class KBIOData:
 
             # Get remaining fields as defined in data fields
             for field_number, data_field in enumerate(self.data_fields):
-                value = c_databuffer[index + time_variable_offset + field_number]
+                value = c_databuffer[index +
+                                     time_variable_offset + field_number]
                 # If the type is supposed to be float, convert the numeric to
                 # float using the convinience function
                 if data_field.type is c_float:
@@ -798,7 +804,8 @@ class KBIOData:
                 getattr(self, data_field.name).append(value)
 
         # Check that the rest of the buffer is blank
-        for index in range(self.number_of_points * self.number_of_columns, 1000):
+        for index in range(self.number_of_points * self.number_of_columns,
+                           1000):
             assert c_databuffer[index] == 0
 
     def __getattr__(self, key):
@@ -1091,7 +1098,7 @@ class OCV(Technique):
         duration=10.0,
         record_every_dE=0.01,
         record_every_dt=0.1,
-        E_range='KBIO_ERANGE_AUTO',
+        E_range='KBIO_ERANGE_AUTO'
     ):
         """Initialize the OCV technique
 
@@ -1104,9 +1111,12 @@ class OCV(Technique):
         """
         args = (
             TechniqueArgument('Rest_time_T', 'single', duration, '>=', 0),
-            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('Record_every_dE', 'single',
+                              record_every_dE, '>=', 0),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
         )
         super().__init__(args, 'ocv.ecc')
 
@@ -1124,7 +1134,7 @@ class CV(Technique):
     * cycle (int)
     """
 
-    #:Data fields definition
+    # :Data fields definition
     data_fields = [{
         'common': [
             DataField('Ec', c_float),
@@ -1137,7 +1147,7 @@ class CV(Technique):
     def __init__(
         self,
         voltage=(0.0, 1.0, -1.0, 0.0),
-        scan_rate=10.0, #mV/s
+        scan_rate=10.0,  # mV/s
         vs_initial=True,
         n_cycles=0,
         record_every_dE=0.01,
@@ -1146,7 +1156,7 @@ class CV(Technique):
         end_measuring_I=1.0,
         I_range='KBIO_IRANGE_AUTO',
         E_range='KBIO_ERANGE_2_5',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         r"""Initialize the CV technique::
 
@@ -1170,8 +1180,8 @@ class CV(Technique):
                 one
             n_cycles (int): The number of cycles
             record_every_dE (float): Record every dE (V)
-            average_I_over_dE (bool): Whether averaging should be performed over
-                dE
+            average_I_over_dE (bool): Whether averaging should be performed
+                over dE
             begin_measuring_I (float): Begin step accumulation, 1 is 100%
             end_measuring_I (float): End step accumulation, 1 is 100%
             I_Range (str): A string describing the I range, see the
@@ -1196,13 +1206,18 @@ class CV(Technique):
         voltage_list.insert(3, voltage[0])
 
         args = (
-            TechniqueArgument('vs_initial', '[bool]', (vs_initial,)*5, 'in', [True, False]),
-            TechniqueArgument('Voltage_step', '[single]', voltage_list, None, None),
-            TechniqueArgument('Scan_Rate', '[single]', (scan_rate,)*5, '>=', 0.0),
-            TechniqueArgument('Scan_number', 'integer', 2, None, None),
-            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0.0),
             TechniqueArgument(
-                'Average_over_dE', 'bool', average_I_over_dE, 'in', [True, False]
+                'vs_initial', '[bool]', (vs_initial,)*5, 'in', [True, False]),
+            TechniqueArgument(
+                'Voltage_step', '[single]', voltage_list, None, None),
+            TechniqueArgument(
+                'Scan_Rate', '[single]', (scan_rate,)*5, '>=', 0.0),
+            TechniqueArgument('Scan_number', 'integer', 2, None, None),
+            TechniqueArgument('Record_every_dE', 'single',
+                              record_every_dE, '>=', 0.0),
+            TechniqueArgument(
+                'Average_over_dE', 'bool', average_I_over_dE, 'in', [
+                    True, False]
             ),
             TechniqueArgument('N_Cycles', 'integer', n_cycles, '>=', 0),
             TechniqueArgument(
@@ -1219,10 +1234,13 @@ class CV(Technique):
                 'in_float_range',
                 (0.0, 1.0),
             ),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'cv.ecc')
@@ -1241,7 +1259,7 @@ class CVA(Technique):
     * cycle (int)
     """
 
-    #:Data fields definition
+    # :Data fields definition
     data_fields = [{
         'common': [
             DataField('Ec', c_float),
@@ -1254,7 +1272,7 @@ class CVA(Technique):
     def __init__(
         self,
         voltage=(0.0, 1.0, -1.0, 0.0),
-        scan_rate=10.0, #mV/s,
+        scan_rate=10.0,  # mV/s,
         vs_initial=True,
         n_cycles=0,
         duration_step1=10.0,
@@ -1268,7 +1286,7 @@ class CVA(Technique):
         trigger_on_off=False,
         I_range='KBIO_IRANGE_AUTO',
         E_range='KBIO_ERANGE_2_5',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         r"""Initialize the CVA technique::
 
@@ -1325,12 +1343,15 @@ class CVA(Technique):
 
         args = (
             TechniqueArgument(
-                'vs_initial_scan', '[bool]', (vs_initial,)*4, 'in', [True, False]
+                'vs_initial_scan', '[bool]', (vs_initial,) *
+                4, 'in', [True, False]
             ),
             TechniqueArgument('Voltage_scan', '[single]', voltage, None, None),
-            TechniqueArgument('Scan_Rate', '[single]', (scan_rate,)*4, '>=', 0.0),
+            TechniqueArgument(
+                'Scan_Rate', '[single]', (scan_rate,)*4, '>=', 0.0),
             TechniqueArgument('Scan_number', 'integer', 2, None, None),
-            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0.0),
+            TechniqueArgument('Record_every_dE', 'single',
+                              record_every_dE, '>=', 0.0),
             TechniqueArgument(
                 'Average_over_dE', 'bool', average_over_dE, 'in', [True, False]
             ),
@@ -1350,20 +1371,29 @@ class CVA(Technique):
                 (0.0, 1.0),
             ),
             TechniqueArgument(
-                'vs_initial_step', '[bool]', (vs_initial,)*2, 'in', [True, False]
+                'vs_initial_step', '[bool]', (vs_initial,) *
+                2, 'in', [True, False]
             ),
-            TechniqueArgument('Voltage_step', '[single]', (voltage[1], voltage[2]), None, None),
             TechniqueArgument(
-                'Duration_step', '[single]', (duration_step1, duration_step2), None, None
-            ),
+                'Voltage_step', '[single]', (voltage[1], voltage[2]), None,
+                None),
+            TechniqueArgument(
+                'Duration_step', '[single]', (duration_step1, duration_step2),
+                None, None),
             TechniqueArgument('Step_number', 'integer', 1, None, None),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0.0),
-            TechniqueArgument('Record_every_dI', 'single', record_every_dI, '>=', 0.0),
-            TechniqueArgument('Trig_on_off', 'bool', trigger_on_off, 'in', [True, False]),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0.0),
+            TechniqueArgument('Record_every_dI', 'single',
+                              record_every_dI, '>=', 0.0),
+            TechniqueArgument('Trig_on_off', 'bool',
+                              trigger_on_off, 'in', [True, False]),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'biovscan.ecc')
@@ -1400,7 +1430,7 @@ class CP(Technique):
         record_every_dE=0.001,
         I_range='KBIO_IRANGE_100uA',
         E_range='KBIO_ERANGE_2_5',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         """Initialize the CP technique
 
@@ -1440,19 +1470,28 @@ class CP(Technique):
         vs_initial = (vs_initial,)*len(current_step)
 
         args = (
-            TechniqueArgument('Current_step', '[single]', current_step, None, None),
-            TechniqueArgument('vs_initial', '[bool]', vs_initial, 'in', [True, False]),
-            TechniqueArgument('Duration_step', '[single]', duration_step, '>=', 0),
             TechniqueArgument(
-                'Step_number', 'integer', len(current_step)-1, 'in', list(range(99))
+                'Current_step', '[single]', current_step, None, None),
+            TechniqueArgument(
+                'vs_initial', '[bool]', vs_initial, 'in', [True, False]),
+            TechniqueArgument(
+                'Duration_step', '[single]', duration_step, '>=', 0),
+            TechniqueArgument(
+                'Step_number', 'integer', len(
+                    current_step)-1, 'in', list(range(99))
             ),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0),
-            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0),
+            TechniqueArgument('Record_every_dE', 'single',
+                              record_every_dE, '>=', 0),
             TechniqueArgument('N_Cycles', 'integer', n_cycles, '>=', 0),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'cp.ecc')
@@ -1470,7 +1509,7 @@ class CA(Technique):
     * cycle (int)
     """
 
-    #:Data fields definition
+    # :Data fields definition
     data_fields = [{
         'common': [
             DataField('Ewe', c_float),
@@ -1489,7 +1528,7 @@ class CA(Technique):
         record_every_dI=5e-6,
         I_range='KBIO_IRANGE_AUTO',
         E_range='KBIO_ERANGE_2_5',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         """Initialize the CA technique
 
@@ -1529,19 +1568,28 @@ class CA(Technique):
         vs_initial = (vs_initial,)*len(voltage_step)
 
         args = (
-            TechniqueArgument('Voltage_step', '[single]', voltage_step, None, None),
-            TechniqueArgument('vs_initial', '[bool]', vs_initial, 'in', [True, False]),
-            TechniqueArgument('Duration_step', '[single]', duration_step, '>=', 0.0),
             TechniqueArgument(
-                'Step_number', 'integer', len(voltage_step)-1, 'in', list(range(99))
+                'Voltage_step', '[single]', voltage_step, None, None),
+            TechniqueArgument(
+                'vs_initial', '[bool]', vs_initial, 'in', [True, False]),
+            TechniqueArgument(
+                'Duration_step', '[single]', duration_step, '>=', 0.0),
+            TechniqueArgument(
+                'Step_number', 'integer', len(
+                    voltage_step)-1, 'in', list(range(99))
             ),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0.0),
-            TechniqueArgument('Record_every_dI', 'single', record_every_dI, '>=', 0.0),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0.0),
+            TechniqueArgument('Record_every_dI', 'single',
+                              record_every_dI, '>=', 0.0),
             TechniqueArgument('N_Cycles', 'integer', n_cycles, '>=', 0),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'ca.ecc')
@@ -1560,7 +1608,7 @@ class CPOWER(Technique):
     * cycle (int)
     """
 
-    #:Data fields definition
+    # :Data fields definition
     data_fields = [{
         'common': [
             DataField('Ewe', c_float),
@@ -1580,7 +1628,7 @@ class CPOWER(Technique):
         record_every_dE=0.1,
         I_range='KBIO_IRANGE_1mA',
         E_range='KBIO_ERANGE_AUTO',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         """Initialize the CPOWER technique
 
@@ -1619,19 +1667,28 @@ class CPOWER(Technique):
         vs_initial = (vs_initial,)*len(power_step)
 
         args = (
-            TechniqueArgument('Power_step', '[single]', power_step, None, None),
-            TechniqueArgument('vs_initial', '[bool]', vs_initial, 'in', [True, False]),
-            TechniqueArgument('Duration_step', '[single]', duration_step, '>=', 0.0),
             TechniqueArgument(
-                'Step_number', 'integer', len(power_step)-1, 'in', list(range(99))
+                'Power_step', '[single]', power_step, None, None),
+            TechniqueArgument(
+                'vs_initial', '[bool]', vs_initial, 'in', [True, False]),
+            TechniqueArgument(
+                'Duration_step', '[single]', duration_step, '>=', 0.0),
+            TechniqueArgument(
+                'Step_number', 'integer', len(
+                    power_step)-1, 'in', list(range(99))
             ),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0.0),
-            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0.0),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0.0),
+            TechniqueArgument('Record_every_dE', 'single',
+                              record_every_dE, '>=', 0.0),
             TechniqueArgument('N_Cycles', 'integer', n_cycles, '>=', 0),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'pow.ecc')
@@ -1668,7 +1725,7 @@ class PEIS(Technique):
     the :class:`.KBIOData` object.
     """
 
-    #:Data fields definition
+    # :Data fields definition
     process0_data_fields = {
         'common': [
             DataField('Ewe', c_float),
@@ -1731,7 +1788,7 @@ class PEIS(Technique):
         record_every_dI=0.1,
         I_range='KBIO_IRANGE_AUTO',
         E_range='KBIO_ERANGE_2_5',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         """Initialize the PEIS technique
 
@@ -1741,8 +1798,8 @@ class PEIS(Technique):
             vs_initial (bool): Whether the voltage step is vs. the initial one
             initial_frequency (float): The initial frequency (Hz)
             final_frequency (float): The final frequency (Hz)
-            logarithmic_spacing (bool): Logarithmic/linear frequency spacing (True
-                for logarithmic points spacing)
+            logarithmic_spacing (bool): Logarithmic/linear frequency spacing
+                (True for logarithmic points spacing)
             amplitude_voltage (float): Amplitude of sinus (V)
             frequency_number (int): The number of frequencies
             average_n_times (int): The number of repeat times used for
@@ -1760,34 +1817,47 @@ class PEIS(Technique):
                 :data:`BANDWIDTHS` module variable for possible values
         """
         args = (
-            TechniqueArgument('vs_initial', 'bool', vs_initial, 'in', [True, False]),
+            TechniqueArgument('vs_initial', 'bool',
+                              vs_initial, 'in', [True, False]),
             TechniqueArgument('vs_final', 'bool', vs_initial, None, None),
             TechniqueArgument(
-                'Initial_Voltage_step', 'single', initial_voltage_step, None, None
-            ),
+                'Initial_Voltage_step', 'single', initial_voltage_step, None,
+                None),
             TechniqueArgument(
-                'Final_Voltage_step', 'single', initial_voltage_step, None, None
-            ),
-            TechniqueArgument('Duration_step', 'single', duration_step, None, None),
+                'Final_Voltage_step', 'single', initial_voltage_step, None,
+                None),
+            TechniqueArgument('Duration_step', 'single',
+                              duration_step, None, None),
             TechniqueArgument('Step_number', 'integer', 0, None, None),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0.0),
-            TechniqueArgument('Record_every_dI', 'single', record_every_dI, '>=', 0.0),
-            TechniqueArgument('Final_frequency', 'single', final_frequency, '>=', 0.0),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0.0),
+            TechniqueArgument('Record_every_dI', 'single',
+                              record_every_dI, '>=', 0.0),
+            TechniqueArgument('Final_frequency', 'single',
+                              final_frequency, '>=', 0.0),
             TechniqueArgument(
                 'Initial_frequency', 'single', initial_frequency, '>=', 0.0
             ),
-            TechniqueArgument('sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
+            TechniqueArgument(
+                'sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
             TechniqueArgument(
                 'Amplitude_Voltage', 'single', amplitude_voltage, None, None
             ),
-            TechniqueArgument('Frequency_number', 'integer', frequency_number, '>=', 1),
-            TechniqueArgument('Average_N_times', 'integer', average_n_times, '>=', 1),
-            TechniqueArgument('Correction', 'bool', drift_correction, 'in', [True, False]),
-            TechniqueArgument('Wait_for_steady', 'single', wait_for_steady, '>=', 0.0),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('Frequency_number', 'integer',
+                              frequency_number, '>=', 1),
+            TechniqueArgument('Average_N_times', 'integer',
+                              average_n_times, '>=', 1),
+            TechniqueArgument('Correction', 'bool',
+                              drift_correction, 'in', [True, False]),
+            TechniqueArgument('Wait_for_steady', 'single',
+                              wait_for_steady, '>=', 0.0),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'peis.ecc')
@@ -1828,7 +1898,7 @@ class SPEIS(Technique):
 
     """
 
-    #:Data fields definition
+    # :Data fields definition
     process0_data_fields = {
         'common': [
             DataField('Ewe', c_float),
@@ -1896,7 +1966,7 @@ class SPEIS(Technique):
         record_every_dI=0.1,
         I_range='KBIO_IRANGE_AUTO',
         E_range='KBIO_ERANGE_2_5',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         """Initialize the SPEIS technique
 
@@ -1908,8 +1978,8 @@ class SPEIS(Technique):
             step_number (int): The number of voltage steps
             initial_frequency (float): The initial frequency (Hz)
             final_frequency (float): The final frequency (Hz)
-            logarithmic_spacing (bool): Logarithmic/linear frequency spacing (True
-                for logarithmic points spacing)
+            logarithmic_spacing (bool): Logarithmic/linear frequency spacing
+                (True for logarithmic points spacing)
             amplitude_voltage (float): Amplitude of sinus (V)
             frequency_number (int): The number of frequencies
             average_n_times (int): The number of repeat times used for
@@ -1928,39 +1998,56 @@ class SPEIS(Technique):
 
         """
         args = (
-            TechniqueArgument('vs_initial', 'bool', vs_initial, 'in', [True, False]),
-            TechniqueArgument('vs_final', 'bool', vs_initial, 'in', [True, False]),
+            TechniqueArgument('vs_initial', 'bool',
+                              vs_initial, 'in', [True, False]),
+            TechniqueArgument('vs_final', 'bool', vs_initial,
+                              'in', [True, False]),
             TechniqueArgument(
-                'Initial_Voltage_step', 'single', initial_voltage_step, None, None
-            ),
+                'Initial_Voltage_step', 'single', initial_voltage_step, None,
+                None),
             TechniqueArgument(
                 'Final_Voltage_step', 'single', final_voltage_step, None, None
             ),
-            TechniqueArgument('Duration_step', 'single', duration_step, None, None),
-            TechniqueArgument('Step_number', 'integer', step_number, 'in', list(range(99))),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0.0),
-            TechniqueArgument('Record_every_dI', 'single', record_every_dI, '>=', 0.0),
-            TechniqueArgument('Final_frequency', 'single', final_frequency, '>=', 0.0),
+            TechniqueArgument('Duration_step', 'single',
+                              duration_step, None, None),
+            TechniqueArgument('Step_number', 'integer',
+                              step_number, 'in', list(range(99))),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0.0),
+            TechniqueArgument('Record_every_dI', 'single',
+                              record_every_dI, '>=', 0.0),
+            TechniqueArgument('Final_frequency', 'single',
+                              final_frequency, '>=', 0.0),
             TechniqueArgument(
                 'Initial_frequency', 'single', initial_frequency, '>=', 0.0
             ),
-            TechniqueArgument('sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
+            TechniqueArgument(
+                'sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
             TechniqueArgument(
                 'Amplitude_Voltage', 'single', amplitude_voltage, None, None
             ),
-            TechniqueArgument('Frequency_number', 'integer', frequency_number, '>=', 1),
-            TechniqueArgument('Average_N_times', 'integer', average_n_times, '>=', 1),
-            TechniqueArgument('Correction', 'bool', drift_correction, 'in', [True, False]),
-            TechniqueArgument('Wait_for_steady', 'single', wait_for_steady, '>=', 0.0),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('Frequency_number', 'integer',
+                              frequency_number, '>=', 1),
+            TechniqueArgument('Average_N_times', 'integer',
+                              average_n_times, '>=', 1),
+            TechniqueArgument('Correction', 'bool',
+                              drift_correction, 'in', [True, False]),
+            TechniqueArgument('Wait_for_steady', 'single',
+                              wait_for_steady, '>=', 0.0),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'seisp.ecc')
 
 # Section 7.11 in the specification
+
+
 class GEIS(Technique):
     """Galvano Electrochemical Impedance Spectroscopy (GEIS) technique class
 
@@ -1992,7 +2079,7 @@ class GEIS(Technique):
 
     """
 
-    #:Data fields definition
+    # :Data fields definition
     process0_data_fields = {
         'common': [
             DataField('Ewe', c_float),
@@ -2053,7 +2140,7 @@ class GEIS(Technique):
         record_every_dE=0.1,
         I_range='KBIO_IRANGE_1mA',
         E_range='KBIO_ERANGE_AUTO',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         """Initialize the GEIS technique
 
@@ -2064,8 +2151,8 @@ class GEIS(Technique):
             step_number (int): The number of voltage steps
             initial_frequency (float): The initial frequency (Hz)
             final_frequency (float): The final frequency (Hz)
-            logarithmic_spacing (bool): Logarithmic/linear frequency spacing (True
-                for logarithmic points spacing)
+            logarithmic_spacing (bool): Logarithmic/linear frequency spacing
+                (True for logarithmic points spacing)
             amplitude_current (float): Amplitude of sinus (A)
             frequency_number (int): The number of frequencies
             average_n_times (int): The number of repeat times used for
@@ -2084,39 +2171,54 @@ class GEIS(Technique):
 
         """
         args = (
-            TechniqueArgument('vs_initial', 'bool', vs_initial, 'in', [True, False]),
+            TechniqueArgument('vs_initial', 'bool',
+                              vs_initial, 'in', [True, False]),
             TechniqueArgument('vs_final', 'bool', vs_initial, None, None),
             TechniqueArgument(
-                'Initial_Current_step', 'single', initial_current_step, None, None
-            ),
+                'Initial_Current_step', 'single', initial_current_step, None,
+                None),
             TechniqueArgument(
-                'Final_Current_step', 'single', initial_current_step, None, None
-            ),
-            TechniqueArgument('Duration_step', 'single', duration_step, None, None),
+                'Final_Current_step', 'single', initial_current_step, None,
+                None),
+            TechniqueArgument('Duration_step', 'single',
+                              duration_step, None, None),
             TechniqueArgument('Step_number', 'integer', 0, None, None),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0.0),
-            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0.0),
-            TechniqueArgument('Final_frequency', 'single', final_frequency, '>=', 0.0),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0.0),
+            TechniqueArgument('Record_every_dE', 'single',
+                              record_every_dE, '>=', 0.0),
+            TechniqueArgument('Final_frequency', 'single',
+                              final_frequency, '>=', 0.0),
             TechniqueArgument(
                 'Initial_frequency', 'single', initial_frequency, '>=', 0.0
             ),
-            TechniqueArgument('sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
+            TechniqueArgument(
+                'sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
             TechniqueArgument(
                 'Amplitude_Current', 'single', amplitude_current, None, None
             ),
-            TechniqueArgument('Frequency_number', 'integer', frequency_number, '>=', 1),
-            TechniqueArgument('Average_N_times', 'integer', average_n_times, '>=', 1),
-            TechniqueArgument('Correction', 'bool', drift_correction, 'in', [True, False]),
-            TechniqueArgument('Wait_for_steady', 'single', wait_for_steady, '>=', 0.0),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('Frequency_number', 'integer',
+                              frequency_number, '>=', 1),
+            TechniqueArgument('Average_N_times', 'integer',
+                              average_n_times, '>=', 1),
+            TechniqueArgument('Correction', 'bool',
+                              drift_correction, 'in', [True, False]),
+            TechniqueArgument('Wait_for_steady', 'single',
+                              wait_for_steady, '>=', 0.0),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'geis.ecc')
 
 # Section 7.14 in the specification
+
+
 class SGEIS(Technique):
     """Staircase Galvano Electrochemical Impedance Spectroscopy (SGEIS)
     technique class
@@ -2150,7 +2252,7 @@ class SGEIS(Technique):
     the :class:`.KBIOData` object.
     """
 
-    #:Data fields definition
+    # :Data fields definition
     process0_data_fields = {
         'common': [
             DataField('Ewe', c_float),
@@ -2218,7 +2320,7 @@ class SGEIS(Technique):
         record_every_dE=0.1,
         I_range='KBIO_IRANGE_1mA',
         E_range='KBIO_ERANGE_AUTO',
-        bandwidth='KBIO_BW_5',
+        bandwidth='KBIO_BW_5'
     ):
         """Initialize the SPEIS technique
 
@@ -2230,8 +2332,8 @@ class SGEIS(Technique):
             step_number (int): The number of current steps
             initial_frequency (float): The initial frequency (Hz)
             final_frequency (float): The final frequency (Hz)
-            logarithmic_spacing (bool): Logarithmic/linear frequency spacing (True
-                for logarithmic points spacing)
+            logarithmic_spacing (bool): Logarithmic/linear frequency spacing
+                (True for logarithmic points spacing)
             amplitude_current (float): Amplitude of sinus (A)
             frequency_number (int): The number of frequencies
             average_n_times (int): The number of repeat times used for
@@ -2250,34 +2352,49 @@ class SGEIS(Technique):
 
         """
         args = (
-            TechniqueArgument('vs_initial', 'bool', vs_initial, 'in', [True, False]),
-            TechniqueArgument('vs_final', 'bool', vs_initial, 'in', [True, False]),
+            TechniqueArgument('vs_initial', 'bool',
+                              vs_initial, 'in', [True, False]),
+            TechniqueArgument('vs_final', 'bool', vs_initial,
+                              'in', [True, False]),
             TechniqueArgument(
-                'Initial_Current_step', 'single', initial_current_step, None, None
-            ),
+                'Initial_Current_step', 'single', initial_current_step, None,
+                None),
             TechniqueArgument(
                 'Final_Current_step', 'single', final_current_step, None, None
             ),
-            TechniqueArgument('Duration_step', 'single', duration_step, None, None),
-            TechniqueArgument('Step_number', 'integer', step_number, 'in', list(range(99))),
-            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0.0),
-            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0.0),
-            TechniqueArgument('Final_frequency', 'single', final_frequency, '>=', 0.0),
+            TechniqueArgument('Duration_step', 'single',
+                              duration_step, None, None),
+            TechniqueArgument('Step_number', 'integer',
+                              step_number, 'in', list(range(99))),
+            TechniqueArgument('Record_every_dT', 'single',
+                              record_every_dt, '>=', 0.0),
+            TechniqueArgument('Record_every_dE', 'single',
+                              record_every_dE, '>=', 0.0),
+            TechniqueArgument('Final_frequency', 'single',
+                              final_frequency, '>=', 0.0),
             TechniqueArgument(
                 'Initial_frequency', 'single', initial_frequency, '>=', 0.0
             ),
-            TechniqueArgument('sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
+            TechniqueArgument(
+                'sweep', 'bool', not logarithmic_spacing, 'in', [True, False]),
             TechniqueArgument(
                 'Amplitude_Current', 'single', amplitude_current, None, None
             ),
-            TechniqueArgument('Frequency_number', 'integer', frequency_number, '>=', 1),
-            TechniqueArgument('Average_N_times', 'integer', average_n_times, '>=', 1),
-            TechniqueArgument('Correction', 'bool', drift_correction, 'in', [True, False]),
-            TechniqueArgument('Wait_for_steady', 'single', wait_for_steady, '>=', 0.0),
-            TechniqueArgument('I_Range', I_RANGES, I_range, 'in', list(I_RANGES.values())),
-            TechniqueArgument('E_Range', E_RANGES, E_range, 'in', list(E_RANGES.values())),
+            TechniqueArgument('Frequency_number', 'integer',
+                              frequency_number, '>=', 1),
+            TechniqueArgument('Average_N_times', 'integer',
+                              average_n_times, '>=', 1),
+            TechniqueArgument('Correction', 'bool',
+                              drift_correction, 'in', [True, False]),
+            TechniqueArgument('Wait_for_steady', 'single',
+                              wait_for_steady, '>=', 0.0),
+            TechniqueArgument('I_Range', I_RANGES, I_range,
+                              'in', list(I_RANGES.values())),
+            TechniqueArgument('E_Range', E_RANGES, E_range,
+                              'in', list(E_RANGES.values())),
             TechniqueArgument(
-                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(BANDWIDTHS.values())
+                'Bandwidth', BANDWIDTHS, bandwidth, 'in', list(
+                    BANDWIDTHS.values())
             ),
         )
         super().__init__(args, 'seisg.ecc')
@@ -2290,7 +2407,7 @@ class MIR(Technique):
     The MIR technique returns no data.
     """
 
-    #:Data fields definition
+    # :Data fields definition
     data_fields = {}
 
     def __init__(self, rcmp_value):
@@ -2299,11 +2416,12 @@ class MIR(Technique):
         Args:
             rcmp_value (float): The R value to compensate
         """
-        args = (TechniqueArgument('Rcmp_Value', 'single', rcmp_value, '>=', 0.0),)
+        args = (TechniqueArgument('Rcmp_Value',
+                'single', rcmp_value, '>=', 0.0),)
         super().__init__(args, 'IRcmp.ecc')
 
 
-########## Structs
+# Structs
 class DeviceInfos(Structure):
     """Device information struct"""
 
@@ -2452,7 +2570,7 @@ class TECCParams(Structure):
     )
 
 
-########## Exceptions
+# Exceptions
 class ECLibException(Exception):
     """Base exception for all ECLib exceptions"""
 
@@ -2482,7 +2600,7 @@ class ECLibCustomException(ECLibException):
     """Exceptions that does not originate from the lib"""
 
 
-########## Functions
+# Functions
 def structure_to_dict(structure):
     """Convert a ctypes.Structure to a dict"""
     out = {}
@@ -2496,8 +2614,8 @@ def reverse_dict(dict_):
     return {v: k for k, v in dict_.items()}
 
 
-########## Constants
-#:Device number to device name translation dict
+# Constants
+# :Device number to device name translation dict
 DEVICE_CODES = {
     0: 'KBIO_DEV_VMP',
     1: 'KBIO_DEV_VMP2',
@@ -2539,7 +2657,7 @@ DEVICE_CODES = {
     255: 'KBIO_DEV_UNKNOWN',
 }
 
-#:Firmware number to firmware name translation dict
+# :Firmware number to firmware name translation dict
 FIRMWARE_CODES = {
     0: 'KBIO_FIRM_NONE',
     1: 'KBIO_FIRM_INTERPR',
@@ -2549,7 +2667,7 @@ FIRMWARE_CODES = {
     10: 'KBIO_FIRM_ECAL',
 }
 
-#:Amplifier number to aplifier name translation dict
+# :Amplifier number to aplifier name translation dict
 AMP_CODES = {
     0: 'KBIO_AMPL_NONE',
     1: 'KBIO_AMPL_2A',
@@ -2583,7 +2701,7 @@ AMP_CODES = {
     129: 'KBIO_AMPL4_1A48VP',
 }
 
-#:I range number to I range name translation dict
+# :I range number to I range name translation dict
 I_RANGES = {
     -1: 'KBIO_IRANGE_KEEP',
     0: 'KBIO_IRANGE_100pA',
@@ -2603,7 +2721,7 @@ I_RANGES = {
     14: 'KBIO_IRANGE_1pA',  # IRANGE_100pA + Igain x100
 }
 
-#:E range number to E range name translation dict
+# :E range number to E range name translation dict
 E_RANGES = {
     0: 'KBIO_ERANGE_2_5',
     1: 'KBIO_ERANGE_5',
@@ -2611,7 +2729,7 @@ E_RANGES = {
     3: 'KBIO_ERANGE_AUTO',
 }
 
-#:Bandwidth number to bandwidth name translation dict
+# :Bandwidth number to bandwidth name translation dict
 BANDWIDTHS = {
     -1: 'KBIO_BW_KEEP',
     1: 'KBIO_BW_1',
@@ -2625,7 +2743,7 @@ BANDWIDTHS = {
     9: 'KBIO_BW_9',
 }
 
-#:Filter number to filter name translation dict
+# :Filter number to filter name translation dict
 FILTERS = {
     -1: 'KBIO_FILTER_RSRVD',
     0: 'KBIO_FILTER_NONE',
@@ -2634,26 +2752,26 @@ FILTERS = {
     3: 'KBIO_FILTER_5KHZ',
 }
 
-#:Electrode connection number to electrode connection name translation dict
+# :Electrode connection number to electrode connection name translation dict
 ELECTRODE_CONNECTIONS = {
     0: 'KBIO_CONN_STD',
     1: 'KBIO_CONN_CETOGRND',
 }
 
-#:Channel mode number to channel mode name translation dict
+# :Channel mode number to channel mode name translation dict
 CHANNEL_MODES = {
     0: 'KBIO_MODE_GROUNDED',
     1: 'KBIO_MODE_FLOATING',
 }
 
-#:State number to state name translation dict
+# :State number to state name translation dict
 STATES = {
     0: 'KBIO_STATE_STOP',
     1: 'KBIO_STATE_RUN',
     2: 'KBIO_STATE_PAUSE',
 }
 
-#:Technique number to technique name translation dict
+# :Technique number to technique name translation dict
 TECHNIQUE_IDENTIFIERS = {
     0: 'KBIO_TECHID_NONE',
     100: 'KBIO_TECHID_OCV',
@@ -2713,16 +2831,16 @@ TECHNIQUE_IDENTIFIERS = {
     170: 'KBIO_TECHID_CASP',
 }
 
-#:Parameter type number to parameter type name translation dict
+# :Parameter type number to parameter type name translation dict
 PARAMETER_TYPES = {
     0: 'PARAM_INT32',
     1: 'PARAM_BOOLEAN',
     2: 'PARAM_SINGLE',
 }
 
-#TODO: Add supported techniques to list.
-#:Technique name to technique class translation dict. IMPORTANT. Add newly
-#:implemented techniques to this dictionary
+# TODO: Add supported techniques to list.
+# :Technique name to technique class translation dict. IMPORTANT. Add newly
+# :implemented techniques to this dictionary
 TECHNIQUE_IDENTIFIERS_TO_CLASS = {
     'KBIO_TECHID_OCV': OCV,
     'KBIO_TECHID_CV': CV,
@@ -2736,7 +2854,7 @@ TECHNIQUE_IDENTIFIERS_TO_CLASS = {
     'KBIO_TECHID_SGEIS': SGEIS,
 }
 
-#:List of devices in the WMP4/SP300 series
+# :List of devices in the WMP4/SP300 series
 SP300SERIES = [
     'KBIO_DEV_SP200',
     'KBIO_DEV_SP240',
@@ -2746,7 +2864,7 @@ SP300SERIES = [
     'KBIO_DEV_VMP300',
 ]
 
-#:List of devices in the WMP4/SP300 series
+# :List of devices in the WMP4/SP300 series
 VMP3SERIES = [
     'KBIO_DEV_SP50',
     'KBIO_DEV_SP50E',

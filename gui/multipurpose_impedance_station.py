@@ -39,20 +39,22 @@ python keithley2420_gui.py
 import logging
 import sys
 from time import sleep, time
+import numpy as np
 
 from pymeasure.adapters import VISAAdapter
 from pymeasure.instruments.keithley import Keithley2182
 from pymeasure.instruments.proterial import ROD4
 from pymeasure.display.Qt import QtWidgets
-from pymeasure.display.windows import ManagedWindow
+from pymeasure.display.windows.managed_dock_window import ManagedDockWindow
 from pymeasure.experiment import (
     Procedure, Parameter, IntegerParameter, FloatParameter, BooleanParameter,
     unique_filename, Results
 )
 
-from ..instruments.eurotherm2000 import Eurotherm2000
-from ..instruments.biologic import GeneralPotentiostat
+from eurotherm2000 import Eurotherm2000
+from biologic import GeneralPotentiostat, OCV, PEIS
 
+sys.path.append('/home/connor/Documents/NUPyLab/nupylab/instruments/')
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
@@ -82,17 +84,18 @@ class Experiment(Procedure):
                               group_by='eis_toggle')
 
     target_temperature = FloatParameter('Target Temperature', units='C')
-    ramp_rate = FloatParameter('Ramp Rate', units = 'C/min', default=5.0)
+    ramp_rate = FloatParameter('Ramp Rate', units='C/min', default=5.0)
+    dwell_time = FloatParameter('Dwell Time', units='min', default=30.0)
 
     pO2_toggle = BooleanParameter('pO2 Sensor Connected', default=True)
     pO2_slope = FloatParameter('pO2 Sensor Cal Slope', group_by='pO2_toggle')
     pO2_intercept = FloatParameter('pO2 Sensor Cal Intercept',
                                    group_by='pO2_toggle')
 
-    mfc_1_flow = FloatParameter('MFC 1 Flow', units='sccm')
-    mfc_2_flow = FloatParameter('MFC 2 Flow', units='sccm')
-    mfc_3_flow = FloatParameter('MFC 3 Flow', units='sccm')
-    mfc_4_flow = FloatParameter('MFC 4 Flow', units='sccm')
+    mfc_1_setpoint = FloatParameter('MFC 1 Flow', units='cc/s')
+    mfc_2_setpoint = FloatParameter('MFC 2 Flow', units='cc/s')
+    mfc_3_setpoint = FloatParameter('MFC 3 Flow', units='cc/s')
+    mfc_4_setpoint = FloatParameter('MFC 4 Flow', units='cc/s')
 
     eis_toggle = BooleanParameter('Run EIS', default=True)
     maximum_frequency = FloatParameter('Maximum Frequency', units='Hz',
@@ -104,18 +107,21 @@ class Experiment(Procedure):
     amplitude_voltage = FloatParameter('Amplitude Voltage', units='V',
                                        default=0.02, minimum=5e-4, maximum=2.5,
                                        group_by='eis_toggle')
+    points_per_decade = IntegerParameter('Points Per Decade', minimum=1,
+                                         step=1, default=10,
+                                         group_by='eis_toggle')
 
     DATA_COLUMNS = ['Time (s)',
                     'Furnace Temperature (C)',
                     'pO2 Sensor Temperature (C)',
                     'pO2 (atm)',
-                    'MFC 1 Flow (sccm)',
-                    'MFC 2 Flow (sccm)',
-                    'MFC 3 Flow (sccm)',
-                    'MFC 4 Flow (sccm)',
+                    'MFC 1 Flow (cc/s)',
+                    'MFC 2 Flow (cc/s)',
+                    'MFC 3 Flow (cc/s)',
+                    'MFC 4 Flow (cc/s)',
                     'Frequency (Hz)',
-                    'Z\' (Ohm)',
-                    '-Z\" (Ohm)']
+                    'Z\' (ohm)',
+                    '-Z\" (ohm)']
 
     def startup(self):
         log.info("Connecting to instruments")
@@ -123,55 +129,90 @@ class Experiment(Procedure):
             self.keithley_adapter = VISAAdapter(self.keithley_port,
                                                 visa_library='@py')
             self.keithley = Keithley2182(self.keithley_adapter)
+            self.initialize_keithley()
+
         self.rod4_adapter = VISAAdapter(self.rod4_port,
                                         visa_library='@py')
         self.rod4 = ROD4(self.rod4_adapter)
+        self.rod4_range = (self.rod4.ch_1.mfc_range,
+                           self.rod4.ch_2.mfc_range,
+                           self.rod4.ch_3.mfc_range,
+                           self.rod4.ch_4.mfc_range)
+
         self.eurotherm = Eurotherm2000(self.eurotherm_port,
                                        self.eurotherm_address)
+
         if self.eis_toggle:
             self.biologic = GeneralPotentiostat('SP200', self.biologic_port)
+            self.biologic.connect()
+            self.biologic.load_firmware((1,))
+            ocv = OCV(duration=12*60*60,
+                      record_every_dE=0.01,
+                      record_every_dt=1.0,
+                      E_range='KBIO_ERANGE_AUTO')
+            freq_steps = round(10 * (np.log10(self.maximum_frequency) -
+                                     np.log10(self.minimum_frequency)) + 1)
+            self.peis = PEIS(initial_voltage_step=0,
+                             duration_step=5.0,
+                             vs_initial=False,
+                             initial_frequency=self.maximum_frequency,
+                             final_frequency=self.minimum_frequency,
+                             logarithmic_spacing=True,
+                             amplitude_voltage=self.amplitude_voltage,
+                             frequency_number=freq_steps,
+                             average_n_times=1,
+                             wait_for_steady=1.0,
+                             drift_correction=False,
+                             record_every_dt=0.1,
+                             record_every_dI=0.1,
+                             I_range='KBIO_IRANGE_AUTO',
+                             E_range='KBIO_ERANGE_2_5',
+                             bandwidth='KBIO_BW_5')
+            self.biologic.load_technique(1, ocv, first=True, last=True)
 
-        sleep(2)
+        sleep(1)
 
     def execute(self):
         log.info("Beginning measurement.")
         self.start_furnace()
-                
-        time0 = time()
-        while not self.should_stop():
+        self.start_rod4()
 
-            sleep(self.delay)
-            
+        start_time = time()
+        while not self.should_stop():
+            loop_time = time()
             furnace_temp = self.eurotherm.process_value
-            sensor_temp = 0
-            sensor_pO2 = 0
-            
-            mfc1_flow = self.rod4.ch_1.actual_flow
-            mfc2_flow = self.rod4.ch_2.actual_flow
-            mfc3_flow = self.rod4.ch_3.actual_flow
-            mfc4_flow = self.rod4.ch_4.actual_flow
-            
+
+            mfc_1_flow = self.rod4.ch_1.actual_flow * self.rod4_range[0]
+            mfc_2_flow = self.rod4.ch_2.actual_flow * self.rod4_range[1]
+            mfc_3_flow = self.rod4.ch_3.actual_flow * self.rod4_range[2]
+            mfc_4_flow = self.rod4.ch_4.actual_flow * self.rod4_range[3]
+
+            if self.pO2_toggle:
+                (sensor_temp, sensor_pO2) = self.read_pO2_sensor()
+            else:
+                (sensor_temp, sensor_pO2) = (None, None)
+
             biologic_frequency = 0
             biologic_Zre = 0
             biologic_Zim = 0
 
-            new_time = time()
-
             data = {
-                'Time (s)' : new_time - time0,
-                'Furnace Temperature (C)' : furnace_temp,
-                'pO2 Sensor Temperature (C)' : sensor_temp,
-                'pO2 (atm)' : sensor_pO2,
-                'MFC 1 Flow (sccm)' : mfc1_flow,
-                'MFC 2 Flow (sccm)' : mfc2_flow,
-                'MFC 3 Flow (sccm)' : mfc3_flow,
-                'MFC 4 Flow (sccm)' : mfc4_flow,
-                'Frequency (Hz)' : biologic_frequency,
-                'Z\' (Ohm)' : biologic_Zre,
-                '-Z\" (Ohm)' : biologic_Zim
+                'Time (s)': loop_time - start_time,
+                'Furnace Temperature (C)': furnace_temp,
+                'pO2 Sensor Temperature (C)': sensor_temp,
+                'pO2 (atm)': sensor_pO2,
+                'MFC 1 Flow (sccm)': mfc_1_flow,
+                'MFC 2 Flow (sccm)': mfc_2_flow,
+                'MFC 3 Flow (sccm)': mfc_3_flow,
+                'MFC 4 Flow (sccm)': mfc_4_flow,
+                'Frequency (Hz)': biologic_frequency,
+                'Z\' (Ohm)': biologic_Zre,
+                '-Z\" (Ohm)': biologic_Zim
             }
             self.emit('results', data)
             self.emit('progress', )
+
+            sleep(max(0, self.delay - (time() - loop_time)))
             if self.should_stop():
                 log.warning("Catch stop command in procedure")
                 break
@@ -179,14 +220,22 @@ class Experiment(Procedure):
     def shutdown(self):
         """Shut off furnace and turn off gas flow."""
         self.eurotherm.program_status = 'reset'
-        
+
         self.rod4.ch_1.actual_flow = 0
         self.rod4.ch_2.actual_flow = 0
         self.rod4.ch_3.actual_flow = 0
         self.rod4.ch_4.actual_flow = 0
+
+        if self.eis_toggle:
+            self.biologic.disconnect()
         log.info("Finished")
 
+    def initialize_keithley(self):
+        self.keithley.reset()
+        self.keithley.thermocouple = 'S'
+
     def start_furnace(self):
+        """End any active program, ramp to setpoint and dwell."""
         self.eurotherm.program_status = 'reset'
         self.eurotherm.current_program = 1
 
@@ -198,26 +247,45 @@ class Experiment(Procedure):
         self.eurotherm.programs[1].segments[1]['Target Setpoint'] = \
             self.target_temperature
 
-        self.eurotherm.programs[1].segments[2]['Segment Type'] = 'End'
-        self.eurotherm.programs[1].segments[2]['End Type'] = 'Dwell'
+        self.eurotherm.programs[1].segments[3]['Segment Type'] = 'End'
+        self.eurotherm.programs[1].segments[3]['End Type'] = 'Dwell'
 
         self.eurotherm.program_status = 'run'
 
+    def start_rod4(self):
+        """Convert setpoints from sccm to % and set flow"""
 
-class MainWindow(ManagedWindow):
+        self.rod4.ch_1.setpoint = self.mfc_1_setpoint / self.rod4_range[0]
+        self.rod4.ch_2.setpoint = self.mfc_2_setpoint / self.rod4_range[1]
+        self.rod4.ch_3.setpoint = self.mfc_3_setpoint / self.rod4_range[2]
+        self.rod4.ch_4.setpoint = self.mfc_4_setpoint / self.rod4_range[3]
+
+    def read_pO2_sensor(self):
+        a = self.pO2_intercept
+        b = self.pO2_slope
+        self.keithley.ch_1.setup_voltage()
+        voltage = -1 * self.keithley.voltage
+        self.keithley.ch_2.setup_temperature()
+        temp = self.keithley.temperature
+        pO2 = 0.2095*10**(20158 * ((voltage - b) / (temp + 273.15) - a))
+        return (temp, pO2)
+
+
+class MainWindow(ManagedDockWindow):
 
     def __init__(self):
-        inputs=['delay', 'keithley_port', 'rod4_port', 'eurotherm_port',
-                'eurotherm_address', 'biologic_port', 'target_temperature',
-                'ramp_rate', 'pO2_toggle', 'pO2_slope', 'pO2_intercept',
-                'mfc_1_flow', 'mfc_2_flow', 'mfc_3_flow', 'mfc_4_flow',
-                'eis_toggle', 'maximum_frequency', 'minimum_frequency',
-                'amplitude_voltage']
+        inputs = ['delay', 'keithley_port', 'rod4_port', 'eurotherm_port',
+                  'eurotherm_address', 'biologic_port', 'target_temperature',
+                  'ramp_rate', 'dwell_time', 'pO2_toggle', 'pO2_slope',
+                  'pO2_intercept', 'mfc_1_setpoint', 'mfc_2_setpoint',
+                  'mfc_3_setpoint', 'mfc_4_setpoint', 'eis_toggle',
+                  'maximum_frequency', 'minimum_frequency',
+                  'amplitude_voltage', 'points_per_decade']
         super().__init__(
             procedure_class=Experiment,
             inputs=inputs,
             x_axis=['Z\' (Ohm)', 'Time (s)'],
-            y_axis=['-Z\" (Ohm)'
+            y_axis=['-Z\" (Ohm)',
                     'Furnace Temperature (C)',
                     'pO2 Sensor Temperature (C)',
                     'pO2 (atm)',
