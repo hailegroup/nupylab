@@ -115,10 +115,10 @@ class Experiment(Procedure):
                     'Furnace Temperature (C)',
                     'pO2 Sensor Temperature (C)',
                     'pO2 (atm)',
-                    'MFC 1 Flow (cc/s)',
-                    'MFC 2 Flow (cc/s)',
-                    'MFC 3 Flow (cc/s)',
-                    'MFC 4 Flow (cc/s)',
+                    'MFC 1 Flow (cc/min)',
+                    'MFC 2 Flow (cc/min)',
+                    'MFC 3 Flow (cc/min)',
+                    'MFC 4 Flow (cc/min)',
                     'Frequency (Hz)',
                     'Z\' (ohm)',
                     '-Z\" (ohm)']
@@ -168,7 +168,7 @@ class Experiment(Procedure):
                              I_range='KBIO_IRANGE_AUTO',
                              E_range='KBIO_ERANGE_2_5',
                              bandwidth='KBIO_BW_5')
-            self.biologic.load_technique(1, ocv, first=True, last=True)
+            self.biologic.load_technique(0, ocv, first=True, last=True)
 
         sleep(1)
 
@@ -176,6 +176,9 @@ class Experiment(Procedure):
         log.info("Beginning measurement.")
         self.start_furnace()
         self.start_rod4()
+        self.biologic.start_channel(0)
+        (sensor_temp, sensor_pO2) = (None, None)
+        (Ewe, frequency, Zre, Zim) = (None,)*4
 
         start_time = time()
         while not self.should_stop():
@@ -189,28 +192,28 @@ class Experiment(Procedure):
 
             if self.pO2_toggle:
                 (sensor_temp, sensor_pO2) = self.read_pO2_sensor()
-            else:
-                (sensor_temp, sensor_pO2) = (None, None)
 
-            biologic_frequency = 0
-            biologic_Zre = 0
-            biologic_Zim = 0
+            if self.eis_toggle:
+                biologic_data = self.biologic.get_data(0)
+            if self.eurotherm.program_status == 'run':
+                pass
 
-            data = {
-                'Time (s)': loop_time - start_time,
-                'Furnace Temperature (C)': furnace_temp,
-                'pO2 Sensor Temperature (C)': sensor_temp,
-                'pO2 (atm)': sensor_pO2,
-                'MFC 1 Flow (sccm)': mfc_1_flow,
-                'MFC 2 Flow (sccm)': mfc_2_flow,
-                'MFC 3 Flow (sccm)': mfc_3_flow,
-                'MFC 4 Flow (sccm)': mfc_4_flow,
-                'Frequency (Hz)': biologic_frequency,
-                'Z\' (Ohm)': biologic_Zre,
-                '-Z\" (Ohm)': biologic_Zim
-            }
-            self.emit('results', data)
-            self.emit('progress', )
+                data = {
+                    'Time (s)': loop_time - start_time,
+                    'Furnace Temperature (C)': furnace_temp,
+                    'pO2 Sensor Temperature (C)': sensor_temp,
+                    'pO2 (atm)': sensor_pO2,
+                    'MFC 1 Flow (sccm)': mfc_1_flow,
+                    'MFC 2 Flow (sccm)': mfc_2_flow,
+                    'MFC 3 Flow (sccm)': mfc_3_flow,
+                    'MFC 4 Flow (sccm)': mfc_4_flow,
+                    'Ewe (V)': Ewe,
+                    'Frequency (Hz)': frequency,
+                    'Z\' (ohm)': Zre,
+                    '-Z\" (ohm)': Zim
+                }
+                self.emit('results', data)
+                self.emit('progress', )
 
             sleep(max(0, self.delay - (time() - loop_time)))
             if self.should_stop():
