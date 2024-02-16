@@ -1,16 +1,24 @@
-"""This module is a Python implementation of a driver around the
-EC-Lab Development Package, Version 6.06 - August 2023.
+"""Python adapter for the EC-Lab Development Package, Version 6.06.
 
 .. toctree::
    :maxdepth: 2
 
-.. note :: If it is desired to run this driver and the EC-lab development DLL
- on **Linux**, this can be **achieved with Wine**. This will require
- installing both the EC-lab development package AND Python inside
- Wine. Getting Python installed is easiest, if it is a 32 bit Wine
- environment, so before starting, it is recommended to set such an environment
- up. **NOTE:** In a cursory test, it appears that also EClab itself runs under
- Wine.
+.. code-block:: python
+
+    from nupylab.instruments.biologic import GeneralPotentiostat, OCV
+    address = '192.109.209.128'
+    sp200 = GeneralPotentiostat('SP200', address)
+    sp200.connect()
+    sp200.load_firmware([0,],)
+    ocv = OCV(duration=60,
+              record_every_dE=0.01,
+              record_every_dt=1.0,
+              E_range='KBIO_ERANGE_AUTO')
+    sp200.load_technique(0, ocv)
+    sp200.start_channel(0)
+    data = sp200.get_data(0)
+    sp200.stop_channel(0)
+    sp200.disconnect()
 
 .. note :: When using the different techniques with the EC-lib DLL, different
  technique files must be passed to the library, depending on **which series
@@ -22,6 +30,13 @@ EC-Lab Development Package, Version 6.06 - August 2023.
  automatically, if not, the DLL path will need to passed explicitely and the
  user will need to take 32 vs. 64 bit into account. **NOTE:** The relevant 32
  vs. 64 bit status is that of Windows, not of Python.
+
+.. note :: If it is desired to run this driver and the EC-lab development DLL
+ on **Linux**, this can be **achieved with Wine**. This will require
+ installing both the EC-lab development package AND Python inside
+ Wine. Getting Python installed is easiest, if it is a 32 bit Wine
+ environment, so before starting, it is recommended to set such an environment
+ up.
 
 .. note:: All methods mentioned in the documentation are implemented unless
  mentioned in the list below:
@@ -109,8 +124,7 @@ TechniqueArgument = namedtuple(
 
 
 class GeneralPotentiostat:
-    """General driver for the potentiostats that can be controlled by the
-    EC-lib DLL
+    """Driver for the potentiostats that can be controlled by the EC-lib DLL.
 
     A driver for a specific potentiostat type will inherit from this class.
 
@@ -122,7 +136,7 @@ class GeneralPotentiostat:
     """
 
     def __init__(self, type_, address, eclib_dll_path):
-        """Initialize the potentiostat driver
+        """Initialize the potentiostat driver.
 
         Args:
             type_ (str): The device type e.g. 'SP200'
@@ -174,7 +188,7 @@ class GeneralPotentiostat:
 
     @property
     def id_number(self):
-        """Return the device id as an int"""
+        """Return the device id as an integer."""
         if self._id is None:
             return None
         return self._id.value
@@ -248,7 +262,7 @@ class GeneralPotentiostat:
         Raises:
             ECLibCustomException: If this class does not match the device type
         """
-        address = create_string_buffer(self.address)
+        address = self.address.encode('utf-8')
         self._id = c_int32()
         device_info = DeviceInfos()
         ret = self._eclib.BL_Connect(
@@ -373,20 +387,20 @@ class GeneralPotentiostat:
         return out
 
     def get_message(self, channel):
-        """ Return a message from the firmware of a channel """
+        """Return a message from the firmware of a channel."""
         size = c_uint32(255)
         message = create_string_buffer(255)
-        ret = self._eclib.BL_GetMessage(self._id, channel, byref(message),
-                                        byref(size))
+        ret = self._eclib.BL_GetMessage(self._id, channel, byref(message), byref(size))
         self.check_eclib_return_code(ret)
         return message.value
 
     # Technique functions:
-    def load_technique(self, channel, technique, first=True, last=True):
-        """Load a technique on the specified channel
+    def load_technique(self, channel, technique, first=True, last=True, display=False):
+        """Load a technique on the specified channel.
 
         Args:
-            channel (int): The number of the channel to load the technique onto
+            channel (int): The number of the channel to load the technique onto,
+                zero-based
             technique (Technique): The technique to load
             first (bool): Whether this technique is the first technique
             last (bool): Thether this technique is the last technique
@@ -396,10 +410,9 @@ class GeneralPotentiostat:
         """
         if self.series == 'sp300':
             filename, ext = os.path.splitext(technique.technique_filename)
-            c_technique_file = create_string_buffer(filename + '4' + ext)
+            c_technique_file = (filename + '4' + ext).encode('utf-8')
         else:
-            c_technique_file = create_string_buffer(
-                technique.technique_filename)
+            c_technique_file = technique.technique_filename.encode('utf-8')
 
         # Init TECCParams
         c_tecc_params = TECCParams()
@@ -417,7 +430,7 @@ class GeneralPotentiostat:
             c_tecc_params,
             first,
             last,
-            False,
+            display,
         )
         self.check_eclib_return_code(ret)
 
@@ -433,9 +446,9 @@ class GeneralPotentiostat:
             index (int): The index of the parameter
             tecc_param (TECCParam): An TECCParam struct
         """
-        c_label = create_string_buffer(label)
+        c_label = label.encode('utf-8')
         ret = self._eclib.BL_DefineBoolParameter(
-            byref(c_label), value, index, byref(tecc_param)
+            c_label, value, index, byref(tecc_param)
         )
         self.check_eclib_return_code(ret)
 
@@ -451,12 +464,9 @@ class GeneralPotentiostat:
             index (int): The index of the parameter
             tecc_param (TECCParam): An TECCParam struct
         """
-        c_label = create_string_buffer(label)
+        c_label = label.encode('utf-8')
         ret = self._eclib.BL_DefineSglParameter(
-            byref(c_label),
-            c_float(value),
-            index,
-            byref(tecc_param),
+            c_label, c_float(value), index, byref(tecc_param)
         )
         self.check_eclib_return_code(ret)
 
@@ -472,9 +482,9 @@ class GeneralPotentiostat:
             index (int): The index of the parameter
             tecc_param (TECCParam): An TECCParam struct
         """
-        c_label = create_string_buffer(label)
+        c_label = label.encode('utf-8')
         ret = self._eclib.BL_DefineIntParameter(
-            byref(c_label), value, index, byref(tecc_param)
+            c_label, value, index, byref(tecc_param)
         )
         self.check_eclib_return_code(ret)
 
@@ -512,8 +522,9 @@ class GeneralPotentiostat:
         for i, channel in enumerate(channels):
             c_channels[i] = channel
         p_channels = cast(c_channels, POINTER(c_uint8))
-        ret = self._eclib.BL_StartChannels(self._id, p_channels,
-                                           p_results, len(channels))
+        ret = self._eclib.BL_StartChannels(
+            self._id, p_channels, p_results, len(channels)
+        )
         self.check_eclib_return_code(ret)
         return list(c_results)
 
@@ -550,14 +561,15 @@ class GeneralPotentiostat:
         for i, channel in enumerate(channels):
             c_channels[i] = channel
         p_channels = cast(c_channels, POINTER(c_uint8))
-        ret = self._eclib.BL_StopChannels(self._id, p_channels,
-                                          p_results, len(channels))
+        ret = self._eclib.BL_StopChannels(
+            self._id, p_channels, p_results, len(channels)
+        )
         self.check_eclib_return_code(ret)
         return list(c_results)
 
     # Data functions
     def get_current_values(self, channel):
-        """Get the current values for the specified channel
+        """Get the current values for the specified channel.
 
         Args:
             channel (int): The number of the channel (zero based)
@@ -566,8 +578,7 @@ class GeneralPotentiostat:
             dict: A dict of current values information
         """
         current_values = CurrentValues()
-        ret = self._eclib.BL_GetCurrentValues(self._id, channel,
-                                              byref(current_values))
+        ret = self._eclib.BL_GetCurrentValues(self._id, channel, byref(current_values))
         self.check_eclib_return_code(ret)
 
         # Convert the struct to a dict and translate a few values
@@ -577,7 +588,7 @@ class GeneralPotentiostat:
         return out
 
     def get_data(self, channel):
-        """Get data for the specified channel
+        """Get data for the specified channel.
 
         Args:
             channel (int): The number of the channel (zero based)
@@ -588,7 +599,7 @@ class GeneralPotentiostat:
         """
         # Raw data is retrieved in an array of integers
         c_databuffer = (c_uint32 * 1000)()
-        p_data_buffer = cast(c_databuffer, POINTER(c_uint32))
+        p_data_buffer = cast(c_databuffer, POINTER(c_uint32))  # TODO: double-check this
         c_data_infos = DataInfos()
         c_current_values = CurrentValues()
 
@@ -632,8 +643,7 @@ class GeneralPotentiostat:
 
         """
         c_out_float = c_float()
-        ret = self._eclib.BL_ConvertNumericIntoSingle(numeric,
-                                                      byref(c_out_float))
+        ret = self._eclib.BL_ConvertNumericIntoSingle(numeric, byref(c_out_float))
         self.check_eclib_return_code(ret)
         return c_out_float.value
 
@@ -940,6 +950,8 @@ class Technique:
                   '>=' test
                 * -10002 means that an :class:`TechniqueArgument` failed the
                   'in_float_range' test
+                * -10003 means that an :class:`TechniqueArgument` had an
+                  unrecognized argument check
                 * -10010 means that it was not possible to find a conversion
                   function for the defined type
                 * -10011 means that the value cannot be converted with the
@@ -1073,7 +1085,7 @@ class Technique:
             return
 
         message = f"Unknown technique parameter check: {arg.check}"
-        raise ECLibCustomException(message, -10002)
+        raise ECLibCustomException(message, -10003)
 
 
 # Section 7.2 in the specification
@@ -1111,12 +1123,10 @@ class OCV(Technique):
         """
         args = (
             TechniqueArgument('Rest_time_T', 'single', duration, '>=', 0),
-            TechniqueArgument('Record_every_dE', 'single',
-                              record_every_dE, '>=', 0),
-            TechniqueArgument('Record_every_dT', 'single',
-                              record_every_dt, '>=', 0),
-            TechniqueArgument('E_Range', E_RANGES, E_range,
-                              'in', list(E_RANGES.values())),
+            TechniqueArgument('Record_every_dE', 'single', record_every_dE, '>=', 0),
+            TechniqueArgument('Record_every_dT', 'single', record_every_dt, '>=', 0),
+            TechniqueArgument('E_Range', E_RANGES, E_range, 'in',
+                              list(E_RANGES.values())),
         )
         super().__init__(args, 'ocv.ecc')
 
@@ -2422,9 +2432,13 @@ class MIR(Technique):
 
 
 # Structs
+# :All structures used by the library are aligned on the double-word. A double word
+# :refers to a 32-bit entity -> set _pack_ equal to 4 (bytes) to override default data
+# :alignment.
 class DeviceInfos(Structure):
-    """Device information struct"""
+    """Device information structure."""
 
+    _pack_ = 4
     _fields_ = [  # Translated to string with DEVICE_CODES
         ('DeviceCode', c_int32),
         ('RAMsize', c_int32),
@@ -2446,8 +2460,9 @@ class DeviceInfos(Structure):
 
 
 class ChannelInfos(Structure):
-    """Channel information structure"""
+    """Channel information structure."""
 
+    _pack_ = 4
     _fields_ = [
         ('Channel', c_int32),
         ('BoardVersion', c_int32),
@@ -2485,8 +2500,9 @@ class ChannelInfos(Structure):
 
 
 class CurrentValues(Structure):
-    """Current values structure"""
+    """Current values structure."""
 
+    _pack_ = 4
     _fields_ = [
         # Translate to string with STATES
         ('State', c_int32),  # Channel state
@@ -2515,8 +2531,9 @@ class CurrentValues(Structure):
 
 
 class DataInfos(Structure):
-    """DataInfos structure"""
+    """DataInfos structure."""
 
+    _pack_ = 4
     _fields_ = [
         ('IRQskipped', c_int32),  # Number of IRQ skipped
         ('NbRows', c_int32),  # Number of rows into the data buffer,
@@ -2543,8 +2560,9 @@ class DataInfos(Structure):
 
 
 class TECCParam(Structure):
-    """Technique parameter"""
+    """Technique parameter structure."""
 
+    _pack_ = 4
     _fields_ = [
         ('ParamStr', c_char * 64),
         ('ParamType', c_int32),
@@ -2558,8 +2576,9 @@ class TECCParam(Structure):
 
 
 class TECCParams(Structure):
-    """Technique parameters"""
+    """Technique parameters structure."""
 
+    _pack_ = 4
     _fields_ = [
         ('len', c_int32),
         ('pParams', POINTER(TECCParam)),
