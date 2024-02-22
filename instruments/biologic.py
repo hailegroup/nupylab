@@ -61,7 +61,7 @@ import sys
 import inspect
 from collections import namedtuple
 from ctypes import c_uint8, c_uint32, c_int32
-from ctypes import c_float, c_double, c_char
+from ctypes import c_float, c_double, c_char, c_char_p
 from ctypes import Structure
 from ctypes import create_string_buffer, byref, POINTER, cast
 
@@ -262,11 +262,11 @@ class GeneralPotentiostat:
         Raises:
             ECLibCustomException: If this class does not match the device type
         """
-        address = self.address.encode('utf-8')
+        address = c_char_p(self.address.encode('utf-8'))
         self._id = c_int32()
         device_info = DeviceInfos()
         ret = self._eclib.BL_Connect(
-            byref(address), timeout, byref(self._id), byref(device_info)
+            address, timeout, byref(self._id), byref(device_info)
         )
         self.check_eclib_return_code(ret)
         if DEVICE_CODES[device_info.DeviceCode] != self._type:
