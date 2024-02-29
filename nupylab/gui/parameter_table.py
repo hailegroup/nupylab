@@ -3,6 +3,7 @@
 import pandas as pd
 from pymeasure.display.widgets import TabWidget
 from pymeasure.display.Qt import QtWidgets, QtCore, QtGui
+from typing import Optional
 
 
 class FileLineEdit(QtWidgets.QLineEdit):
@@ -70,13 +71,16 @@ class TableModel(QtCore.QAbstractTableModel):
     * flags
     """
 
-    def __init__(self, df=None, float_digits=1, parent=None):
+    def __init__(
+            self, df: Optional[pd.DataFrame] = None, float_digits: int = 1, parent=None
+    ) -> None:
         """Set initial view."""
+        self.df: pd.DataFrame
         if df is None:
             self.df = pd.DataFrame(data=[0], columns=['None'])
         else:
             self.df = df
-        self.float_digits = float_digits
+        self.float_digits: int = float_digits
         super().__init__(parent)
 
     def rowCount(self, parent=None) -> int:
@@ -87,19 +91,21 @@ class TableModel(QtCore.QAbstractTableModel):
         """Return number of columns in .csv file."""
         return self.df.shape[1]
 
-    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
+    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole) -> Optional[str]:
         """Display table content."""
         if index.isValid() and role == QtCore.Qt.ItemDataRole.DisplayRole:
             value = self.df.iloc[index.row(), index.column()]
             if isinstance(value, float):
                 return f"{value:.{self.float_digits:d}g}"
             return str(value)
+        return None
 
-    def headerData(self, section, orientation, role):
+    def headerData(self, section, orientation, role) -> Optional[str]:
         """Set header content."""
         if (role == QtCore.Qt.ItemDataRole.DisplayRole
                 and orientation == QtCore.Qt.Orientation.Horizontal):
             return str(self.df.columns[section])
+        return None
 
     def setData(self, index, value, role) -> bool:
         """Update cell contents. Called each time a cell is edited."""
@@ -113,11 +119,11 @@ class TableModel(QtCore.QAbstractTableModel):
         if index.isValid():
             return QtCore.Qt.ItemFlag.ItemIsEditable | super().flags(index)
 
-    def export_df(self):
+    def export_df(self) -> pd.DataFrame:
         """Return parameters table dataframe."""
         return self.df
 
-    def update_data(self, path):
+    def update_data(self, path) -> None:
         """Update data upon selecting new parameters file."""
         self.beginResetModel()
         self.df = pd.read_csv(path, dtype=str)

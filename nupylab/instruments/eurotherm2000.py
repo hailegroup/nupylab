@@ -3,7 +3,7 @@
 Eurotherm 2000 series only supports RTU MODBUS mode. Transmission format:
     * 1 start bit
     * 8 data bits
-    * NONE, ODD, or EVEN parity bit
+    * NONE (default), ODD, or EVEN parity bit
     * 1 stop bit
 
 CRC is automatically calculated by minimalmodbus.
@@ -22,7 +22,8 @@ of display settings such as dwell units.
 
 from __future__ import annotations
 import logging
-import minimalmodbus
+import minimalmodbus  # type: ignore
+from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -42,32 +43,36 @@ class Eurotherm2000(minimalmodbus.Instrument):
                  port: str,
                  clientaddress: int,
                  baudrate: int = 9600,
+                 timeout: float = 1,
                  **kwargs) -> None:
         """Connect to Eurotherm and initialize program and setpoint list.
 
         Args:
-            port: port name to connect to, e.g. `COM1`
-            clientaddress: integer address of Eurotherm in the range of 1 to 254
-            baudrate: baud rate, one of 9600 (default), 19200, 4800, 2400, or 1200
+            port: port name to connect to, e.g. `COM1`.
+            clientaddress: integer address of Eurotherm in the range of 1 to 254.
+            baudrate: baud rate, one of 9600 (default), 19200, 4800, 2400, or 1200.
+            timeout: timeout for communication in seconds.
         """
         super().__init__(port, clientaddress)
         self.serial.baudrate = baudrate
+        self.serial.timeout = timeout
         self._initialize_setpoints()
         self._initialize_programs()
 
-    def read_float(self, register: int):  # Float registers are double sized and offset
+    # Float registers are double sized and offset
+    def read_float(self, register: int) -> float:
         """Convert to higher register to properly read floats."""
-        return super().read_float(2 * register + 32768)
+        return float(super().read_float(2 * register + 32768))
 
-    def write_float(self, register: int, val: int | float):
+    def write_float(self, register: int, val: float):
         """Convert to higher register to properly write floats."""
         super().write_float(2 * register + 32768, val)
 
-    def read_time(self, register: int):
+    def read_time(self, register: int) -> float:
         """Read time parameters in seconds."""
-        super().read_long(2 * register + 32768) / 1000
+        return float(super().read_long(2 * register + 32768) / 1000)
 
-    def write_time(self, register: int, val: int | float):
+    def write_time(self, register: int, val: float):
         """Write time parameters in seconds."""
         super().write_long(2 * register + 32768, round(val * 1000))
 
@@ -102,7 +107,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
         return self.read_float(2)
 
     @target_setpoint.setter
-    def target_setpoint(self, val: int | float):
+    def target_setpoint(self, val: float):
         self.write_float(2, val)
 
     @property
@@ -233,16 +238,17 @@ class Eurotherm2000(minimalmodbus.Instrument):
                 {key: None for key in range(1, self.eurotherm._num_setpoints+1)}
             )
 
-        def __getitem__(self, key: int) -> float:
+        def __getitem__(self, key: int) -> Optional[float]:
             """Read appropriate register."""
             if key < 1 or key > self.eurotherm._num_setpoints:
                 log.warning("Invalid setpoint number")
+                return None
             else:
                 return self.eurotherm.read_float(SETPOINT_REGISTERS[key - 1])
 
-        def __setitem__(self, key: int, val: int | float) -> None:
+        def __setitem__(self, key: int, val: float) -> None:
             """Write to appropriate register."""
-            if key < 1 or key > self.instrument._num_setpoints:
+            if key < 1 or key > self.eurotherm._num_setpoints:
                 log.warning("Invalid setpoint number")
             else:
                 self.eurotherm.write_float(SETPOINT_REGISTERS[key - 1], val)
@@ -304,12 +310,15 @@ class Eurotherm2000(minimalmodbus.Instrument):
                 self.offset = offset
                 self.eurotherm = eurotherm
 
-            def refresh(self, val: int | None = None) -> None:
+            def refresh(self, val: Optional[int] = None) -> None:
                 """Create new dict from segment type."""
                 self.clear()
-                if val is None:
-                    val = self.eurotherm.read_register(self.offset)
-                self.registers = SEGMENTS_LIST[val]
+                if ((self.offset % 8192) % 136) == 0:
+                    self.registers = GENERAL_REGISTERS
+                else:
+                    if val is None:
+                        val = self.eurotherm.read_register(self.offset)
+                    self.registers = SEGMENTS_LIST[val]
                 self.update({key: None for key in self.registers.keys()})
 
             def __setitem__(self, key: str, val) -> None:
@@ -364,12 +373,13 @@ class Eurotherm2000(minimalmodbus.Instrument):
 
                 super().__setitem__(key, val)  # So items() method behaves as expected
 
-            def __getitem__(self, key: str) -> int | float | str:
+            def __getitem__(self, key: str) -> Any:
                 """Read appropriate register and translate value if necessary."""
                 key = key.casefold()
+                val: Any
                 if key not in self.registers:
                     log.warning("Parameter not in current segment type.")
-                    return
+                    return None
 
                 if key in FLOAT_PARAMETERS:
                     val = self.eurotherm.read_float(self.registers[key] + self.offset)
@@ -421,7 +431,7 @@ RAMP_TIME_REGISTERS = {"segment type": 0,
                        "duration": 2}
 
 DWELL_REGISTERS = {"segment type": 0,
-                   "duration": 1}
+                   "duration": 2}
 
 STEP_REGISTERS = {"segment type": 0,
                   "target setpoint": 1}
