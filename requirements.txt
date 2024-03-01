@@ -1,0 +1,9 @@
+gpib-ctypes
+minimalmodbus
+numpy
+pandas
+pint
+pymeasure >= 0.13.2
+pytest
+pyvisa
+pyvisa-py

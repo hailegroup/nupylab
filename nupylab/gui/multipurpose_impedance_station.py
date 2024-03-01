@@ -58,7 +58,7 @@ class Experiment(Procedure):
     Running this procedure calls startup, execute, and shutdown methods sequentially.
     """
 
-    delay = FloatParameter('Record Time', units='s', default=1.0)
+    delay = FloatParameter('Record Time', units='s', default=2.0)
 
     # rm = pyvisa.ResourceManager('@py')
     rm = pyvisa.ResourceManager()
@@ -167,6 +167,7 @@ class Experiment(Procedure):
         threads: List[Thread] = [furnace_thread, rod4_thread,]
 
         if self.pO2_toggle:
+            self._ch_1_first: bool = True
             pO2_queue: SimpleQueue = SimpleQueue()
             pO2_thread = Thread(
                 target=self._sub_loop, args=(self._update_pO2, pO2_queue)
@@ -334,13 +335,23 @@ class Experiment(Procedure):
         Args:
             pO2_queue: queue for holding sensor temperature and pO2 measurements.
         """
-        a = self.pO2_intercept
-        b = self.pO2_slope
-        self.keithley.ch_1.setup_voltage()
-        voltage = -1 * self.keithley.voltage
-        self.keithley.ch_2.setup_temperature()
-        temperature = self.keithley.temperature
-        pO2 = 0.2095*10**(20158 * ((voltage - b) / (temperature + 273.15) - a))
+        a: float = self.pO2_intercept
+        b: float = self.pO2_slope
+        voltage: float
+        temperature: float
+        pO2: float
+        # Toggle between which channel is measured first to speed up measurement cycle
+        if self._ch_1_first:
+            voltage = -1 * self.keithley.voltage
+            self.keithley.ch_2.setup_temperature()
+            temperature = self.keithley.temperature
+            self._ch_1_first = False
+        else:
+            temperature = self.keithley.temperature
+            self.keithley.ch_1.setup_voltage()
+            voltage = -1 * self.keithley.voltage
+            self._ch_1_first = True
+        pO2 = 0.2095 * 10**(20158 * ((voltage - b) / (temperature + 273.15) - a))
         pO2_queue.put(
             (ResultTuple('pO2 Sensor Temperature (degC)', temperature),
              ResultTuple('pO2 (atm)', pO2))
@@ -401,6 +412,7 @@ class Experiment(Procedure):
         self.keithley = Keithley2182(self.keithley_port)
         self.keithley.reset()
         self.keithley.thermocouple = 'S'
+        self.keithley.ch_1.setup_voltage()
         log.info("Connection to Keithley-2182 successful.")
 
     def _initialize_biologic(self) -> None:

@@ -58,10 +58,8 @@
 
 from __future__ import annotations
 from collections import namedtuple
-from ctypes import c_uint8, c_uint32, c_int32
-from ctypes import c_float, c_double, c_char
-from ctypes import Structure
-from ctypes import create_string_buffer, byref, POINTER, cast
+from ctypes import c_uint8, c_uint32, c_int32, c_float, c_double, c_char
+from ctypes import Structure, create_string_buffer, byref, POINTER, cast
 import inspect
 import os
 import sys

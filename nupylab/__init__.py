@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Jan 11 08:23:18 2024
+import os
+with open(os.path.join(os.path.abspath('../'), 'VERSION.txt')) as version_file:
+    version = version_file.read().strip()
 
-@author: Connor Carr
-"""
-
+__version__ = version
+__author__ = "Connor Carr"
+__credits__ = "Haile Group"

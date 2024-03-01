@@ -10,7 +10,8 @@ Welcome to NUPyLab's documentation!
    :maxdepth: 2
    :caption: Contents:
 
-
+   introduction
+   nupylab
 
 Indices and tables
 ==================
