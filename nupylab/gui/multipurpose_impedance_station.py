@@ -21,7 +21,7 @@ from pint import UnitRegistry
 from queue import Empty, SimpleQueue
 import sys
 from threading import Thread
-from time import sleep, time
+from time import sleep, monotonic
 from typing import Callable, List, TYPE_CHECKING
 
 import numpy as np
@@ -35,13 +35,10 @@ from pymeasure.experiment import (
 from pymeasure.instruments.keithley import Keithley2182
 from pymeasure.instruments.proterial import ROD4
 
+from nupylab.instruments import BiologicPotentiostat, Eurotherm2000
+from nupylab.instruments.biologic import OCV, PEIS
+from nupylab.utilities.parameter_table import ParameterTableWidget
 
-# TODO: make nupylab installable module, remove path append
-# sys.path.append('/home/connor/Documents/NUPyLab/')
-sys.path.append(r"C:\Users\PROB-E\Desktop\NUPyLab")
-from nupylab.gui.parameter_table import ParameterTableWidget
-from nupylab.instruments.biologic import GeneralPotentiostat, OCV, PEIS
-from nupylab.instruments.eurotherm2000 import Eurotherm2000
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -60,8 +57,8 @@ class Experiment(Procedure):
 
     delay = FloatParameter('Record Time', units='s', default=2.0)
 
-    # rm = pyvisa.ResourceManager('@py')
-    rm = pyvisa.ResourceManager()
+    rm = pyvisa.ResourceManager('@py')
+    # rm = pyvisa.ResourceManager()
     resources = rm.list_resources()
 
     keithley_port = ListParameter(
@@ -185,13 +182,13 @@ class Experiment(Procedure):
 
         self._counter: int = 0
         self._finished: bool = False
-        self._start_time: float = time()
+        self._start_time: float = monotonic()
         for thread in threads:
             thread.start()
 
         while True:
             self._counter += 1
-            sleep_time: float = self.delay * self._counter - (time() - self._start_time)
+            sleep_time: float = self.delay * self._counter - (monotonic() - self._start_time)
             sleep(max(0, sleep_time))
             _ = self._emit_results(queues)  # Emit after other threads have run
 
@@ -245,7 +242,7 @@ class Experiment(Procedure):
         """
         while not self.should_stop() and not self._finished:
             process(*args)
-            sleep_time = self.delay * self._counter - (time() - self._start_time)
+            sleep_time = self.delay * self._counter - (monotonic() - self._start_time)
             sleep(max(0, sleep_time))
 
     def _parse_results(self, result: ResultTuple) -> None:
@@ -281,6 +278,9 @@ class Experiment(Procedure):
             else:
                 for result in results:
                     self._parse_results(result)
+
+        if filled_queues == 0:
+            return filled_queues
 
         if len(self._multivalue_results) == 0:
             self.emit('results', self.data)
@@ -416,7 +416,7 @@ class Experiment(Procedure):
         log.info("Connection to Keithley-2182 successful.")
 
     def _initialize_biologic(self) -> None:
-        self.biologic = GeneralPotentiostat('SP200', self.biologic_port, None)
+        self.biologic = BiologicPotentiostat('SP200', self.biologic_port, None)
         self.biologic.connect()
         self.biologic.load_firmware((1,))
 
@@ -593,7 +593,7 @@ class MainWindow(ManagedDockWindow):
                           'False': False, 'FALSE': False, 'false': False}, inplace=True)
         converted_df: pd.DataFrame = self.verify_parameters(table_df)
 
-        start_time: float = time()
+        start_time: float = monotonic()
         num_steps: int = converted_df.shape[0]
         current_step: int = 1
 

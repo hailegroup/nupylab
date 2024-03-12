@@ -59,14 +59,38 @@ class Eurotherm2000(minimalmodbus.Instrument):
         self._initialize_setpoints()
         self._initialize_programs()
 
-    # Float registers are double sized and offset
-    def read_float(self, register: int) -> float:
+    # Float and long integer registers are double sized and offset
+    def read_float(
+            self,
+            registeraddress: int,
+            functioncode: int = 3,
+            number_of_registers: int = 2,
+            byteorder: int = 0
+    ) -> float:
         """Convert to higher register to properly read floats."""
-        return float(super().read_float(2 * register + 32768))
+        return super().read_float(
+            2 * registeraddress + 32768,
+            functioncode,
+            number_of_registers,
+            byteorder
+        )
 
-    def write_float(self, register: int, val: float):
+    def write_float(
+            self,
+            registeraddress: int,
+            val: float,
+            functioncode: int = 3,
+            number_of_registers: int = 2,
+            byteorder: int = 0
+    ) -> float:
         """Convert to higher register to properly write floats."""
-        super().write_float(2 * register + 32768, val)
+        super().write_float(
+            2 * registeraddress + 32768,
+            val,
+            functioncode,
+            number_of_registers,
+            byteorder
+        )
 
     def read_time(self, register: int) -> float:
         """Read time parameters in seconds."""
@@ -140,7 +164,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
     @current_program.setter
     def current_program(self, val: int):
         if val < 0 or val > self._num_programs:
-            log.warning("Invalid program number")
+            log.warning("Eurotherm 2000 received invalid program number")
         else:
             self.write_register(22, val)
 
@@ -215,7 +239,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
     @active_setpoint.setter
     def active_setpoint(self, val: int):
         if val < 1 or val > self._num_setpoints:
-            log.warning("Invalid setpoint number")
+            log.warning("Eurotherm2000 received invalid setpoint number")
         else:
             self.write_register(15, val-1)
 
@@ -241,7 +265,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
         def __getitem__(self, key: int) -> Optional[float]:
             """Read appropriate register."""
             if key < 1 or key > self.eurotherm._num_setpoints:
-                log.warning("Invalid setpoint number")
+                log.warning("Eurotherm200 segment received invalid setpoint number")
                 return None
             else:
                 return self.eurotherm.read_float(SETPOINT_REGISTERS[key - 1])
@@ -249,7 +273,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
         def __setitem__(self, key: int, val: float) -> None:
             """Write to appropriate register."""
             if key < 1 or key > self.eurotherm._num_setpoints:
-                log.warning("Invalid setpoint number")
+                log.warning("Eurotherm200 segment received invalid setpoint number")
             else:
                 self.eurotherm.write_float(SETPOINT_REGISTERS[key - 1], val)
 
@@ -325,16 +349,16 @@ class Eurotherm2000(minimalmodbus.Instrument):
                 """Translate to register values if necessary, then write register."""
                 key = key.casefold()
                 if self.offset < 8328:
-                    log.warning("Program 0 is read-only.")
+                    log.warning("Eurotherm program 0 is read-only.")
                     return
 
                 if key not in self.registers:
-                    log.warning(f"Parameter {key} not in current segment type.")
+                    log.warning("Parameter `%s` not in current segment type.", key)
                     return
 
                 if key == "segment type":
                     if not isinstance(val, str):
-                        log.warning(f"Invalid val type {type(val)} for {key}.")
+                        log.warning("Invalid val type `%s` for `%s`.", type(val), key)
                         return
                     # Get new register offsets and update values
                     val_translated = reverse_dict(SEGMENT_TYPE)[val]
@@ -342,13 +366,13 @@ class Eurotherm2000(minimalmodbus.Instrument):
 
                 if key in FLOAT_PARAMETERS:
                     if not isinstance(val, (float, int)):
-                        log.warning(f"Invalid val type {type(val)} for {key}.")
+                        log.warning("Invalid val type `%s` for `%s`.", type(val), key)
                         return
                     self.eurotherm.write_float(self.registers[key] + self.offset, val)
 
                 elif key in WORD_PARAMETERS:
                     if not isinstance(val, str):
-                        log.warning(f"Invalid val type {type(val)} for {key}.")
+                        log.warning("Invalid val type `%s` for `%s`.", type(val), key)
                         return
                     word_list = key.upper().split()
                     key_dict = word_list[0] + "_" + word_list[1]
@@ -359,7 +383,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
 
                 elif key in INT_PARAMETERS:
                     if not isinstance(val, int):
-                        log.warning(f"Invalid val type {type(val)} for {key}.")
+                        log.warning("Invalid val type `%s` for `%s`.", type(val), key)
                         return
                     self.eurotherm.write_register(
                         self.registers[key] + self.offset, val
@@ -367,7 +391,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
 
                 else:
                     if not isinstance(val, (float, int)):
-                        log.warning(f"Invalid val type {type(val)} for {key}.")
+                        log.warning("Invalid val type `%s` for `%s`.", type(val), key)
                         return
                     self.eurotherm.write_time(self.registers[key] + self.offset, val)
 

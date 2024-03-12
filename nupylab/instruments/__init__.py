@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Jan 11 08:23:18 2024
-
-@author: Connor Carr
-"""
-
+from .biologic import BiologicPotentiostat
+from .eurotherm2000 import Eurotherm2000
+from .eurotherm3200 import Eurotherm3200

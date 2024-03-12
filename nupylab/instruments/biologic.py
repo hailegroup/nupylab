@@ -5,11 +5,11 @@
 
 .. code-block:: python
 
-    from nupylab.instruments.biologic import GeneralPotentiostat, OCV
+    from nupylab.instruments.biologic import BiologicPotentiostat, OCV
     address = '192.109.209.128'
-    sp200 = GeneralPotentiostat('SP200', address)
+    sp200 = BiologicPotentiostat('SP200', address)
     sp200.connect()
-    sp200.load_firmware([0,],)
+    sp200.load_firmware((1,))
     ocv = OCV(duration=60,
               record_every_dE=0.01,
               record_every_dt=1.0,
@@ -126,10 +126,8 @@ TechniqueArgument = namedtuple(
 )
 
 
-class GeneralPotentiostat:
-    """Driver for the potentiostats that can be controlled by the EC-lib DLL.
-
-    A driver for a specific potentiostat type will inherit from this class.
+class BiologicPotentiostat:
+    """Driver for BioLogic potentiostats that can be controlled by the EC-lib DLL.
 
     Raises:
         ECLibError: All regular methods in this class use the EC-lib DLL
@@ -685,7 +683,7 @@ class KBIOData:
 
     def __init__(
             self, c_databuffer: Array[c_uint32], c_data_infos: DataInfos,
-            c_current_values: CurrentValues, instrument: GeneralPotentiostat
+            c_current_values: CurrentValues, instrument: BiologicPotentiostat
     ) -> None:
         """Initialize the KBIOData object.
 
@@ -694,7 +692,7 @@ class KBIOData:
                 buffer.
             c_data_infos: :class:`.DataInfos` structure.
             c_current_values: :class:`.CurrentValues` structure.
-            instrument: Instrument instance of :class:`.GeneralPotentiostat`.
+            instrument: Instrument instance of :class:`.BiologicPotentiostat`.
 
         Raises:
             ECLibCustomException: Where the error codes indicate the following:
@@ -735,7 +733,7 @@ class KBIOData:
         # Parse the data
         self._parse_data(c_databuffer, c_current_values.TimeBase, instrument)
 
-    def _init_data_fields(self, instrument: GeneralPotentiostat) -> List[DataField]:
+    def _init_data_fields(self, instrument: BiologicPotentiostat) -> List[DataField]:
         """Initialize the data fields property."""
         # Get the data_fields class variable from the corresponding technique class
         if self.technique not in TECHNIQUE_IDENTIFIERS_TO_CLASS:
@@ -779,14 +777,14 @@ class KBIOData:
 
     def _parse_data(
             self, c_databuffer: Array[c_uint32], timebase: int,
-            instrument: GeneralPotentiostat) -> None:
+            instrument: BiologicPotentiostat) -> None:
         """Parse the data and write to c_databuffer.
 
         Args:
             c_databuffer: ctypes array of :py:class:`ctypes.c_uint32` used as the data
                 buffer.
             timebase: The timebase for the time calculation in microseconds.
-            instrument: Instrument instance of :class:`.GeneralPotentiostat`.
+            instrument: Instrument instance of :class:`.BiologicPotentiostat`.
         """
         # The data is written as one long array of points with a certain
         # amount of colums. Get the index of the first item of each point by
@@ -946,11 +944,11 @@ class Technique:
         # The arguments must be converted to an array of TECCParam
         self._c_args: Array[TECCParam]
 
-    def c_args(self, instrument: GeneralPotentiostat) -> Array[TECCParam]:
+    def c_args(self, instrument: BiologicPotentiostat) -> Array[TECCParam]:
         """Return the arguments struct.
 
         Args:
-            instrument: Instrument instance of :class:`.GeneralPotentiostat`.
+            instrument: Instrument instance of :class:`.BiologicPotentiostat`.
 
         Returns:
             A ctypes array of :class:`.TECCParam`
@@ -973,11 +971,11 @@ class Technique:
             self._init_c_args(instrument)
         return self._c_args
 
-    def _init_c_args(self, instrument: GeneralPotentiostat) -> None:
+    def _init_c_args(self, instrument: BiologicPotentiostat) -> None:
         """Initialize the arguments structure.
 
         Args:
-            instrument: Instrument instance of :class:`.GeneralPotentiostat`.
+            instrument: Instrument instance of :class:`.BiologicPotentiostat`.
         """
         # If it is a technique that has multistep arguments, get the number of steps
         step_number = 1
@@ -2887,7 +2885,7 @@ VMP3SERIES = [
 # Hack to make links for classes in the documentation
 __doc__ += '\n\nInstrument classes:\n'
 for name, klass in inspect.getmembers(sys.modules[__name__], inspect.isclass):
-    if issubclass(klass, GeneralPotentiostat) or klass is GeneralPotentiostat:
+    if issubclass(klass, BiologicPotentiostat) or klass is BiologicPotentiostat:
         __doc__ += ' * :class:`.{.__name__}`\n'.format(klass)
 
 __doc__ += '\n\nTechniques:\n'

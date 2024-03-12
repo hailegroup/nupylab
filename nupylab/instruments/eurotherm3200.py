@@ -20,32 +20,82 @@ for word and int parameters. Time parameters are written and read in seconds reg
 of display settings such as dwell units.
 """
 
+from __future__ import annotations
 import logging
-import minimalmodbus
+import minimalmodbus  # type: ignore
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 
 class Eurotherm3200(minimalmodbus.Instrument):
-    """Instrument class for Eurotherm 2000 series process controller.
+    """Instrument class for Eurotherm 3200 series process controller.
+
+    The 3200 series has a program with 4 segments, each consisting of a target setpoint,
+    ramp rate, and dwell time. Segment parameters are accessible either by referencing
+    the segment sub-class they are attached to, e.g. `segment1.ramp_rate`, or by
+    referencing the parameter directly with its corresponding segment number appended,
+    e.g. `ramp_rate1`.
 
     Attributes:
         serial: pySerial serial port object, for setting data transfer parameters.
-        setpoints: dict of available setpoints.
-        programs: list of available programs, each program containing a list of segment
-            dictionaries.
+        segments: program segments, accessible as segment1, segment2, etc.
     """
 
-    def read_float(self, register: int):  # Float registers are double sized and offset
+    def __init__(
+            self, port: str, clientaddress: int, baudrate: int = 9600,
+            timeout: float = 1, **kwargs
+    ) -> None:
+        """Connect to Eurotherm.
+
+        Args:
+            port: port name to connect to, e.g. `COM1`.
+            clientaddress: integer address of Eurotherm in the range of 1 to 254.
+            baudrate: baud rate, one of 9600 (default), 19200, 4800, 2400, or 1200.
+            timeout: timeout for communication in seconds.
+        """
+        super().__init__(port, clientaddress, **kwargs)
+        self.serial.baudrate = baudrate
+        self.serial.timeout = timeout
+        self.segment1 = self.Segment(1, self)
+        self.segment2 = self.Segment(2, self)
+        self.segment3 = self.Segment(3, self)
+        self.segment4 = self.Segment(4, self)
+
+    # Float and long integer registers are double sized and offset
+    def read_float(
+            self,
+            registeraddress: int,
+            functioncode: int = 3,
+            number_of_registers: int = 2,
+            byteorder: int = 0
+    ) -> float:
         """Convert to higher register to properly read floats."""
-        return super().read_float(2 * register + 32768)
+        return super().read_float(
+            2 * registeraddress + 32768,
+            functioncode,
+            number_of_registers,
+            byteorder
+        )
 
-    def write_float(self, register: int, val: float):
+    def write_float(
+            self,
+            registeraddress: int,
+            val: float,
+            functioncode: int = 3,
+            number_of_registers: int = 2,
+            byteorder: int = 0
+    ) -> float:
         """Convert to higher register to properly write floats."""
-        super().write_float(2 * register + 32768, val)
+        super().write_float(
+            2 * registeraddress + 32768,
+            val,
+            functioncode,
+            number_of_registers,
+            byteorder
+        )
 
-    def read_time(self, register: int):
+    def read_time(self, register: int) -> float:
         """Read time parameters in seconds."""
         return super().read_long(2 * register + 32768) / 1000
 
@@ -54,12 +104,12 @@ class Eurotherm3200(minimalmodbus.Instrument):
         super().write_long(2 * register + 32768, round(val * 1000))
 
     @property
-    def process_value(self):
+    def process_value(self) -> float:
         """Process variable."""
         return self.read_float(1)
 
     @property
-    def target_setpoint(self):
+    def target_setpoint(self) -> float:
         """Target setpoint (if in manual mode)."""
         return self.read_float(2)
 
@@ -68,12 +118,12 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(2, val)
 
     @property
-    def output_level(self):
+    def output_level(self) -> float:
         """Power output in percent."""
         return self.read_float(3)
 
     @property
-    def working_output(self):
+    def working_output(self) -> float:
         """Read-only if in auto mode."""
         return self.read_float(4)
 
@@ -82,24 +132,24 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(4, val)
 
     @property
-    def working_setpoint(self):
+    def working_setpoint(self) -> float:
         """Working set point. Read only."""
         return self.read_float(5)
 
     @property
-    def active_setpoint(self):
+    def active_setpoint(self) -> int:
         """1: SP1, 2: SP2."""
         return self.read_register(15)+1
 
     @active_setpoint.setter
     def active_setpoint(self, val: int):
         if val not in (1, 2):
-            log.warning(f"Setpoint must be 1 or 2, not {val}.")
+            log.warning("Eurotherm3200 received invalid setpoint number")
         else:
             self.write_register(15, val-1)
 
     @property
-    def program_status(self):
+    def program_status(self) -> str:
         """Program status."""
         program_status_dict = {0: 'reset',
                                1: 'run',
@@ -116,48 +166,48 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_register(23, program_status_dict[val.casefold()])
 
     @property
-    def setpoint1(self):
+    def setpoint1(self) -> float:
         """Do not write continuously changing values to this variable."""
-        self.read_float(24)
+        return self.read_float(24)
 
     @setpoint1.setter
     def setpoint1(self, val: float):
         self.write_float(24, val)
 
     @property
-    def setpoint2(self):
+    def setpoint2(self) -> float:
         """Do not write continuously changing values to this variable."""
-        self.read_float(24)
+        return self.read_float(24)
 
     @setpoint2.setter
     def setpoint2(self, val: float):
         self.write_float(25, val)
 
     @property
-    def remote_setpoint(self):
+    def remote_setpoint(self) -> float:
         """Local/remote setpoint is selected with address 276."""
-        self.read_float(26)
+        return self.read_float(26)
 
     @remote_setpoint.setter
     def remote_setpoint(self, val: float):
         self.write_float(26, val)
 
     @property
-    def setpoint_rate_limit(self):
+    def setpoint_rate_limit(self) -> float:
         """0 = no rate limit."""
-        self.read_float(35)
+        return self.read_float(35)
 
     @setpoint_rate_limit.setter
     def setpoint_rate_limit(self, val: float):
         self.write_float(35, val)
 
     @property
-    def calculated_error(self):
+    def calculated_error(self) -> float:
         """Error = PV - SP."""
         return self.read_float(39)
 
     @property
-    def remote_setpoint_enabled(self):
+    def remote_setpoint_enabled(self) -> bool:
         """Select whether local or remote (comms) setpoint is selected.
 
         Remote setpoint is stored in address 26.
@@ -172,7 +222,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_register(276, remote_dict[val])
 
     @property
-    def end_type(self):
+    def end_type(self) -> str:
         """Programmer end type."""
         end_type_dict = {0: 'off', 1: 'dwell', 2: 'sp2', 3: 'reset'}
         val = self.read_register(328)
@@ -184,7 +234,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_register(328, end_type_dict[val.casefold()])
 
     @property
-    def program_cycles(self):
+    def program_cycles(self) -> int:
         """Number of program cycles to run."""
         return self.read_register(332)
 
@@ -193,12 +243,12 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_register(332, val)
 
     @property
-    def current_program_cycle(self):
+    def current_program_cycle(self) -> int:
         """Current program cycle number."""
         return self.read_register(333)
 
     @property
-    def ramp_units(self):
+    def ramp_units(self) -> str:
         """Degrees per `mins`, `hours`, or `secs`."""
         ramp_dict = {0: 'mins', 1: 'hours', 2: 'secs'}
         val = self.read_register(531)
@@ -210,7 +260,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_register(531, ramp_dict[val.casefold()])
 
     @property
-    def dwell1(self):
+    def dwell1(self) -> float:
         """Programmer dwell 1 duration in seconds."""
         return self.read_time(1280)
 
@@ -219,7 +269,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_time(1280, val)
 
     @property
-    def target_setpoint1(self):
+    def target_setpoint1(self) -> float:
         """Programmer target setpoint 1."""
         return self.read_float(1281)
 
@@ -228,7 +278,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(1281, val)
 
     @property
-    def ramp_rate1(self):
+    def ramp_rate1(self) -> float:
         """Programmer ramp rate 1."""
         return self.read_float(1282)
 
@@ -237,7 +287,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(1282, val)
 
     @property
-    def dwell2(self):
+    def dwell2(self) -> float:
         """Programmer dwell 2 duration in seconds."""
         return self.read_time(1283)
 
@@ -246,7 +296,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_time(1283, val)
 
     @property
-    def target_setpoint2(self):
+    def target_setpoint2(self) -> float:
         """Programmer target setpoint 2."""
         return self.read_float(1284)
 
@@ -255,7 +305,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(1284, val)
 
     @property
-    def ramp_rate2(self):
+    def ramp_rate2(self) -> float:
         """Programmer ramp rate 2."""
         return self.read_float(1285)
 
@@ -264,7 +314,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(1285, val)
 
     @property
-    def dwell3(self):
+    def dwell3(self) -> float:
         """Programmer dwell 3 duration in seconds."""
         return self.read_time(1286)
 
@@ -273,7 +323,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_time(1286, val)
 
     @property
-    def target_setpoint3(self):
+    def target_setpoint3(self) -> float:
         """Programmer target setpoint 3."""
         return self.read_float(1287)
 
@@ -282,7 +332,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(1287, val)
 
     @property
-    def ramp_rate3(self):
+    def ramp_rate3(self) -> float:
         """Programmer ramp rate 3."""
         return self.read_float(1288)
 
@@ -291,7 +341,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(1288, val)
 
     @property
-    def dwell4(self):
+    def dwell4(self) -> float:
         """Programmer dwell 4 duration in seconds."""
         return self.read_time(1289)
 
@@ -300,7 +350,7 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_time(1289, val)
 
     @property
-    def target_setpoint4(self):
+    def target_setpoint4(self) -> float:
         """Programmer target setpoint 4."""
         return self.read_float(1290)
 
@@ -309,10 +359,50 @@ class Eurotherm3200(minimalmodbus.Instrument):
         self.write_float(1290, val)
 
     @property
-    def ramp_rate4(self):
+    def ramp_rate4(self) -> float:
         """Programmer ramp rate 4."""
         return self.read_float(1291)
 
     @ramp_rate4.setter
     def ramp_rate4(self, val: float):
         self.write_float(1291, val)
+
+    class Segment:
+        """A class for each (target, ramp rate, dwell time) segment."""
+
+        def __init__(self, segment_num: int, eurotherm: Eurotherm3200) -> None:
+            """Create segment list and read current values.
+
+            Args:
+                segment_num: segment number, from 1 to 4.
+                eurotherm: Eurotherm3200 instance. Provides read/write access.
+            """
+            self.offset: int = (segment_num - 1) * 3
+            self.eurotherm: Eurotherm3200 = eurotherm
+
+        @property
+        def dwell(self) -> float:
+            """Segment dwell duration in seconds."""
+            return self.eurotherm.read_time(1280 + self.offset)
+
+        @dwell.setter
+        def dwell(self, val: float):
+            self.eurotherm.write_time(1280 + self.offset, val)
+
+        @property
+        def target_setpoint(self) -> float:
+            """Segment target setpoint."""
+            return self.eurotherm.read_float(1281 + self.offset)
+
+        @target_setpoint.setter
+        def target_setpoint(self, val: float):
+            self.eurotherm.write_float(1281 + self.offset, val)
+
+        @property
+        def ramp_rate(self) -> float:
+            """Segment ramp rate."""
+            return self.eurotherm.read_float(1282 + self.offset)
+
+        @ramp_rate.setter
+        def ramp_rate(self, val: float):
+            self.eurotherm.write_float(1282 + self.offset, val)
