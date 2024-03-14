@@ -3,7 +3,7 @@ minimalmodbus
 numpy
 pandas
 pint
-pymeasure >= 0.13.2
+pymeasure
 pytest
 pyvisa
 pyvisa-py

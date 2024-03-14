@@ -137,12 +137,12 @@ class BiologicPotentiostat:
     """
 
     def __init__(
-            self, type_: str, address: str, eclib_dll_path: Optional[str] = None
+            self, model: str, address: str, eclib_dll_path: Optional[str] = None
     ) -> None:
         r"""Initialize the potentiostat driver.
 
         Args:
-            type_: The device type e.g. 'SP200'
+            model: The device model e.g. 'SP200'
             address: The address of the instrument, either IP address or 'USB0', 'USB1',
                 etc.
             eclib_dll_path: The path to the EClib DLL. The default
@@ -155,11 +155,11 @@ class BiologicPotentiostat:
         Raises:
             WindowsError: If the EClib DLL cannot be found
         """
-        type_ = 'KBIO_DEV_' + type_.upper()
-        self._type = type_
-        if type_ in SP300SERIES:
+        model = 'KBIO_DEV_' + model.upper()
+        self.model = model
+        if model in SP300SERIES:
             self.series = 'sp300'
-        elif type_ in VMP3SERIES:
+        elif model in VMP3SERIES:
             self.series = 'vmp3'
         else:
             message = ('Unrecognized device type: must be in SP300 or VMP3 series.')

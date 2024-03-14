@@ -18,7 +18,7 @@ from datetime import datetime
 import logging
 import os
 from pint import UnitRegistry
-from queue import Empty, SimpleQueue
+from queue import Empty
 import sys
 from threading import Thread
 from time import sleep, monotonic
@@ -37,7 +37,7 @@ from pymeasure.instruments.proterial import ROD4
 
 from nupylab.instruments import BiologicPotentiostat, Eurotherm2000
 from nupylab.instruments.biologic import OCV, PEIS
-from nupylab.utilities.parameter_table import ParameterTableWidget
+from nupylab.utilities import DefaultQueue, ParameterTableWidget
 
 
 if TYPE_CHECKING:
@@ -121,10 +121,9 @@ class Experiment(Procedure):
             self._initialize_keithley()
         if self.eis_toggle:
             self._initialize_biologic()
-            self.biologic.start_channel(0)
-            self._measuring_ocv = True
         # Initialize values with NaN and appropriate pint dimension to avoid complaints
-        ureg = UnitRegistry()
+        self.ureg = UnitRegistry()
+        ureg = self.ureg
         self.data = {
             'System Time': None,
             'Time (s)': np.nan * ureg.second,
@@ -147,13 +146,26 @@ class Experiment(Procedure):
         furnace_thread.join()
         rod4_thread.join()
         sleep(1)  # Give Eurotherm time to get program running
+        if self.eis_toggle:
+            self.biologic.start_channel(0)
+            self._measuring_ocv = True
 
     def execute(self) -> None:
         """Loop through thread for each instrument and emit results."""
         log.info(f"Running step {self.current_step} / {self.num_steps}.")
-        furnace_queue: SimpleQueue = SimpleQueue()
-        rod4_queue: SimpleQueue = SimpleQueue()
-        queues: List[SimpleQueue] = [furnace_queue, rod4_queue,]
+        ureg = self.ureg
+        furnace_queue: DefaultQueue = DefaultQueue(
+            ResultTuple('Furnace Temperature (degC)', np.nan * ureg.K)
+        )
+        rod4_queue: DefaultQueue = DefaultQueue(
+            (
+                ResultTuple('MFC 1 Flow (cc/min)', np.nan * ureg.cc / ureg.min),
+                ResultTuple('MFC 2 Flow (cc/min)', np.nan * ureg.cc / ureg.min),
+                ResultTuple('MFC 3 Flow (cc/min)', np.nan * ureg.cc / ureg.min),
+                ResultTuple('MFC 4 Flow (cc/min)', np.nan * ureg.cc / ureg.min)
+            )
+        )
+        queues: List[DefaultQueue] = [furnace_queue, rod4_queue,]
 
         furnace_thread = Thread(
             target=self._sub_loop, args=(self._update_furnace, furnace_queue)
@@ -165,7 +177,12 @@ class Experiment(Procedure):
 
         if self.pO2_toggle:
             self._ch_1_first: bool = True
-            pO2_queue: SimpleQueue = SimpleQueue()
+            pO2_queue: DefaultQueue = DefaultQueue(
+                (
+                    ResultTuple('pO2 Sensor Temperature (degC)',  np.nan * ureg.K),
+                    ResultTuple('pO2 (atm)', np.nan * ureg.atm)
+                 )
+            )
             pO2_thread = Thread(
                 target=self._sub_loop, args=(self._update_pO2, pO2_queue)
             )
@@ -173,7 +190,14 @@ class Experiment(Procedure):
             threads.append(pO2_thread)
 
         if self.eis_toggle:
-            biologic_queue: SimpleQueue = SimpleQueue()
+            biologic_queue: DefaultQueue = DefaultQueue(
+                (
+                    ResultTuple('Ewe (V)', np.nan * ureg.V),
+                    ResultTuple('Frequency (Hz)', np.nan * ureg.Hz),
+                    ResultTuple('Z_re (ohm)', np.nan * ureg.ohm),
+                    ResultTuple('-Z_im (ohm)', np.nan * ureg.ohm)
+                 )
+            )
             biologic_thread = Thread(
                 target=self._sub_loop, args=(self._update_biologic, biologic_queue)
             )
@@ -254,7 +278,7 @@ class Experiment(Procedure):
         else:
             self._multivalue_results.append(result)
 
-    def _emit_results(self, queues: List[SimpleQueue]) -> int:
+    def _emit_results(self, queues: List[DefaultQueue]) -> int:
         """Emit most recent set of results from all queues.
 
         Args:
@@ -270,9 +294,9 @@ class Experiment(Procedure):
         for q in queues:
             try:
                 results: tuple = q.get_nowait()
+                filled_queues += 1
             except Empty:
-                continue
-            filled_queues += 1
+                results = q.default
             if isinstance(results, ResultTuple):
                 self._parse_results(results)
             else:
@@ -297,7 +321,7 @@ class Experiment(Procedure):
         self.emit('progress', 0)
         return filled_queues
 
-    def _update_furnace(self, furnace_queue: SimpleQueue) -> None:
+    def _update_furnace(self, furnace_queue: DefaultQueue) -> None:
         """Read furnace temperature and program status.
 
         Args:
@@ -310,7 +334,7 @@ class Experiment(Procedure):
             self._finished = not self._furnace_running
         furnace_queue.put(ResultTuple('Furnace Temperature (degC)', temperature))
 
-    def _update_rod4(self, rod4_queue: SimpleQueue) -> None:
+    def _update_rod4(self, rod4_queue: DefaultQueue) -> None:
         """Read flow for each MFC channel.
 
         Args:
@@ -326,7 +350,7 @@ class Experiment(Procedure):
              ResultTuple('MFC 4 Flow (cc/min)', mfc[3]))
         )
 
-    def _update_pO2(self, pO2_queue: SimpleQueue) -> None:
+    def _update_pO2(self, pO2_queue: DefaultQueue) -> None:
         """Convert measured sensor voltage to pO2.
 
         Requires calibrated slope and intercept of sensor voltage as a function of
@@ -357,8 +381,9 @@ class Experiment(Procedure):
              ResultTuple('pO2 (atm)', pO2))
         )
 
-    def _update_biologic(self, biologic_queue: SimpleQueue) -> None:
+    def _update_biologic(self, biologic_queue: DefaultQueue) -> None:
         kbio_data = self.biologic.get_data(0)
+        ureg = self.ureg
         if self._measuring_ocv and not self._furnace_running:
             # Switch from OCV to PEIS upon completing furnace program
             self.biologic.stop_channel(0)
@@ -375,13 +400,22 @@ class Experiment(Procedure):
             Zre = abs_Z * np.cos(Z_phase)
             Zim = abs_Z * np.sin(Z_phase)
             biologic_queue.put(
-                (ResultTuple('Ewe (V)', kbio_data.Ewe),
-                 ResultTuple('Frequency (Hz)', kbio_data.freq),
-                 ResultTuple('Z_re (ohm)', Zre),
-                 ResultTuple('-Z_im (ohm)', Zim))
+                (
+                    ResultTuple('Ewe (V)', kbio_data.Ewe),
+                    ResultTuple('Frequency (Hz)', kbio_data.freq),
+                    ResultTuple('Z_re (ohm)', Zre),
+                    ResultTuple('-Z_im (ohm)', -Zim)
+                )
             )
         else:
-            biologic_queue.put(ResultTuple('Ewe (V)', kbio_data.Ewe))
+            biologic_queue.put(
+                (
+                    ResultTuple('Ewe (V)', kbio_data.Ewe),
+                    ResultTuple('Frequency (Hz)', np.nan * ureg.Hz),
+                    ResultTuple('Z_re (ohm)', np.nan * ureg.ohm),
+                    ResultTuple('-Z_im (ohm)', np.nan * ureg.ohm)
+                )
+            )
         channel_infos = self.biologic.get_channel_infos(0)
         self._finished = (channel_infos['State'] == 0)
 
