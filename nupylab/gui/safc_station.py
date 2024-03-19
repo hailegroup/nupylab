@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections import namedtuple
 from datetime import datetime
 import logging
+import math
 import os
 from pint import UnitRegistry
 from queue import Empty, SimpleQueue
@@ -37,7 +38,7 @@ from pymeasure.instruments.agilent import Agilent4284A
 from pymeasure.instruments.proterial import ROD4
 
 from nupylab.instruments import Eurotherm3200, Keithley705
-from nupylab.utilities import DefaultQueue, ParameterTableWidget
+from nupylab.utilities import DefaultQueue, ParameterTableWidget, thermocouples
 
 
 if TYPE_CHECKING:
@@ -69,8 +70,8 @@ class Experiment(Procedure):
     eurotherm_address = IntegerParameter(
         'Eurotherm Address', minimum=1, maximum=254, step=1, default=1
     )
-    biologic_port = Parameter(
-        'Biologic Port', default='192.109.209.128', ui_class=None, group_by='eis_toggle'
+    potentiostat_port = ListParameter(
+        'Potentiostat Port', choices=resources, ui_class=None, group_by='eis_toggle'
     )
 
     pO2_toggle = BooleanParameter('pO2 Sensor Connected', default=True)
@@ -100,8 +101,9 @@ class Experiment(Procedure):
     DATA_COLUMNS: List[str] = ['System Time',
                                'Time (s)',
                                'Furnace Temperature (degC)',
-                               'pO2 Sensor Temperature (degC)',
-                               'pO2 (atm)',
+                               'Sample 1 Temperature (degC)',
+                               'Sample 2 Temperature (degC)',
+                               'Sample 3 Temperature (degC)',
                                'MFC 1 Flow (cc/min)',
                                'MFC 2 Flow (cc/min)',
                                'MFC 3 Flow (cc/min)',
@@ -120,17 +122,13 @@ class Experiment(Procedure):
         if self.pO2_toggle:
             self._initialize_keithley()
         if self.eis_toggle:
-            self._initialize_biologic()
-            self.biologic.start_channel(0)
-            self._measuring_ocv = True
+            self._initialize_potentiostat()
         # Initialize values with NaN and appropriate pint dimension to avoid complaints
         ureg = UnitRegistry()
         self.data = {
             'System Time': None,
             'Time (s)': np.nan * ureg.second,
             'Furnace Temperature (degC)': np.nan * ureg.K,
-            'pO2 Sensor Temperature (degC)': np.nan * ureg.K,
-            'pO2 (atm)': np.nan * ureg.atm,
             'MFC 1 Flow (cc/min)': np.nan * ureg.cc / ureg.min,
             'MFC 2 Flow (cc/min)': np.nan * ureg.cc / ureg.min,
             'MFC 3 Flow (cc/min)': np.nan * ureg.cc / ureg.min,
@@ -186,7 +184,7 @@ class Experiment(Procedure):
             threads.append(pO2_thread)
 
         if self.eis_toggle:
-            biologic_queue: DefaultQueue = DefaultQueue(
+            potentiostat_queue: DefaultQueue = DefaultQueue(
                 (
                     ResultTuple('Ewe (V)', np.nan * ureg.V),
                     ResultTuple('Frequency (Hz)', np.nan * ureg.Hz),
@@ -194,11 +192,11 @@ class Experiment(Procedure):
                     ResultTuple('-Z_im (ohm)', np.nan * ureg.ohm)
                  )
             )
-            biologic_thread = Thread(
-                target=self._sub_loop, args=(self._update_biologic, biologic_queue)
+            potentiostat_thread = Thread(
+                target=self._sub_loop, args=(self._update_potentiostat, potentiostat_queue)
             )
-            queues.append(biologic_queue)
-            threads.append(biologic_thread)
+            queues.append(potentiostat_queue)
+            threads.append(potentiostat_thread)
 
         self._counter: int = 0
         self._finished: bool = False
@@ -228,8 +226,7 @@ class Experiment(Procedure):
         # TODO: create threads for closing instruments simultaneously, not sequentially
         try:
             if self.eis_toggle:
-                self.biologic.stop_channel(0)
-                self.biologic.disconnect()
+                self.potentiostat.adapter.close()
             if self.pO2_toggle:
                 self.keithley.adapter.close()
             if (self.status == (Procedure.FAILED or Procedure.ABORTED) or
@@ -247,8 +244,8 @@ class Experiment(Procedure):
         """Get estimate for measurement duration in seconds."""
         if not hasattr(self, 'eurotherm'):  # Unable to read starting temperature
             return 0
-        if hasattr(self, 'biologic') and self.eis_toggle:
-            return self._furnace_time + self._biologic_time
+        if hasattr(self, 'potentiostat') and self.eis_toggle:
+            return self._furnace_time + self._potentiostat_time
         return self._furnace_time
 
     def _sub_loop(self, process: Callable[..., None], *args) -> None:
@@ -377,17 +374,14 @@ class Experiment(Procedure):
              ResultTuple('pO2 (atm)', pO2))
         )
 
-    def _update_biologic(self, biologic_queue: DefaultQueue) -> None:
-        kbio_data = self.biologic.get_data(0)
+    def _update_potentiostat(self, potentiostat_queue: DefaultQueue) -> None:
         if self._measuring_ocv and not self._furnace_running:
+            self._agilent_loops = math.ceil(len(self._frequency_list) / 10)
             # Switch from OCV to PEIS upon completing furnace program
-            self.biologic.stop_channel(0)
+            self.potentiostat.stop_channel(0)
             self.biologic.load_technique(0, self.peis, first=True, last=True)
             self.biologic.start_channel(0)
             self._measuring_ocv = False
-
-        if kbio_data is None:
-            return
 
         if 'freq' in kbio_data.data_field_names:  # Measuring PEIS
             abs_Z = kbio_data.abs_Ewe_numpy / kbio_data.abs_I_numpy
@@ -402,8 +396,6 @@ class Experiment(Procedure):
             )
         else:
             biologic_queue.put(ResultTuple('Ewe (V)', kbio_data.Ewe))
-        channel_infos = self.biologic.get_channel_infos(0)
-        self._finished = (channel_infos['State'] == 0)
 
     def _initialize_rod4(self) -> None:
         self.rod4 = ROD4(self.rod4_port)
@@ -421,7 +413,7 @@ class Experiment(Procedure):
     def _initialize_eurotherm(self) -> None:
         """Convert 'ASRL##::INSTR' to form 'COM##'."""
         port: str = self.eurotherm_port.replace('ASRL', 'COM').replace('::INSTR', '')
-        self.eurotherm = Eurotherm2000(port, self.eurotherm_address)
+        self.eurotherm = Eurotherm3200(port, self.eurotherm_address)
         self._furnace_time: float = 60 * (
             self.dwell_time +
             (self.target_temperature - self.eurotherm.process_value) / self.ramp_rate)
@@ -429,68 +421,48 @@ class Experiment(Procedure):
 
     def _initialize_keithley(self) -> None:
         """Reset Keithley 2182 to default measurement conditions and set TC type."""
-        self.keithley = Keithley2182(self.keithley_port)
+        self.keithley = Keithley705(self.keithley_port)
         self.keithley.reset()
         self.keithley.thermocouple = 'S'
         self.keithley.ch_1.setup_voltage()
-        log.info("Connection to Keithley-2182 successful.")
+        log.info("Connection to Keithley 705 successful.")
 
-    def _initialize_biologic(self) -> None:
-        self.biologic = BiologicPotentiostat('SP200', self.biologic_port, None)
-        self.biologic.connect()
-        self.biologic.load_firmware((1,))
-
-        ocv = OCV(duration=24*60*60,
-                  record_every_dE=0.1,
-                  record_every_dt=self.delay,
-                  E_range='KBIO_ERANGE_AUTO')
-        self.biologic.load_technique(0, ocv, first=True, last=True)
+    def _initialize_potentiostat(self) -> None:
+        self.potentiostat = Agilent4284A(self.potentiostat_port, None)
 
         freq_steps: int = (
             (max_log_f := np.log10(self.maximum_frequency)) -
             (min_log_f := np.log10(self.minimum_frequency))
         )
         freq_steps = round(freq_steps * self.points_per_decade) + 1
-        self._biologic_time: float = np.sum(
+        self._frequency_list = np.logspace(max_log_f, min_log_f, freq_steps)
+        self._potentiostat_time: float = np.sum(
             1 / np.logspace(max_log_f, min_log_f, freq_steps)
         )
-        self.peis = PEIS(
-            initial_voltage_step=0,
-            duration_step=1,
-            vs_initial=False,
-            initial_frequency=self.maximum_frequency,
-            final_frequency=self.minimum_frequency,
-            logarithmic_spacing=True,
-            amplitude_voltage=self.amplitude_voltage,
-            frequency_number=freq_steps,
-            average_n_times=1,
-            wait_for_steady=1.0,
-            drift_correction=False,
-            record_every_dt=self.delay,
-            record_every_dI=0.1,
-            I_range='KBIO_IRANGE_AUTO',
-            E_range='KBIO_ERANGE_2_5',
-            bandwidth='KBIO_BW_5'
-        )
-        log.info("Connection to Biologic successful.")
+        self.potentiostat.ac_voltage = self.amplitude_voltage
+        self.potentiostat.impedance_mode = 'ZTR'
+        self.potentiostat.auto_range_enabled = True
+
+        log.info("Connection to Agilent 4284A successful.")
 
     def _start_furnace(self) -> None:
         """End any active program, ramp to setpoint and dwell."""
         self.eurotherm.program_status = 'reset'
-        self.eurotherm.current_program = 1
-        self.eurotherm.programs[1].refresh()
+        self.eurotherm.end_type = 'dwell'
+        self.eurotherm.ramp_units = 'mins'
 
-        self.eurotherm.programs[1].segments[1]['segment type'] = 'ramp rate'
-        self.eurotherm.programs[1].segments[1]['rate'] = self.ramp_rate
-        self.eurotherm.programs[1].segments[1]['target setpoint'] = \
-            self.target_temperature
+        self.eurotherm.segment1.ramp_rate = self.ramp_rate
+        self.eurotherm.segment1.target_setpoint = self.target_temperature
+        self.eurotherm.segment1.dwell = self.dwell_time * 60
 
-        self.eurotherm.programs[1].segments[2]['segment type'] = 'dwell'
-        self.eurotherm.programs[1].segments[2]['duration'] = 30.
-
-        self.eurotherm.programs[1].segments[3]['segment type'] = 'end'
-        self.eurotherm.programs[1].segments[3]['end type'] = 'dwell'
-
+        for segment in (
+            self.eurotherm.segment2,
+            self.eurotherm.segment3,
+            self.eurotherm.segment4
+        ):
+            segment.target_setpoint = self.target_temperature
+            segment.ramp_rate = self.ramp_rate
+            segment.dwell = 0
         self.eurotherm.program_status = 'run'
         self._furnace_running = True
 
@@ -533,7 +505,7 @@ class MainWindow(ManagedDockWindow):
             'rod4_port',
             'eurotherm_port',
             'eurotherm_address',
-            'biologic_port',
+            'potentiostat_port',
             'pO2_toggle',
             'keithley_port',
             'pO2_slope',

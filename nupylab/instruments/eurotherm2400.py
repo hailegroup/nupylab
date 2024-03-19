@@ -1,6 +1,6 @@
-"""Driver for Eurotherm 2000 series built on minimalmodbus.
+"""Driver for Eurotherm 2400 series built on minimalmodbus.
 
-Eurotherm 2000 series only supports RTU MODBUS mode. Transmission format:
+Eurotherm 2400 series only supports RTU MODBUS mode. Transmission format:
     * 1 start bit
     * 8 data bits
     * NONE (default), ODD, or EVEN parity bit
@@ -9,7 +9,7 @@ Eurotherm 2000 series only supports RTU MODBUS mode. Transmission format:
 CRC is automatically calculated by minimalmodbus.
 
 Values can be accessed in two ways:
-    * From the 'lower' registers as documented in the 2000 series communication
+    * From the 'lower' registers as documented in the 2400 series communication
         manual. These registers transfer 16-bit integer representations of the data.
     * From the 'upper' registers, which are double the size of lower registers and
         transfer 32-bit values. This allows for full resolution floats and timer
@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 
-class Eurotherm2000(minimalmodbus.Instrument):
-    """Instrument class for Eurotherm 2000 series process controller.
+class Eurotherm2400(minimalmodbus.Instrument):
+    """Instrument class for Eurotherm 2400 series process controller.
 
     Attributes:
         serial: pySerial serial port object, for setting data transfer parameters.
@@ -101,7 +101,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
         super().write_long(2 * register + 32768, round(val * 1000))
 
     def _initialize_setpoints(self) -> None:
-        self._num_setpoints = self.read_register(521) + 1  # Register val is 1 - n_SP
+        self._num_setpoints = self.read_register(521) + 1  # Register val is n_SP - 1
         self.setpoints = self.Setpoints(self)
 
     def _initialize_programs(self) -> None:
@@ -164,7 +164,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
     @current_program.setter
     def current_program(self, val: int):
         if val < 0 or val > self._num_programs:
-            log.warning("Eurotherm 2000 received invalid program number")
+            log.warning("Eurotherm 2400 received invalid program number")
         else:
             self.write_register(22, val)
 
@@ -239,7 +239,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
     @active_setpoint.setter
     def active_setpoint(self, val: int):
         if val < 1 or val > self._num_setpoints:
-            log.warning("Eurotherm2000 received invalid setpoint number")
+            log.warning("Eurotherm2400 received invalid setpoint number")
         else:
             self.write_register(15, val-1)
 
@@ -247,14 +247,14 @@ class Eurotherm2000(minimalmodbus.Instrument):
         """Setpoints dictionary containing entries for valid setpoints in Eurotherm.
 
         Attributes:
-            eurotherm: Eurotherm2000 instance, for reading and writing registers
+            eurotherm: Eurotherm2400 instance, for reading and writing registers
         """
 
-        def __init__(self, eurotherm: Eurotherm2000):
+        def __init__(self, eurotherm: Eurotherm2400):
             """Create empty dictionary with access to eurotherm methods.
 
             Args:
-                eurotherm: Eurotherm2000 instance
+                eurotherm: Eurotherm2400 instance
             """
             super().__init__()
             self.eurotherm = eurotherm
@@ -294,7 +294,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
 
         def __init__(self, program_num: int,
                      num_segments: int,
-                     eurotherm: Eurotherm2000) -> None:
+                     eurotherm: Eurotherm2400) -> None:
             """Create segment list and read current values.
 
             Args:
@@ -302,7 +302,7 @@ class Eurotherm2000(minimalmodbus.Instrument):
                     programs supported by instrument.
                 num_segments: number of maximum program segments supported by
                     instrument.
-                eurotherm: Eurotherm2000 instance. Provides read/write access.
+                eurotherm: Eurotherm2400 instance. Provides read/write access.
             """
             program_offset = 8192 + program_num*136
             self.segments = []
@@ -324,12 +324,12 @@ class Eurotherm2000(minimalmodbus.Instrument):
             called once before values can be read and written.
             """
 
-            def __init__(self, offset: int, eurotherm: Eurotherm2000) -> None:
+            def __init__(self, offset: int, eurotherm: Eurotherm2400) -> None:
                 """Read initial segment type and values.
 
                 Args:
                     offset (int): segment register offset
-                    eurotherm: Eurotherm2000 instance
+                    eurotherm: Eurotherm2400 instance
                 """
                 self.offset = offset
                 self.eurotherm = eurotherm

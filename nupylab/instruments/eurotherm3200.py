@@ -32,10 +32,8 @@ class Eurotherm3200(minimalmodbus.Instrument):
     """Instrument class for Eurotherm 3200 series process controller.
 
     The 3200 series has a program with 4 segments, each consisting of a target setpoint,
-    ramp rate, and dwell time. Segment parameters are accessible either by referencing
-    the segment sub-class they are attached to, e.g. `segment1.ramp_rate`, or by
-    referencing the parameter directly with its corresponding segment number appended,
-    e.g. `ramp_rate1`.
+    ramp rate, and dwell time. Segment parameters are accessible by referencing the
+    segment sub-class they are attached to, e.g. `segment1.ramp_rate`.
 
     Attributes:
         serial: pySerial serial port object, for setting data transfer parameters.
@@ -258,114 +256,6 @@ class Eurotherm3200(minimalmodbus.Instrument):
     def ramp_units(self, val: str):
         ramp_dict = {'mins': 0, 'hours': 1, 'secs': 2}
         self.write_register(531, ramp_dict[val.casefold()])
-
-    @property
-    def dwell1(self) -> float:
-        """Programmer dwell 1 duration in seconds."""
-        return self.read_time(1280)
-
-    @dwell1.setter
-    def dwell1(self, val: float):
-        self.write_time(1280, val)
-
-    @property
-    def target_setpoint1(self) -> float:
-        """Programmer target setpoint 1."""
-        return self.read_float(1281)
-
-    @target_setpoint1.setter
-    def target_setpoint1(self, val: float):
-        self.write_float(1281, val)
-
-    @property
-    def ramp_rate1(self) -> float:
-        """Programmer ramp rate 1."""
-        return self.read_float(1282)
-
-    @ramp_rate1.setter
-    def ramp_rate1(self, val: float):
-        self.write_float(1282, val)
-
-    @property
-    def dwell2(self) -> float:
-        """Programmer dwell 2 duration in seconds."""
-        return self.read_time(1283)
-
-    @dwell2.setter
-    def dwell2(self, val: float):
-        self.write_time(1283, val)
-
-    @property
-    def target_setpoint2(self) -> float:
-        """Programmer target setpoint 2."""
-        return self.read_float(1284)
-
-    @target_setpoint2.setter
-    def target_setpoint2(self, val: float):
-        self.write_float(1284, val)
-
-    @property
-    def ramp_rate2(self) -> float:
-        """Programmer ramp rate 2."""
-        return self.read_float(1285)
-
-    @ramp_rate2.setter
-    def ramp_rate2(self, val: float):
-        self.write_float(1285, val)
-
-    @property
-    def dwell3(self) -> float:
-        """Programmer dwell 3 duration in seconds."""
-        return self.read_time(1286)
-
-    @dwell3.setter
-    def dwell3(self, val: float):
-        self.write_time(1286, val)
-
-    @property
-    def target_setpoint3(self) -> float:
-        """Programmer target setpoint 3."""
-        return self.read_float(1287)
-
-    @target_setpoint3.setter
-    def target_setpoint3(self, val: float):
-        self.write_float(1287, val)
-
-    @property
-    def ramp_rate3(self) -> float:
-        """Programmer ramp rate 3."""
-        return self.read_float(1288)
-
-    @ramp_rate3.setter
-    def ramp_rate3(self, val: float):
-        self.write_float(1288, val)
-
-    @property
-    def dwell4(self) -> float:
-        """Programmer dwell 4 duration in seconds."""
-        return self.read_time(1289)
-
-    @dwell4.setter
-    def dwell4(self, val: float):
-        self.write_time(1289, val)
-
-    @property
-    def target_setpoint4(self) -> float:
-        """Programmer target setpoint 4."""
-        return self.read_float(1290)
-
-    @target_setpoint4.setter
-    def target_setpoint4(self, val: float):
-        self.write_float(1290, val)
-
-    @property
-    def ramp_rate4(self) -> float:
-        """Programmer ramp rate 4."""
-        return self.read_float(1291)
-
-    @ramp_rate4.setter
-    def ramp_rate4(self, val: float):
-        self.write_float(1291, val)
 
     class Segment:
         """A class for each (target, ramp rate, dwell time) segment."""

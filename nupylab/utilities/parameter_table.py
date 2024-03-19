@@ -3,7 +3,7 @@
 import pandas as pd
 from pymeasure.display.widgets import TabWidget
 from pymeasure.display.Qt import QtWidgets, QtCore, QtGui
-from typing import Optional
+from typing import Optional, Sequence
 
 
 class FileLineEdit(QtWidgets.QLineEdit):
@@ -129,14 +129,39 @@ class TableModel(QtCore.QAbstractTableModel):
     def update_data(self, path) -> None:
         """Update data upon selecting new parameters file."""
         self.beginResetModel()
-        self.df = pd.read_csv(path, dtype=str)
+        new_df = pd.read_csv(path, dtype=str)
+        self.df = pd.DataFrame(new_df.values, columns=self.df.columns)
         self.endResetModel()
+
+    def append_row(self):
+        # row_position = self.rowCount()
+        # self.insertRow(row_position)
+        if self.rowCount() == 0:
+            last_row = pd.DataFrame([("",)*self.columnCount()], columns=self.df.columns)
+        else:
+            last_row = pd.DataFrame(self.df.iloc[[-1]])
+        self.beginResetModel()
+        self.df = pd.concat((self.df, last_row), ignore_index=True)
+        self.endResetModel()
+
+    def remove_row(self):
+        # row_position = self.rowCount()
+        # self.removeRow(row_position)
+        if self.rowCount() != 0:
+            self.beginResetModel()
+            self.df = self.df.drop([self.rowCount() - 1])
+            self.endResetModel()
 
 
 class ParameterTable(QtWidgets.QTableView):
     """Table format view of experiment parameters."""
 
-    def __init__(self, float_digits=1, parent=None):
+    def __init__(
+        self,
+        table_columns: Sequence[str],
+        float_digits: int = 1,
+        parent=None
+    ) -> None:
         """Connect to view model and configure basic appearance.
 
         Args:
@@ -144,11 +169,16 @@ class ParameterTable(QtWidgets.QTableView):
            parent: parent class
         """
         super().__init__(parent)
-        model = TableModel(df=None, float_digits=float_digits)
+        df = pd.DataFrame(columns=table_columns)
+        model = TableModel(df=df, float_digits=float_digits)
         self.setModel(model)
         self.horizontalHeader().setStyleSheet("font: bold;")
+        self.horizontalHeader().setMinimumHeight(50)
+        self.horizontalHeader().setDefaultAlignment(
+            QtCore.Qt.AlignCenter | QtCore.Qt.Alignment(QtCore.Qt.TextWordWrap)
+        )
         self.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+            QtWidgets.QHeaderView.ResizeMode.Interactive
         )
 
         self.setup_context_menu()
@@ -173,6 +203,14 @@ class ParameterTable(QtWidgets.QTableView):
         if df is not None:
             df.to_clipboard()
 
+    def add_row_action(self):
+        """Append row to table."""
+        self.model().append_row()
+
+    def del_row_action(self):
+        """Remove last row from table."""
+        self.model().remove_row()
+
     def setup_context_menu(self):
         """Set up context menu for copying and saving table."""
         self.setContextMenuPolicy(
@@ -182,19 +220,31 @@ class ParameterTable(QtWidgets.QTableView):
         self.copy.triggered.connect(self.copy_action)
         self.export = QtGui.QAction("Save parameters", self)
         self.export.triggered.connect(self.export_action)
+        self.add_row = QtGui.QAction("Add row", self)
+        self.add_row.triggered.connect(self.add_row_action)
+        self.del_row = QtGui.QAction("Delete row", self)
+        self.del_row.triggered.connect(self.del_row_action)
 
     def context_menu(self, point):
         """Create context menu."""
         menu = QtWidgets.QMenu(self)
         menu.addAction(self.copy)
         menu.addAction(self.export)
+        menu.addAction(self.add_row)
+        menu.addAction(self.del_row)
         menu.exec(self.mapToGlobal(point))
 
 
 class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
     """Widget to display experiment parameters in a tabular format."""
 
-    def __init__(self, name, float_digits=1, parent=None):
+    def __init__(
+            self,
+            name: str,
+            table_columns: Sequence[str],
+            float_digits: int = 1,
+            parent=None
+    ) -> None:
         """Initialize UI and layout.
 
         Args:
@@ -204,14 +254,15 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
         """
         super().__init__(name, parent)
         self.float_digits = float_digits
-        self._setup_ui()
+        self._setup_ui(table_columns)
         self._layout()
 
-    def _setup_ui(self):
+    def _setup_ui(self, table_columns):
         self.parameters_file_label = QtWidgets.QLabel(self)
         self.parameters_file_label.setText('Load Parameters:')
 
         self.table = ParameterTable(
+            table_columns,
             float_digits=self.float_digits,
             parent=self,
         )
