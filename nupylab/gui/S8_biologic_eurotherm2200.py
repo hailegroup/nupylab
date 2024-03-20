@@ -62,7 +62,7 @@ class Experiment(Procedure):
         'Eurotherm Address', minimum=1, maximum=254, step=1, default=1
     )
     biologic_port = Parameter(
-        'Biologic Port', default='192.109.209.128', ui_class=None, group_by='eis_toggle'
+        'Biologic Port', default='USB0', ui_class=None, group_by='eis_toggle'
     )
 
     start_time = FloatParameter('Start Time', maximum=1e12)
@@ -378,7 +378,7 @@ class MainWindow(ManagedDockWindow):
         "Target Temperature [C]",
         "Ramp Rate [C/min]",
         "Dwell Time [min]",
-        "EIS?",
+        "EIS? [True/False]",
         "Maximum Frequency [Hz]",
         "Minimum Frequency [Hz]",
         "Amplitude Voltage [V]",

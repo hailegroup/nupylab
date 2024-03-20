@@ -273,11 +273,11 @@ class BiologicPotentiostat:
             address, timeout, byref(self._id), byref(device_info)
         )
         self.check_eclib_return_code(ret)
-        if DEVICE_CODES[device_info.DeviceCode] != self._type:
+        if DEVICE_CODES[device_info.DeviceCode] != self.model:
             message = (f"The device type "
                        f"({DEVICE_CODES[device_info.DeviceCode]}) "
                        f"returned from the device on connect does not match "
-                       f"the device type of the class ({self._type})."
+                       f"the device type of the class ({self.model})."
                        )
             raise ECLibCustomException(-9000, message)
         self._device_info = device_info
