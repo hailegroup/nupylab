@@ -195,7 +195,7 @@ class ParameterTable(QtWidgets.QTableView):
             )
             filename = filename_and_ext[0]
             if filename:
-                df.to_csv(filename)
+                df.to_csv(filename, index=False)
 
     def copy_action(self):
         """Copy table to clipboard."""

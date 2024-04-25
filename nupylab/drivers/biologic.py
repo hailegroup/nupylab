@@ -58,8 +58,10 @@
 
 from __future__ import annotations
 from collections import namedtuple
-from ctypes import c_uint8, c_uint32, c_int32, c_float, c_double, c_char
-from ctypes import Structure, create_string_buffer, byref, POINTER, cast
+from ctypes import (
+    c_uint8, c_uint32, c_int32, c_float, c_double, c_char, Structure,
+    create_string_buffer, byref, POINTER, cast
+)
 import inspect
 import os
 import sys
@@ -137,7 +139,7 @@ class BiologicPotentiostat:
     """
 
     def __init__(
-            self, model: str, address: str, eclib_dll_path: Optional[str] = None
+            self, model: str, address: str, eclib_path: Optional[str] = None
     ) -> None:
         r"""Initialize the potentiostat driver.
 
@@ -145,24 +147,23 @@ class BiologicPotentiostat:
             model: The device model e.g. 'SP200'
             address: The address of the instrument, either IP address or 'USB0', 'USB1',
                 etc.
-            eclib_dll_path: The path to the EClib DLL. The default
+            eclib_path: The path to the directory containing the EClib DLL. The default
                 directory of the DLL is
-                C:\EC-Lab Development Package\EC-Lab Development Package\ and the
-                filename is either EClib64.dll or EClib.dll depending on whether the
-                operating system is 64 of 32 Windows respectively. If no value is given
-                the default location will be used and the 32/64 bit status inferred.
+                C:\EC-Lab Development Package\EC-Lab Development Package\.
+                If no value is given the default location will be used. The 32/64 bit
+                status is inferred for selecting the proper DLL file.
 
         Raises:
             WindowsError: If the EClib DLL cannot be found
         """
-        model = 'KBIO_DEV_' + model.upper()
+        model = 'KBIO_DEV_' + model.replace("-", "").replace(" ", "").upper()
         self.model = model
         if model in SP300SERIES:
             self.series = 'sp300'
         elif model in VMP3SERIES:
             self.series = 'vmp3'
         else:
-            message = ('Unrecognized device type: must be in SP300 or VMP3 series.')
+            message = 'Unrecognized device type: must be in SP300 or VMP3 series.'
             raise ECLibCustomException(-8000, message)
 
         self.address = address
@@ -170,18 +171,21 @@ class BiologicPotentiostat:
         self._device_info: Optional[DeviceInfos] = None
 
         # Load the EClib dll
-        if eclib_dll_path is None:
-            eclib_dll_path = (
+        if eclib_path is None:
+            eclib_path = (
                 'C:\\EC-Lab Development Package\\EC-Lab Development Package\\'
             )
 
             # Check whether this is 64 bit Windows (not whether Python is 64 bit)
-            if 'PROGRAMFILES(X86)' in os.environ:
-                eclib_dll_path += 'EClib64.dll'
-            else:
-                eclib_dll_path += 'EClib.dll'
+        if 'PROGRAMFILES(X86)' in os.environ:
+            eclib_dll_path = eclib_path + 'EClib64.dll'
+            blfind_dll_path = eclib_path + 'blfind64.dll'
+        else:
+            eclib_dll_path = eclib_path + 'EClib.dll'
+            blfind_dll_path = eclib_path + 'blfind64.dll'
 
         self._eclib = WinDLL(eclib_dll_path)
+        self._blfind = WinDLL(blfind_dll_path)
 
     @property
     def id_number(self) -> Optional[int]:
@@ -214,8 +218,8 @@ class BiologicPotentiostat:
         Returns:
             The version string for the library.
         """
-        size = c_uint32(255)
-        version = create_string_buffer(255)
+        size = c_uint32(256)
+        version = create_string_buffer(256)
         ret = self._eclib.BL_GetLibVersion(byref(version), byref(size))
         self.check_eclib_return_code(ret)
         return version.value
@@ -232,8 +236,8 @@ class BiologicPotentiostat:
         Raises:
             ECLibError if error message could not be retrieved.
         """
-        message = create_string_buffer(255)
-        number_of_chars = c_uint32(255)
+        message = create_string_buffer(256)
+        number_of_chars = c_uint32(256)
         ret = self._eclib.BL_GetErrorMsg(
             error_code, byref(message), byref(number_of_chars)
         )
@@ -300,7 +304,7 @@ class BiologicPotentiostat:
     ######################
 
     def load_firmware(
-            self, channels: Sequence[int], force_reload: bool = False
+            self, channels: Sequence[int], force_reload: bool = True
     ) -> List[int]:
         """Load the library firmware on the specified channels, if not already loaded.
 
@@ -395,8 +399,8 @@ class BiologicPotentiostat:
 
     def get_message(self, channel: int) -> bytes:
         """Return a message from the firmware of a channel."""
-        size = c_uint32(255)
-        message = create_string_buffer(255)
+        size = c_uint32(4096)
+        message = create_string_buffer(4096)
         ret = self._eclib.BL_GetMessage(self._id, channel, byref(message), byref(size))
         self.check_eclib_return_code(ret)
         return message.value
@@ -657,8 +661,202 @@ class BiologicPotentiostat:
 
     def check_eclib_return_code(self, error_code: int) -> None:
         """Check a ECLib return code and raise the appropriate exception."""
-        if error_code < 0:
+        if error_code != 0:
             message = self.get_error_message(error_code)
+            raise ECLibError(message, error_code)
+
+    ####################
+    # BLFind functions #
+    ####################
+
+    def find_echem_dev(self) -> List[dict]:
+        """Find Biologic devices connected by ethernet or USB.
+
+        Returns:
+            list of device dictionaries, the fields of which depend on whether the
+            device is connected by USB or ethernet.
+        Raises:
+            ECLibCustomException for errors parsing serialized message.
+        """
+        serialized = create_string_buffer(8192)
+        number_of_chars = c_uint32(8192)
+        nb_devices = c_uint32()
+        ret = self._blfind.BL_FindEChemDev(
+            byref(serialized), byref(number_of_chars), byref(nb_devices)
+        )
+        self.check_blfind_return_code(ret)
+        devices = self._parse_device_serialization(nb_devices.value, serialized.value)
+        return devices
+
+    def find_echem_eth_dev(self) -> List[dict]:
+        """Find Biologic devices connected by ethernet.
+
+        Returns:
+            list of device dictionaries.
+        Raises:
+            ECLibCustomException for errors parsing serialized message.
+        """
+        serialized = create_string_buffer(4096)
+        number_of_chars = c_uint32(4096)
+        nb_devices = c_uint32()
+        ret = self._blfind.BL_FindEChemEthDev(
+            byref(serialized), byref(number_of_chars), byref(nb_devices)
+        )
+        self.check_blfind_return_code(ret)
+        devices = self._parse_device_serialization(nb_devices.value, serialized.value)
+        return devices
+
+    def find_echem_usb_dev(self) -> List[dict]:
+        """Find Biologic devices connected by USB.
+
+        Returns:
+            list of device dictionaries.
+        Raises:
+            ECLibCustomException for errors parsing serialized message.
+        """
+        serialized = create_string_buffer(4096)
+        number_of_chars = c_uint32(4096)
+        nb_devices = c_uint32()
+        ret = self._blfind.BL_FindEChemUsbDev(
+            byref(serialized), byref(number_of_chars), byref(nb_devices)
+        )
+        self.check_blfind_return_code(ret)
+        devices = self._parse_device_serialization(nb_devices.value, serialized.value)
+        return devices
+
+    def set_ethernet_config(
+            self,
+            target_ip: str,
+            new_ip: Optional[str] = None,
+            netmask: Optional[str] = None,
+            gateway: Optional[str] = None
+    ) -> None:
+        """Set new TCP/IP parameters of selected instrument.
+
+        New parameters may be all or none of IP address, netmask, and gateway.
+
+        Args:
+            target_ip: current IP address of instrument to be configured.
+            new_ip: new IP address, optional.
+            netmask: new netmask, optional.
+            gateway: new gateway, optional.
+        """
+        new_config = ""
+        if new_ip:
+            new_config += f"IP%{new_ip}$"
+        if netmask:
+            new_config += f"NM%{netmask}$"
+        if gateway:
+            new_config += f"GW%{gateway}$"
+        ret = self._blfind.BL_SetConfig(target_ip, new_config)
+        self.check_blfind_return_code(ret)
+
+    def get_blfind_error_message(self, error_code: int) -> bytes:
+        """Return the error message corresponding to error_code.
+
+        Args:
+            error_code: The error number to translate.
+
+        Returns:
+            The error message corresponding to error_code.
+
+        Raises:
+            ECLibError if error message could not be retrieved.
+        """
+        message = create_string_buffer(256)
+        number_of_chars = c_uint32(256)
+        ret = self._blfind.BL_GetErrorMsg(
+            error_code, byref(message), byref(number_of_chars)
+        )
+        # IMPORTANT: we cannot use self.check_eclib_return_code here, since that
+        # internally use this method, thus we have the potential for an infinite loop
+        if ret < 0:
+            err_msg = (
+                'The error message is unknown, because it is the '
+                'method to retrieve the error message with that fails. '
+                'See the error codes sections (5.4) of the EC-Lab '
+                'development package documentation to get the meaning '
+                'of the error code.'
+            )
+            raise ECLibError(err_msg, ret)
+        return message.value
+
+    @staticmethod
+    def _parse_device_serialization(nb_devices: int, serialized: str) -> List[dict]:
+        """Analyze a serialized instrument bundle and turn into a list of devices.
+
+        Args:
+            nb_devices: number of devices detected
+            serialized: instrument description serialization
+        Returns:
+            list of device dictionaries, the fields of which depend on whether the
+            device is connected by USB or ethernet.
+        Raises:
+            ECLibCustomException for errors parsing serialized message.
+        """
+        devices = []
+        if not serialized:
+            return devices
+
+        # check instrument separator is correct
+        if serialized[-1] != '%':
+            message = "Device serialization does not end with `%`."
+            raise ECLibCustomException(-1000, message)
+
+        instruments = serialized.split('%')
+
+        for instrument in instruments:
+
+            # separate instrument info into fragments
+            all_frags = instrument.split('$')
+            mode = all_frags[0]
+            # remove blank fields as not meaningful
+            fragments = [f for f in all_frags if f]
+
+            if mode == 'USB':
+                try:
+                    # decode fragments into their repective fields
+                    index, series, serial = fragments[1:]
+                    index = int(index)
+                except Exception as exc:
+                    raise ECLibCustomException(
+                        f"ill formed USB serialization ({fragments})", -1001
+                    ) from exc
+                devices.append({'address': mode + index,
+                                'series': series,
+                                'serial': serial})
+
+            elif mode == 'Ethernet':
+                try:
+                    # decode fragments into their repective fields
+                    # ignoring gateway, netmask, mac address
+                    ip = fragments[1]
+                    identifier, series, serial, name = fragments[5:]
+                except Exception as exc:
+                    raise ECLibCustomException(
+                        f"ill formed ethernet serialization ({fragments})", -1002
+                    ) from exc
+                devices.append({'address': ip,
+                                'series': series,
+                                'identifier': identifier,
+                                'serial': serial,
+                                'name': name})
+            else:
+                raise ECLibCustomException(
+                    f"unable to parse serialization ({serialized})", -1003
+                )
+
+        # check consistency of number of decoded instruments
+        if nb_devices != len(devices):
+            message = f"Expected {nb_devices} devices, but retrieved {len(devices)}."
+            raise ECLibCustomException(-1004, message)
+
+        return devices
+
+    def check_blfind_return_code(self, error_code: int) -> None:
+        """Check a BLFind return code and raise the appropriate exception."""
+        if error_code != 0:
+            message = self.get_blfind_error_message(error_code)
             raise ECLibError(message, error_code)
 
 
@@ -848,45 +1046,43 @@ class KBIOData:
         # __getattr__ is only called after the check of whether the key is in the
         # instance dict, therefore it is ok to raise attribute error at this points if
         # the key does not have the special form we expect
-        if key.endswith('_numpy'):
-            if not GOT_NUMPY:
-                message = (
-                    'The numpy module is required to get the data '
-                    'as numpy arrays.'
-                )
-                raise RuntimeError(message)
+        if not key.endswith('_numpy'):
+            message = f"{self.__class__} object has no attribute {key}"
+            raise AttributeError(message)
 
-            # Get the requested field name e.g. Ewe
-            requested_field = key.split('_numpy')[0]
+        if not GOT_NUMPY:
+            message = (
+                'The numpy module is required to get the data '
+                'as numpy arrays.'
+            )
+            raise RuntimeError(message)
 
-            dtype: Any = None
-            if requested_field == 'time':
+        # Get the requested field name e.g. Ewe
+        requested_field = key.split('_numpy')[0]
+
+        dtype: Any = None
+        if requested_field == 'time':
+            dtype = float
+        if requested_field in self.data_field_names:
+            # Determine the numpy type to convert to
+            for field in self.data_fields:
+                if field.name == requested_field:
+                    correct_field = field
+                    break
+            if correct_field.type is c_float:
                 dtype = float
-            if requested_field in self.data_field_names:
-                # Determine the numpy type to convert to
-                for field in self.data_fields:
-                    if field.name == requested_field:
-                        correct_field = field
-                        break
-                if correct_field.type is c_float:
-                    dtype = float
-                elif correct_field.type is c_uint32:
-                    dtype = int
+            elif correct_field.type is c_uint32:
+                dtype = int
 
-                if dtype is None:
-                    message = (
-                        f"Unable to infer the numpy data type for "
-                        f"requested field: {requested_field}"
-                    )
-                    raise ValueError(message)
-
-                # Convert the data and return the numpy array
-                return np.array(
-                    getattr(self, requested_field), dtype=dtype
+            if dtype is None:
+                message = (
+                    f"Unable to infer the numpy data type for "
+                    f"requested field: {requested_field}"
                 )
+                raise ValueError(message)
 
-        message = f"{self.__class__} object has no attribute {key}"
-        raise AttributeError(message)
+        # Convert the data and return the numpy array
+        return np.array(getattr(self, requested_field), dtype=dtype)
 
     @property
     def data_field_names(self) -> List[str]:
@@ -2883,12 +3079,7 @@ VMP3SERIES = [
 ]
 
 # Hack to make links for classes in the documentation
-__doc__ += '\n\nInstrument classes:\n'
-for name, klass in inspect.getmembers(sys.modules[__name__], inspect.isclass):
-    if issubclass(klass, BiologicPotentiostat) or klass is BiologicPotentiostat:
-        __doc__ += ' * :class:`.{.__name__}`\n'.format(klass)
-
 __doc__ += '\n\nTechniques:\n'
-for name, klass in inspect.getmembers(sys.modules[__name__], inspect.isclass):
+for _, klass in inspect.getmembers(sys.modules[__name__], inspect.isclass):
     if issubclass(klass, Technique):
         __doc__ += ' * :class:`.{.__name__}`\n'.format(klass)

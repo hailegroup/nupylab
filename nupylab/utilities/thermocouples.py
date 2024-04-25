@@ -6,7 +6,7 @@ First two values in tuple indicate lower and upper limits of equation validity,
 in Celsius for TYPE tuples and in millivolts for INVERSE tuples.
 """
 
-import math
+from math import exp
 
 TYPE_B = (
     (0.0,
@@ -572,5 +572,5 @@ def convert_to_voltage(temperature: float, TC_type: str) -> float:
     else:
         for index, c in enumerate(coeff[2:-3]):
             millivoltage += c * temperature**index
-        millivoltage += coeff[-3] * math.exp(coeff[-2] * (temperature - coeff[-1])**2)
+        millivoltage += coeff[-3] * exp(coeff[-2] * (temperature - coeff[-1])**2)
     return millivoltage

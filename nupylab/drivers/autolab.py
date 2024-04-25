@@ -8,11 +8,14 @@ from pyMetrohmAUTOLAB https://github.com/shuayliu/pyMetrohmAUTOLAB
 
 import time
 from math import log10, floor
+import logging
 import clr
 import numpy as np
 import os
 from typing import Optional
 
+log = logging.getLogger(__name__)
+log.addHandler(logging.NullHandler())
 
 def appendSuffixToFilename(filename, suffix):
     if not len(filename) == 0:
@@ -27,6 +30,13 @@ def appendSuffixToFilename(filename, suffix):
 class Autolab:
     """Driver for Metrohm Autolab potentiostats.
 
+    The Autolab SDK is not functional without an instrument connection, which requires a
+    connected instrument and the appropriate hardware setup file. For DC measurements,
+    providing the generic setup file for the instrument may be provided. For AC
+    measurements, the hardware setup file must contain FRA calibration data. In this
+    case, the setup file will contain the serial number of the instrument, e.g.
+    `HardwareSetup.AUT81234.xml`.
+
     Raises:
         AutolabError: All regular methods in this class use the Autolab DLL
             communications library to talk with the equipment and they will
@@ -35,42 +45,37 @@ class Autolab:
     """
 
     def __init__(
-            self, model: str, sdk_path: Optional[str] = None) -> None:
+            self,
+            hardware_file: str,
+            sdk_path: str = r"C:\Program Files\Metrohm Autolab\Autolab SDK 2.1"
+    ) -> None:
         r"""Initialize the potentiostat driver.
 
         Args:
-            model: the device model e.g. 'PGSTAT302N'
-            address: the address of the instrument, either IP address or 'USB0', 'USB1',
-                etc.
-            sdk_path: the path to the Autolab SDK. The default directory of the DLL is
-                C:\Program Files\Metrohm Autolab\Autolab SDK 2.1\
+            hardware_file: the hardware configuration file for the instrument. See class
+                note.
+            sdk_path: the path to the Autolab SDK.
 
         Raises:
             WindowsError: If the Autolab SDK DLL cannot be found.
         """
-        if model not in INSTRUMENTS:
-            message = f"Model {model} not in instrument list: {INSTRUMENTS}"
-            raise AutolabException(message, -1000)
-        if sdk_path is None:
-            sdk_path = r"C:\Program Files\Metrohm Autolab\Autolab SDK 2.1"
         sdk = os.path.join(sdk_path, "EcoChemie.Autolab.Sdk")
-        adx = os.path.join(sdk_path, "Hardware Setup Files/Adk.x")
-        self.model = model
-        self._adx = adx
-        self._autolab = None
+        self._adx = os.path.join(sdk_path, "Hardware Setup Files/Adk.x")
         self.pcd = None
         if clr.FindAssembly(sdk):
             clr.AddReference(sdk)
             from EcoChemie.Autolab.Sdk import Instrument
-            self._autolab = Instrument()
+            self._instrument = Instrument()
         else:
             message = f"Cannot find {sdk}.dll"
-            raise AutolabException(message, -1001)
+            raise AutolabException(message, -1000)
+        connected = self.connect(hardware_file)
 
     def disconnect(self) -> None:
         """Disconnect from Autolab."""
-        self._autolab.Disconnect()
+        self._instrument.Disconnect()
 
+    @property
     def is_measuring(self) -> bool:
         """Get whether measurement is in progress.
 
@@ -80,26 +85,21 @@ class Autolab:
             return self.pcd.IsMeasuring
         return False
 
-    def connect(self, fra_module: Optional[str] = None) -> bool:
+    def connect(self, hardware_file: str) -> bool:
         """Connect to Autolab.
 
         Hardware configuration file is set by instrument model and FRA option.
 
         Args:
-            fra_module: FRA module to connect to, if installed.
+            fra_module: FRA module to connect to, if installed, e.g. `FRA2`.
 
         Returns:
             bool indicating whether Autolab is connected.
         """
-        self._autolab.AutolabConnection.EmbeddedExeFileToStart = self._adx
-        hdw_file: str = os.path.join(self._sdk_path, "Hardware Setup Files", self.model)
-        if fra_module is not None:
-            hdw_file = os.path.join(hdw_file, f"HardwareSetup.{fra_module}.xml")
-        else:
-            hdw_file = os.path.join(hdw_file, "HardwareSetup.xml")
-        self._autolab.set_HardwareSetupFile(hdw_file)
-        self._autolab.Connect()
-        return self._autolab.AutolabConnection.IsConnected
+        self._instrument.AutolabConnection.EmbeddedExeFileToStart = self._adx
+        self._instrument.set_HardwareSetupFile(hardware_file)
+        self._instrument.Connect()
+        return self._instrument.AutolabConnection.IsConnected
 
     def measure(self, procedure):
         """Load and run measurement procedure.
@@ -107,45 +107,43 @@ class Autolab:
         Args:
             procedure: Nova procedure file of .nox type
         """
-        self.pcd = self._autolab.LoadProcedure(procedure)
+        self.pcd = self._instrument.LoadProcedure(procedure)
 
-        if self._autolab.AutolabConnection.IsConnected:
+        if self._instrument.AutolabConnection.IsConnected:
             self.pcd.Measure()
         else:
             raise AutolabException("Autolab is not connected", -2000)
 
-    def save(self):
-        self.saveAs(self.pcd.get_FileName())
+    def save(self) -> None:
+        """Save procedure as current filename with date and time appended."""
+        self.save_as(self.pcd.get_FileName())
 
-    def saveAs(self,saveName):
-        if not len(saveName) == 0:
-            saveto = appendSuffixToFilename(saveName,time.strftime("_%Y%m%d-%H%M%S"))
-            # CMDLOG(self.CMD,"[INFO] Save File to %s\n\n"%saveto)
-            self.pcd.SaveAs(saveto)
-        else:
-            print("[WARNING]You should give me a NAME to save this file.\n otherwise, please use save() instead of saveAs()")
+    def save_as(self, filename: str) -> None:
+        """Save procedure to filename with with date and time appended."""
+        saveto = appendSuffixToFilename(filename, time.strftime("_%Y%m%d-%H%M%S"))
+        self.pcd.SaveAs(saveto)
 
     def setCellOn(self,On=True):
-        self._autolab.Ei.set_CellOnOff(On)
-        while self._autolab.Ei.get_CurrentOverload() :
-            self._autolab.Ei.set_CurrentRange(self._autolab.Ei.CurrentRange + 1)
+        self._instrument.Ei.set_CellOnOff(On)
+        while self._instrument.Ei.get_CurrentOverload() :
+            self._instrument.Ei.set_CurrentRange(self._instrument.Ei.CurrentRange + 1)
 
     def set_mode(self, mode: str = 'potentiostatic') -> None:
         if mode.casefold() == 'galvanostatic':
-            self._autolab.Ei.set_Mode(1)  # Ei.EIMode.Galvanostatic = 0
+            self._instrument.Ei.set_Mode(1)  # Ei.EIMode.Galvanostatic = 0
         elif mode.casefold() == 'potentiostatic':
-            self._autolab.Ei.set_Mode(0)  # Ei.EIMode.Potentiostatic = 1
+            self._instrument.Ei.set_Mode(0)  # Ei.EIMode.Potentiostatic = 1
         else:
             message = f"Mode {mode} must be 'potentiostatic' or 'galvanostatic'"
             raise AutolabException(message, -3000)
 
     def set_potential(self, potential: float) -> float:
         self.set_mode('potentiostatic')
-        self._autolab.Ei.set_Setpoint(potential)
-        if self._autolab.Ei.get_CurrentOverload() :
-            self._autolab.Ei.set_CurrentRange(self._autolab.Ei.Current + 1)
+        self._instrument.Ei.set_Setpoint(potential)
+        if self._instrument.Ei.get_CurrentOverload() :
+            self._instrument.Ei.set_CurrentRange(self._instrument.Ei.Current + 1)
 
-        return self._autolab.Ei.PotentialApplied
+        return self._instrument.Ei.PotentialApplied
 
     def set_current_range(self, current: float) -> float:
         """Set Autolab current range.
@@ -156,13 +154,13 @@ class Autolab:
         Returns:
             Autolab current range.
         """
-        self._autolab.Ei.set_CurrentRange(floor(log10(current)))
-        return self._autolab.Ei.CurrentRange
+        self._instrument.Ei.set_CurrentRange(floor(log10(current)))
+        return self._instrument.Ei.CurrentRange
 
     def loadData(self, filename):
         Data = None
         try:
-            pcd = self._autolab.LoadProcedure(filename)
+            pcd = self._instrument.LoadProcedure(filename)
 
             if pcd.Commands.ContainsId('FHCyclicVoltammetry2'):
                 # CMDLOG(self.CMD,"It is a CV procedure DATA!\n");
@@ -214,13 +212,9 @@ class Autolab:
 
         finally:
             if Data is None:
-                raise Exception('LoadFailedException', Data)
+                raise AutolabException("Failed to read data.", -4000)
             else:
                 return Data
-
-    # TODO: def EIS
-    # def EIS(self,EISProc=R"E:\LSh\PicoView 1.14\scripts\STEP0-FRA.nox"):
-    #     self.measure(EISProc)
 
 
 # Exceptions

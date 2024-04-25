@@ -13,12 +13,10 @@ python multipurpose_impedance_station.py
 """
 
 from __future__ import annotations
-from collections import namedtuple
 from datetime import datetime
 import logging
 import os
-from pint import UnitRegistry
-from queue import Empty
+from queue import Empty, SimpleQueue
 import sys
 from threading import Thread
 from time import sleep, monotonic
@@ -35,9 +33,9 @@ from pymeasure.experiment import (
 from pymeasure.instruments.keithley import Keithley2182
 from pymeasure.instruments.proterial import ROD4
 
-from nupylab.instruments import BiologicPotentiostat, Eurotherm2400
-from nupylab.instruments.biologic import OCV, PEIS
-from nupylab.utilities import DefaultQueue, ParameterTableWidget
+from nupylab.drivers import BiologicPotentiostat, Eurotherm2400
+from nupylab.drivers.biologic import OCV, PEIS
+from nupylab.utilities import ParameterTableWidget, DataTuple
 
 
 if TYPE_CHECKING:
@@ -45,8 +43,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
-
-ResultTuple = namedtuple('ResultTuple', ['label', 'value'])
 
 
 class Experiment(Procedure):
@@ -121,24 +117,25 @@ class Experiment(Procedure):
             self._initialize_keithley()
         if self.eis_toggle:
             self._initialize_biologic()
-        # Initialize values with NaN and appropriate pint dimension to avoid complaints
-        self.ureg = UnitRegistry()
-        ureg = self.ureg
-        self.data = {
-            'System Time': None,
-            'Time (s)': np.nan * ureg.second,
-            'Furnace Temperature (degC)': np.nan * ureg.K,
-            'pO2 Sensor Temperature (degC)': np.nan * ureg.K,
-            'pO2 (atm)': np.nan * ureg.atm,
-            'MFC 1 Flow (cc/min)': np.nan * ureg.cc / ureg.min,
-            'MFC 2 Flow (cc/min)': np.nan * ureg.cc / ureg.min,
-            'MFC 3 Flow (cc/min)': np.nan * ureg.cc / ureg.min,
-            'MFC 4 Flow (cc/min)': np.nan * ureg.cc / ureg.min,
-            'Ewe (V)': np.nan * ureg.V,
-            'Frequency (Hz)': np.nan * ureg.Hz,
-            'Z_re (ohm)': np.nan * ureg.ohm,
-            '-Z_im (ohm)': np.nan * ureg.ohm
+        # Initialize values with NaN to avoid complaints
+        self._data_defaults: dict = {
+            'Furnace Temperature (degC)': np.nan,
+            'pO2 Sensor Temperature (degC)': np.nan,
+            'pO2 (atm)': np.nan,
+            'MFC 1 Flow (cc/min)': np.nan,
+            'MFC 2 Flow (cc/min)': np.nan,
+            'MFC 3 Flow (cc/min)': np.nan,
+            'MFC 4 Flow (cc/min)': np.nan,
+            'Ewe (V)': np.nan,
+            'Frequency (Hz)': np.nan,
+            'Z_re (ohm)': np.nan,
+            '-Z_im (ohm)': np.nan
         }
+        self._data: dict = {
+            'System Time': None,
+            'Time (s)': np.nan
+        }
+        self._data.update(self._data_defaults)
         furnace_thread = Thread(target=self._start_furnace)
         rod4_thread = Thread(target=self._start_rod4)
         furnace_thread.start()
@@ -153,19 +150,9 @@ class Experiment(Procedure):
     def execute(self) -> None:
         """Loop through thread for each instrument and emit results."""
         log.info(f"Running step {self.current_step} / {self.num_steps}.")
-        ureg = self.ureg
-        furnace_queue: DefaultQueue = DefaultQueue(
-            ResultTuple('Furnace Temperature (degC)', np.nan * ureg.K)
-        )
-        rod4_queue: DefaultQueue = DefaultQueue(
-            (
-                ResultTuple('MFC 1 Flow (cc/min)', np.nan * ureg.cc / ureg.min),
-                ResultTuple('MFC 2 Flow (cc/min)', np.nan * ureg.cc / ureg.min),
-                ResultTuple('MFC 3 Flow (cc/min)', np.nan * ureg.cc / ureg.min),
-                ResultTuple('MFC 4 Flow (cc/min)', np.nan * ureg.cc / ureg.min)
-            )
-        )
-        queues: List[DefaultQueue] = [furnace_queue, rod4_queue,]
+        furnace_queue: SimpleQueue = SimpleQueue()
+        rod4_queue: SimpleQueue = SimpleQueue()
+        queues: List[SimpleQueue] = [furnace_queue, rod4_queue,]
 
         furnace_thread = Thread(
             target=self._sub_loop, args=(self._update_furnace, furnace_queue)
@@ -177,12 +164,7 @@ class Experiment(Procedure):
 
         if self.pO2_toggle:
             self._ch_1_first: bool = True
-            pO2_queue: DefaultQueue = DefaultQueue(
-                (
-                    ResultTuple('pO2 Sensor Temperature (degC)',  np.nan * ureg.K),
-                    ResultTuple('pO2 (atm)', np.nan * ureg.atm)
-                 )
-            )
+            pO2_queue: SimpleQueue = SimpleQueue()
             pO2_thread = Thread(
                 target=self._sub_loop, args=(self._update_pO2, pO2_queue)
             )
@@ -190,14 +172,7 @@ class Experiment(Procedure):
             threads.append(pO2_thread)
 
         if self.eis_toggle:
-            biologic_queue: DefaultQueue = DefaultQueue(
-                (
-                    ResultTuple('Ewe (V)', np.nan * ureg.V),
-                    ResultTuple('Frequency (Hz)', np.nan * ureg.Hz),
-                    ResultTuple('Z_re (ohm)', np.nan * ureg.ohm),
-                    ResultTuple('-Z_im (ohm)', np.nan * ureg.ohm)
-                 )
-            )
+            biologic_queue: SimpleQueue = SimpleQueue()
             biologic_thread = Thread(
                 target=self._sub_loop, args=(self._update_biologic, biologic_queue)
             )
@@ -207,12 +182,13 @@ class Experiment(Procedure):
         self._counter: int = 0
         self._finished: bool = False
         self._start_time: float = monotonic()
+        sleep_time: float
         for thread in threads:
             thread.start()
 
         while True:
             self._counter += 1
-            sleep_time: float = self.delay * self._counter - (monotonic() - self._start_time)
+            sleep_time = self.delay * self._counter - (monotonic() - self._start_time)
             sleep(max(0, sleep_time))
             self._emit_results(queues)  # Emit after other threads have run
 
@@ -269,7 +245,7 @@ class Experiment(Procedure):
             sleep_time = self.delay * self._counter - (monotonic() - self._start_time)
             sleep(max(0, sleep_time))
 
-    def _parse_results(self, result: ResultTuple) -> None:
+    def _parse_results(self, result: DataTuple) -> None:
         """Write value to class data if single-valued, otherwise postpone extraction."""
         if not hasattr(result.value, '__len__'):
             self.data[result.label] = result.value
@@ -278,7 +254,7 @@ class Experiment(Procedure):
         else:
             self._multivalue_results.append(result)
 
-    def _emit_results(self, queues: List[DefaultQueue]) -> int:
+    def _emit_results(self, queues: List[SimpleQueue]) -> int:
         """Emit most recent set of results from all queues.
 
         Args:
@@ -290,14 +266,14 @@ class Experiment(Procedure):
         filled_queues: int = 0
         self.data['Time (s)'] = self.delay * (self._counter - 1)
         self.data['System Time'] = str(datetime.now())
-        self._multivalue_results: List[ResultTuple] = []
+        self._multivalue_results: List[DataTuple] = []
         for q in queues:
             try:
                 results: tuple = q.get_nowait()
                 filled_queues += 1
             except Empty:
                 results = q.default
-            if isinstance(results, ResultTuple):
+            if isinstance(results, DataTuple):
                 self._parse_results(results)
             else:
                 for result in results:
@@ -318,10 +294,11 @@ class Experiment(Procedure):
                     continue
                 self.data[result.label] = result.value[i]
             self.emit('results', self.data)
+            self._data = self._data_defaults.copy()  # reset data to defaults
         self.emit('progress', 0)
         return filled_queues
 
-    def _update_furnace(self, furnace_queue: DefaultQueue) -> None:
+    def _update_furnace(self, furnace_queue: SimpleQueue) -> None:
         """Read furnace temperature and program status.
 
         Args:
@@ -332,9 +309,9 @@ class Experiment(Procedure):
         self._furnace_running = (status == 'run')
         if not self.eis_toggle:
             self._finished = not self._furnace_running
-        furnace_queue.put(ResultTuple('Furnace Temperature (degC)', temperature))
+        furnace_queue.put(DataTuple('Furnace Temperature (degC)', temperature))
 
-    def _update_rod4(self, rod4_queue: DefaultQueue) -> None:
+    def _update_rod4(self, rod4_queue: SimpleQueue) -> None:
         """Read flow for each MFC channel.
 
         Args:
@@ -344,13 +321,13 @@ class Experiment(Procedure):
         for channel, range_ in zip(self.rod4.channels.values(), self._rod4_range):
             mfc.append(channel.actual_flow * range_ / 100)
         rod4_queue.put(
-            (ResultTuple('MFC 1 Flow (cc/min)', mfc[0]),
-             ResultTuple('MFC 2 Flow (cc/min)', mfc[1]),
-             ResultTuple('MFC 3 Flow (cc/min)', mfc[2]),
-             ResultTuple('MFC 4 Flow (cc/min)', mfc[3]))
+            (DataTuple('MFC 1 Flow (cc/min)', mfc[0]),
+             DataTuple('MFC 2 Flow (cc/min)', mfc[1]),
+             DataTuple('MFC 3 Flow (cc/min)', mfc[2]),
+             DataTuple('MFC 4 Flow (cc/min)', mfc[3]))
         )
 
-    def _update_pO2(self, pO2_queue: DefaultQueue) -> None:
+    def _update_pO2(self, pO2_queue: SimpleQueue) -> None:
         """Convert measured sensor voltage to pO2.
 
         Requires calibrated slope and intercept of sensor voltage as a function of
@@ -377,13 +354,12 @@ class Experiment(Procedure):
             self._ch_1_first = True
         pO2 = 0.2095 * 10**(20158 * ((voltage - b) / (temperature + 273.15) - a))
         pO2_queue.put(
-            (ResultTuple('pO2 Sensor Temperature (degC)', temperature),
-             ResultTuple('pO2 (atm)', pO2))
+            (DataTuple('pO2 Sensor Temperature (degC)', temperature),
+             DataTuple('pO2 (atm)', pO2))
         )
 
-    def _update_biologic(self, biologic_queue: DefaultQueue) -> None:
+    def _update_biologic(self, biologic_queue: SimpleQueue) -> None:
         kbio_data = self.biologic.get_data(0)
-        ureg = self.ureg
         if self._measuring_ocv and not self._furnace_running:
             # Switch from OCV to PEIS upon completing furnace program
             self.biologic.stop_channel(0)
@@ -401,19 +377,19 @@ class Experiment(Procedure):
             Zim = abs_Z * np.sin(Z_phase)
             biologic_queue.put(
                 (
-                    ResultTuple('Ewe (V)', kbio_data.Ewe),
-                    ResultTuple('Frequency (Hz)', kbio_data.freq),
-                    ResultTuple('Z_re (ohm)', Zre),
-                    ResultTuple('-Z_im (ohm)', -Zim)
+                    DataTuple('Ewe (V)', kbio_data.Ewe),
+                    DataTuple('Frequency (Hz)', kbio_data.freq),
+                    DataTuple('Z_re (ohm)', Zre),
+                    DataTuple('-Z_im (ohm)', -Zim)
                 )
             )
         else:
             biologic_queue.put(
                 (
-                    ResultTuple('Ewe (V)', kbio_data.Ewe),
-                    ResultTuple('Frequency (Hz)', np.nan * ureg.Hz),
-                    ResultTuple('Z_re (ohm)', np.nan * ureg.ohm),
-                    ResultTuple('-Z_im (ohm)', np.nan * ureg.ohm)
+                    DataTuple('Ewe (V)', kbio_data.Ewe),
+                    DataTuple('Frequency (Hz)', np.nan),
+                    DataTuple('Z_re (ohm)', np.nan),
+                    DataTuple('-Z_im (ohm)', np.nan)
                 )
             )
         channel_infos = self.biologic.get_channel_infos(0)
@@ -607,9 +583,16 @@ class MainWindow(ManagedDockWindow):
             raise IndexError(f"Expected {len(self.parameter_types)} parameters, but "
                              f"parameters table has {table_df.shape[1]} columns.")
 
-        converted_df = table_df.astype(
-            {label: dtype for label, dtype in
-             zip(table_df.columns, self.parameter_types.values())}
+        converted_df = table_df.copy()
+        bool_map = {'true': True, 'yes': True, '1': True,
+                    'false': False, 'no': False, '0': False}
+        for parameter_type, column in zip(
+            self.parameter_types.values(), converted_df.columns
+        ):  # non-empty strings evaluate to True; apply map instead for boolean columns
+            if parameter_type == bool:
+                converted_df[column] = converted_df[column].str.casefold().map(bool_map)
+        converted_df = converted_df.astype(
+            dict(zip(converted_df.columns, self.parameter_types.values()))
         )
         return converted_df
 
@@ -640,8 +623,6 @@ class MainWindow(ManagedDockWindow):
         log.info("Reading experiment parameters.")
         table_widget = self.tabs.widget(0)
         table_df = table_widget.table.model().export_df()
-        table_df.replace({'True': True, 'TRUE': True, 'true': True,
-                          'False': False, 'FALSE': False, 'false': False}, inplace=True)
         converted_df: pd.DataFrame = self.verify_parameters(table_df)
 
         start_time: float = monotonic()
