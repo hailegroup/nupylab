@@ -78,7 +78,7 @@ class Eurotherm2200(minimalmodbus.Instrument):
             val: float,
             number_of_registers: int = 2,
             byteorder: int = 0
-    ) -> float:
+    ) -> None:
         """Convert to higher register to properly write floats."""
         super().write_float(
             2 * registeraddress + 32768,

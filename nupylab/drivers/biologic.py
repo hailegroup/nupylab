@@ -685,7 +685,9 @@ class BiologicPotentiostat:
             byref(serialized), byref(number_of_chars), byref(nb_devices)
         )
         self.check_blfind_return_code(ret)
-        devices = self._parse_device_serialization(nb_devices.value, serialized.value)
+        devices = self._parse_device_serialization(
+            nb_devices.value, serialized.value.decode()
+        )
         return devices
 
     def find_echem_eth_dev(self) -> List[dict]:
@@ -703,7 +705,9 @@ class BiologicPotentiostat:
             byref(serialized), byref(number_of_chars), byref(nb_devices)
         )
         self.check_blfind_return_code(ret)
-        devices = self._parse_device_serialization(nb_devices.value, serialized.value)
+        devices = self._parse_device_serialization(
+            nb_devices.value, serialized.value.decode()
+        )
         return devices
 
     def find_echem_usb_dev(self) -> List[dict]:
@@ -721,7 +725,9 @@ class BiologicPotentiostat:
             byref(serialized), byref(number_of_chars), byref(nb_devices)
         )
         self.check_blfind_return_code(ret)
-        devices = self._parse_device_serialization(nb_devices.value, serialized.value)
+        devices = self._parse_device_serialization(
+            nb_devices.value, serialized.value.decode()
+        )
         return devices
 
     def set_ethernet_config(
@@ -794,7 +800,7 @@ class BiologicPotentiostat:
         Raises:
             ECLibCustomException for errors parsing serialized message.
         """
-        devices = []
+        devices: List[dict] = []
         if not serialized:
             return devices
 
@@ -817,7 +823,6 @@ class BiologicPotentiostat:
                 try:
                     # decode fragments into their repective fields
                     index, series, serial = fragments[1:]
-                    index = int(index)
                 except Exception as exc:
                     raise ECLibCustomException(
                         f"ill formed USB serialization ({fragments})", -1001

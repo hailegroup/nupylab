@@ -3,7 +3,7 @@ GUI for high-impedance station.
 
 This GUI connects to and displays data from
     * Eurotherm 2216e Furnace Controller
-    * Biologic SP-200 Potentiostat (optional)
+    * Biologic SP-300 Potentiostat (optional)
 
 Run the program by changing to the directory containing this file and calling:
 
@@ -117,7 +117,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
             )
             potentiostat = Potentiostat(
                 self.potentiostat_port,
-                "SP200",
+                "SP300",
                 0,
                 (
                     "Ewe (V)",

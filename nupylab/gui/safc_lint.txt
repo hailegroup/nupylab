@@ -1,8 +1,0 @@
-************* Module nupylab.gui.safc_gui
-safc_gui.py:48:0: W0223: Method 'emit' is abstract in class 'Procedure' but is not overridden in child class 'SAFCProcedure' (abstract-method)
-safc_gui.py:48:0: W0223: Method 'get_estimates' is abstract in class 'Procedure' but is not overridden in child class 'SAFCProcedure' (abstract-method)
-safc_gui.py:48:0: W0223: Method 'should_stop' is abstract in class 'Procedure' but is not overridden in child class 'SAFCProcedure' (abstract-method)
-
------------------------------------
-Your code has been rated at 9.57/10
-
