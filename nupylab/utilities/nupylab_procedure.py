@@ -49,7 +49,6 @@ class NupylabProcedure(Procedure):
         }
         self._data.update(self._data_defaults)
         self._counter: int = 1
-        self._finished: bool = False
         self._start_time: float = 0
         self._multivalue_results: List[DataTuple] = []
         self.previous_procedure: Optional[NupylabProcedure] = None
@@ -138,7 +137,7 @@ class NupylabProcedure(Procedure):
             if self.should_stop():
                 log.warning("Catch stop command in procedure")
                 break
-            if self._finished:
+            if self.finished:
                 for thread in threads:
                     thread.join()
                 while self._emit_results(queues) != 0:  # Flush queues
@@ -164,6 +163,14 @@ class NupylabProcedure(Procedure):
                     log.warning("Error shutting down %s: %s", instrument.name, e)
             log.info("Shutdown complete.")
 
+    @property
+    def finished(self):
+        """Get whether all active instruments are finished measuring."""
+        for instrument in self.active_instruments:
+            if not instrument.finished:
+                return False
+        return True
+
     def _sub_loop(
         self, process: Callable[..., None], queue: SimpleQueue, *args
     ) -> None:
@@ -176,7 +183,7 @@ class NupylabProcedure(Procedure):
             queue: queue to place data in.
             *args: additional args to pass to `process`
         """
-        while not self.should_stop() and not self._finished:
+        while not self.should_stop() and not self.finished:
             queue.put(process(*args))
             sleep_time = self.record_time * self._counter - (
                 monotonic() - self._start_time
@@ -191,6 +198,8 @@ class NupylabProcedure(Procedure):
                 self._parse_results(r)
         if not hasattr(result.value, "__len__"):
             self._data[result.label] = result.value
+        elif len(result.value) == 0:  # do not include empty results
+            return
         elif len(result.value) == 1:
             self._data[result.label] = result.value[0]
         else:

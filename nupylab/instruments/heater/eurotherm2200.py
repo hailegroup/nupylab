@@ -11,6 +11,7 @@ class Eurotherm2200(NupylabInstrument):
     Attributes:
         data_label: label for DataTuple.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         eurotherm: Eurotherm driver class.
     """
 
@@ -29,6 +30,8 @@ class Eurotherm2200(NupylabInstrument):
                 procedure class.
             name: name of instrument.
         """
+        self._finished: bool = False
+        self.eurotherm = None
         if not isinstance(data_label, str):
             raise TypeError("Eurotherm 2200 data label must be string.")
         if "COM" not in port:
@@ -39,8 +42,9 @@ class Eurotherm2200(NupylabInstrument):
 
     def connect(self) -> None:
         """Connect to Eurotherm."""
-        self.eurotherm = eurotherm2200.Eurotherm2200(self._port, self._address)
-        self._connected = True
+        with self.lock:
+            self.eurotherm = eurotherm2200.Eurotherm2200(self._port, self._address)
+            self._connected = True
 
     def set_parameters(
         self, target_temperature: float, ramp_rate: float, dwell_time: float
@@ -52,6 +56,7 @@ class Eurotherm2200(NupylabInstrument):
             ramp_rate: ramp rate in C/min.
             dwell_time: dwell time in minutes.
         """
+        self._finished = False
         self._parameters = (target_temperature, ramp_rate, dwell_time)
 
     def start(self) -> None:
@@ -66,15 +71,16 @@ class Eurotherm2200(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         target_temperature, ramp_rate, dwell_time = self._parameters
-        self.eurotherm.program_status = "reset"
-        self.eurotherm.active_setpoint = 1
-        self.eurotherm.end_type = "dwell"
-        self.eurotherm.setpoint_rate_limit = ramp_rate
-        self.eurotherm.setpoint2 = target_temperature
-        # Dwell must be non-zero for program to work, add one second
-        self.eurotherm.dwell_time = dwell_time * 60 + 1
-        self.eurotherm.program_status = "run"
-        self._parameters = None
+        with self.lock:
+            self.eurotherm.program_status = "reset"
+            self.eurotherm.active_setpoint = 1
+            self.eurotherm.end_type = "dwell"
+            self.eurotherm.setpoint_rate_limit = ramp_rate
+            self.eurotherm.setpoint2 = target_temperature
+            # Dwell must be non-zero for program to work, add one second
+            self.eurotherm.dwell_time = dwell_time * 60 + 1
+            self.eurotherm.program_status = "run"
+            self._parameters = None
 
     def get_data(self) -> DataTuple:
         """Read heater temperature.
@@ -82,19 +88,21 @@ class Eurotherm2200(NupylabInstrument):
         Returns:
             DataTuple with current temperature.
         """
-        temperature: float = self.eurotherm.process_value
+        with self.lock:
+            temperature: float = self.eurotherm.process_value
+            self._finished = self.eurotherm.program_status in ("off", "end")
         return DataTuple(self.data_label, temperature)
 
     @property
     def finished(self) -> bool:
         """Get whether Eurotherm program is finished. Read-only."""
-        status: str = self.eurotherm.program_status
-        return status in ("off", "end")
+        return self._finished
 
     def stop_measurement(self):
         """Stop Eurotherm measurement. Not implemented."""
 
     def shutdown(self):
         """Reset Eurotherm program and close serial connection."""
-        self.eurotherm.program_status = "reset"
-        self.eurotherm.serial.close()
+        with self.lock:
+            self.eurotherm.program_status = "reset"
+            self.eurotherm.serial.close()

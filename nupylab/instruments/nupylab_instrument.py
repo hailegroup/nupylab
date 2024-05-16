@@ -1,5 +1,6 @@
 """Abstract instrument class module for NUPyLab procedures."""
 
+from threading import Lock
 from typing import Sequence, Union, Optional, Any
 from nupylab.utilities import DataTuple
 
@@ -12,6 +13,7 @@ class NupylabInstrument:
     Attributes:
         data_label: labels for DataTuples.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
     """
 
     def __init__(
@@ -26,6 +28,7 @@ class NupylabInstrument:
         """
         self.data_label: Union[str, Sequence[str]] = data_label
         self.name: str = name
+        self.lock: Lock = Lock()
         self._connected: bool = False
         self._parameters: Optional[Any] = None
         super().__init__(*args, **kwargs)
@@ -66,6 +69,11 @@ class NupylabInstrument:
     def connected(self) -> bool:
         """Get whether instrument is connected."""
         return self._connected
+
+    @property
+    def finished(self) -> bool:
+        """Get whether measurement is finished. Default True unless overwritten."""
+        return True
 
     def stop_measurement(self) -> None:
         """Stop instrument measurement."""

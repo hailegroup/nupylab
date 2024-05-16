@@ -12,6 +12,7 @@ class Keithley705(NupylabInstrument):
     Attributes:
         channels: dictionary of instrument measurement channels.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         keithley705: Keithley 705 driver class.
     """
 
@@ -26,6 +27,8 @@ class Keithley705(NupylabInstrument):
             port: string name of port, e.g. `GPIB::1`
             name: name of instrument.
         """
+        self.keithley705 = None
+        self._finished: bool = False
         self._port: str = port
         self.keithley705: keithley705.Keithley705
         self.channels: Dict[
@@ -41,8 +44,9 @@ class Keithley705(NupylabInstrument):
 
     def connect(self) -> None:
         """Connect to Keithley 705."""
-        self.keithley705 = keithley705.Keithley705(self._port)
-        self._connected = True
+        with self.lock:
+            self.keithley705 = keithley705.Keithley705(self._port)
+            self._connected = True
 
     def set_parameters(
         self,
@@ -66,6 +70,7 @@ class Keithley705(NupylabInstrument):
         elif (length := len(instrument.data_label)) != len(data_label):
             raise ValueError(f"{instrument.name} `data_label` must be sequence of "
                              f"{length} but received {data_label}")
+        self._finished = False
         self.channels[channel] = (instrument, data_label, pre_process)
 
     def start(self) -> None:
@@ -88,18 +93,27 @@ class Keithley705(NupylabInstrument):
             DataTuples from instruments reading corresponding channels.
         """
         data: List[DataTuple] = []
-        for channel, (instrument, labels, pre_process) in self.channels:
-            if pre_process is not None:
-                pre_process()
-            instrument.data_label = labels
-            if channel != self._closed_channel:
-                self.keithley705.open_channel(channel)
-            self.keithley705.close_channel(channel)
-            self._closed_channel = channel
-            d = instrument.get_data()
-            if d is not None:
-                data.append(d)
+        f: bool = True
+        with self.lock:
+            for channel, (instrument, labels, pre_process) in self.channels:
+                if pre_process is not None:
+                    pre_process()
+                instrument.data_label = labels
+                if channel != self._closed_channel:
+                    self.keithley705.open_channel(channel)
+                self.keithley705.close_channel(channel)
+                self._closed_channel = channel
+                d = instrument.get_data()
+                if d is not None:
+                    data.append(d)
+                f = f and instrument.finished
+            self._finished = f
         return data if data else None
+
+    @property
+    def finished(self) -> bool:
+        """Get whether measurements on all channels are finished."""
+        return self._finished
 
     def stop_measurement(self) -> None:
         """Stop measurement on Keithley 705. Clears channel dict."""
@@ -107,5 +121,6 @@ class Keithley705(NupylabInstrument):
 
     def shutdown(self) -> None:
         """Close serial connection on Keithley 705."""
-        self.keithley705.reset()
-        self.keithley705.adapter.close()
+        with self.lock:
+            self.keithley705.reset()
+            self.keithley705.adapter.close()

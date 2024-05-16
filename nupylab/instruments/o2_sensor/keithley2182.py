@@ -1,6 +1,6 @@
 """Adapts Keithley 2182 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
-from typing import Sequence, Tuple
+from typing import Sequence, List
 
 from pymeasure.instruments.keithley import keithley2182
 from nupylab.utilities import DataTuple
@@ -13,6 +13,7 @@ class Keithley2182(NupylabInstrument):
     Attributes:
         data_label: labels for DataTuples.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         keithley: Keithley 2182 driver class.
     """
 
@@ -39,6 +40,8 @@ class Keithley2182(NupylabInstrument):
             ValueError if `data_label` does not contain 3 entries.
 
         """
+        self._ch_1_first = None
+        self.keithley = None
         if len(data_label) != 3:
             raise ValueError("Keithley 2182 data_label must be sequence of length 3.")
         self._intercept: float = pO2_intercept
@@ -48,18 +51,19 @@ class Keithley2182(NupylabInstrument):
 
     def connect(self) -> None:
         """Connect to Keithley 2182 nanovoltmeter."""
-        self.keithley: keithley2182.Keithley2182 = keithley2182.Keithley2182(self._port)
-        self.keithley.clear()
-        self.keithley.reset()
-        self.keithley.thermocouple = "S"
-        self.keithley.ch_1.setup_voltage()
+        with self.lock:
+            self.keithley: keithley2182.Keithley2182 = keithley2182.Keithley2182(self._port)
+            self.keithley.clear()
+            self.keithley.reset()
+            self.keithley.thermocouple = "S"
+            self.keithley.ch_1.setup_voltage()
         self._ch_1_first: bool = True
         self._connected = True
 
     def start(self) -> None:
         """Start pO2 measurement. Not implemented."""
 
-    def get_data(self) -> Tuple[DataTuple]:
+    def get_data(self) -> List[DataTuple]:
         """Get pO2 sensor data.
 
         Returns:
@@ -70,29 +74,31 @@ class Keithley2182(NupylabInstrument):
         temperature: float
         pO2: float
         # Toggle between which channel is measured first to speed up measurement cycle
-        if self._ch_1_first:
-            voltage = -1 * self.keithley.voltage
-            self.keithley.ch_2.setup_temperature()
-            temperature = self.keithley.temperature
-            self._ch_1_first = False
-        else:
-            temperature = self.keithley.temperature
-            self.keithley.ch_1.setup_voltage()
-            voltage = -1 * self.keithley.voltage
-            self._ch_1_first = True
+        with self.lock:
+            if self._ch_1_first:
+                voltage = -1 * self.keithley.voltage
+                self.keithley.ch_2.setup_temperature()
+                temperature = self.keithley.temperature
+                self._ch_1_first = False
+            else:
+                temperature = self.keithley.temperature
+                self.keithley.ch_1.setup_voltage()
+                voltage = -1 * self.keithley.voltage
+                self._ch_1_first = True
         pO2 = 0.2095 * 10 ** (
             20158 * ((voltage - self._slope) / (temperature + 273.15) - self._intercept)
         )
-        data = (
+        data = [
             DataTuple(self.data_label[0], temperature),
             DataTuple(self.data_label[1], pO2),
             DataTuple(self.data_label[2], voltage),
-        )
+        ]
         return data
 
     def stop_measurement(self) -> None:
         """Stop pO2 measurement. Not implemented."""
 
     def shutdown(self) -> None:
-        """Disconnect from Agilent 4284A."""
-        self.agilent.adapter.close()
+        """Disconnect from Keithley 2182."""
+        with self.lock:
+            self.keithley.adapter.close()

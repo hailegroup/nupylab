@@ -13,6 +13,7 @@ class ROD4(NupylabInstrument):
     Attributes:
         data_label: labels for DataTuples.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         rod4: ROD4 driver class.
     """
 
@@ -42,11 +43,12 @@ class ROD4(NupylabInstrument):
 
     def connect(self) -> None:
         """Connect to ROD-4."""
-        self.rod4 = rod4.ROD4(self._port)
-        self._ranges = tuple(
-            channel.mfc_range for channel in self.rod4.channels.values()
-        )
-        self._connected = True
+        with self.lock:
+            self.rod4 = rod4.ROD4(self._port)
+            self._ranges = tuple(
+                channel.mfc_range for channel in self.rod4.channels.values()
+            )
+            self._connected = True
 
     def set_parameters(self, setpoints: Sequence[float]) -> None:
         """Set ROD-4 flow setpoints.
@@ -72,31 +74,28 @@ class ROD4(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         setpoints = self._parameters
-        for channel, setpoint, range_ in zip(
-            self.rod4.channels.values(), setpoints, self._ranges
-        ):
-            channel.setpoint = 100 * setpoint / range_
-            if setpoint == 0:
-                channel.valve_mode = "close"
-            else:
-                channel.valve_mode = "flow"
+        with self.lock:
+            for channel, setpoint, range_ in zip(
+                self.rod4.channels.values(), setpoints, self._ranges
+            ):
+                channel.setpoint = 100 * setpoint / range_
+                if setpoint == 0:
+                    channel.valve_mode = "close"
+                else:
+                    channel.valve_mode = "flow"
         self._parameters = None
 
-    def get_data(self) -> Tuple[DataTuple]:
+    def get_data(self) -> List[DataTuple]:
         """Read flow for each MFC channel.
 
         Returns:
             tuple of four DataTuples with flow for each channel.
         """
         mfc: List[float] = []
-        for channel, range_ in zip(self.rod4.channels.values(), self._ranges):
-            mfc.append(channel.actual_flow * range_ / 100)
-        return (DataTuple(self.data_label[i], mfc[i]) for i in range(4))
-
-    @property
-    def finished(self) -> bool:
-        """Get whether ROD-4 is finished. Always False."""
-        return False
+        with self.lock:
+            for channel, range_ in zip(self.rod4.channels.values(), self._ranges):
+                mfc.append(channel.actual_flow * range_ / 100)
+        return list(DataTuple(self.data_label[i], mfc[i]) for i in range(4))
 
     def stop_measurement(self) -> None:
         """Stop ROD-4 measurement. Not implemented."""
@@ -104,6 +103,7 @@ class ROD4(NupylabInstrument):
 
     def shutdown(self) -> None:
         """Shutdown ROD-4 gas flow and close serial connection."""
-        for channel in self.rod4.channels.values():
-            channel.valve_mode = "close"
-        self.rod4.adapter.close()
+        with self.lock:
+            for channel in self.rod4.channels.values():
+                channel.valve_mode = "close"
+            self.rod4.adapter.close()

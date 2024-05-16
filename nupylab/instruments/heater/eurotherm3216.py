@@ -11,6 +11,7 @@ class Eurotherm3216(NupylabInstrument):
     Attributes:
         data_label: label for DataTuples.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         eurotherm: Eurotherm driver class.
     """
 
@@ -29,6 +30,8 @@ class Eurotherm3216(NupylabInstrument):
                 procedure class.
             name: name of instrument.
         """
+        self.eurotherm = None
+        self._finished: bool = False
         if "COM" not in port:
             port = port.replace("ASRL", "COM").replace("::INSTR", "")
         self._port = port
@@ -37,8 +40,9 @@ class Eurotherm3216(NupylabInstrument):
 
     def connect(self) -> None:
         """Connect to Eurotherm."""
-        self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
-        self._connected = True
+        with self.lock:
+            self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
+            self._connected = True
 
     def set_parameters(
         self, target_temperature: float, ramp_rate: float, dwell_time: float
@@ -50,6 +54,7 @@ class Eurotherm3216(NupylabInstrument):
             ramp_rate: ramp rate in C/min.
             dwell_time: dwell time in minutes.
         """
+        self._finished = False
         self._parameters = (target_temperature, ramp_rate, dwell_time)
 
     def start(self) -> None:
@@ -63,17 +68,18 @@ class Eurotherm3216(NupylabInstrument):
                 f"`{self.__class__.__name__}` method `set_parameters` "
                 "must be called before calling its `start` method."
             )
-        target_temperature, ramp_rate, dwell_time = self._parameters
-        self.eurotherm.program_status = "reset"
-        self.eurotherm.end_type = "dwell"
-        for segment in self.eurotherm.segments:
-            segment.clear()
-        # Eurotherm 3216 runs all 8 segments, so only the final segment matters
-        self.eurotherm.segments[-1].target_setpoint = target_temperature
-        self.eurotherm.segments[-1].ramp_rate = ramp_rate
-        self.eurotherm.segment[-1].dwell = dwell_time * 60
-        self.eurotherm.program_status = "run"
-        self._parameters = None
+        with self.lock:
+            target_temperature, ramp_rate, dwell_time = self._parameters
+            self.eurotherm.program_status = "reset"
+            self.eurotherm.end_type = "dwell"
+            for segment in self.eurotherm.segments:
+                segment.clear()
+            # Eurotherm 3216 runs all 8 segments, so only the final segment matters
+            self.eurotherm.segments[-1].target_setpoint = target_temperature
+            self.eurotherm.segments[-1].ramp_rate = ramp_rate
+            self.eurotherm.segment[-1].dwell = dwell_time * 60
+            self.eurotherm.program_status = "run"
+            self._parameters = None
 
     def get_data(self) -> DataTuple:
         """Read heater temperature.
@@ -81,14 +87,15 @@ class Eurotherm3216(NupylabInstrument):
         Returns:
             DataTuple with current temperature.
         """
-        temperature: float = self.eurotherm.process_value
+        with self.lock:
+            temperature: float = self.eurotherm.process_value
+            self._finished = self.eurotherm.program_status in ("reset", "end")
         return DataTuple(self.data_label, temperature)
 
     @property
     def finished(self) -> bool:
         """Get whether Eurotherm program is finished. Read-only."""
-        status: str = self.eurotherm.program_status
-        return status in ("reset", "end")
+        return self._finished
 
     def stop_measurement(self):
         """Stop Eurotherm measurement. Not implemented."""
@@ -96,5 +103,6 @@ class Eurotherm3216(NupylabInstrument):
 
     def shutdown(self):
         """Reset Eurotherm program and close serial connection."""
-        self.eurotherm.program_status = "reset"
-        self.eurotherm.serial.close()
+        with self.lock:
+            self.eurotherm.program_status = "reset"
+            self.eurotherm.serial.close()

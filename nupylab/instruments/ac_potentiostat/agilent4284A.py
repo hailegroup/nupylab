@@ -1,6 +1,6 @@
 """Adapts Agilent 4284A driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
-from typing import Sequence, Tuple, Optional, Callable
+from typing import Sequence, List, Optional, Callable
 
 import numpy as np
 from pymeasure.instruments.agilent import agilent4284A
@@ -14,8 +14,8 @@ class Agilent4284A(NupylabInstrument):
     Attributes:
         data_label: labels for DataTuples.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         agilent: Agilent 4284A driver class.
-
     """
 
     def __init__(
@@ -40,14 +40,16 @@ class Agilent4284A(NupylabInstrument):
         """
         if len(data_label) != 3:
             raise ValueError("Agilent 4284A data_label must be sequence of length 3.")
+        self.agilent = None
         self._port = port
         self._finished: bool = False
         super().__init__(data_label, name)
 
     def connect(self) -> None:
         """Connect to Agilent 4284A."""
-        self.agilent = agilent4284A.Agilent4284A(self._port)
-        self._connected = True
+        with self.lock:
+            self.agilent = agilent4284A.Agilent4284A(self._port)
+            self._connected = True
 
     def set_parameters(
         self,
@@ -75,14 +77,15 @@ class Agilent4284A(NupylabInstrument):
         technique = technique.upper()
         if technique not in ("PEIS", "GEIS"):
             raise KeyError(f"Technique {technique} must be `PEIS` or `GEIS`.")
-        self.agilent.clear()
-        self.agilent.reset()
+        with self.lock:
+            self.agilent.clear()
+            self.agilent.reset()
+            if technique == "PEIS":
+                self.agilent.ac_voltage = amplitude
+            else:
+                self.agilent.ac_current = amplitude
+            self.agilent.mode = "ZTR"
         self._finished = False
-        if technique == "PEIS":
-            self.agilent.ac_voltage = amplitude
-        else:
-            self.agilent.ac_current = amplitude
-        self.agilent.mode = "ZTR"
         max_f_log = np.log10(maximum_frequency)
         min_f_log = np.log10(minimum_frequency)
         freq_steps: int = round((max_f_log - min_f_log) * points_per_decade) + 1
@@ -103,7 +106,7 @@ class Agilent4284A(NupylabInstrument):
             )
         self._parameters = None
 
-    def get_data(self) -> Optional[Tuple[DataTuple]]:
+    def get_data(self) -> Optional[List[DataTuple]]:
         """Get EIS data.
 
         Returns:
@@ -112,15 +115,16 @@ class Agilent4284A(NupylabInstrument):
         """
         if not self.eis_condition:
             return
-        results = self.agilent.sweep_measurement("frequency", self._freq_list)
+        with self.lock:
+            results = self.agilent.sweep_measurement("frequency", self._freq_list)
         abs_z, z_phase, freq = results
         z_re = abs_z * np.cos(z_phase)
         z_im = abs_z * np.sin(z_phase)
-        data = (
+        data = [
             DataTuple(self.data_label[0], freq),
             DataTuple(self.data_label[1], z_re),
             DataTuple(self.data_label[2], -z_im),
-        )
+        ]
         self._finished = True
         return data
 
@@ -141,4 +145,5 @@ class Agilent4284A(NupylabInstrument):
 
     def shutdown(self) -> None:
         """Disconnect from Agilent 4284A."""
-        self.agilent.adapter.close()
+        with self.lock:
+            self.agilent.adapter.close()

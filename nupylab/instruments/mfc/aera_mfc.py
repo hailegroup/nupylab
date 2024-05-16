@@ -16,6 +16,7 @@ class AeraMFC(NupylabInstrument):
     Attributes:
         data_label: labels for DataTuples.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         aera: AeraMFC driver class with channels for all connected MFCs.
     """
 
@@ -65,13 +66,14 @@ class AeraMFC(NupylabInstrument):
 
     def connect(self) -> None:
         """Connect to Aera MFCs."""
-        self.aera = aera_mfc.AeraMFC(self._port)
-        for address, mfc_class in zip(self._addresses, self._mfc_classes):
-            self.aera.add_channel(address, mfc_class)
-        self._ranges = tuple(
-            channel.mfc_range for channel in self.aera.channels.values()
-        )
-        self._connected = True
+        with self.lock:
+            self.aera = aera_mfc.AeraMFC(self._port)
+            for address, mfc_class in zip(self._addresses, self._mfc_classes):
+                self.aera.add_channel(address, mfc_class)
+            self._ranges = tuple(
+                channel.mfc_range for channel in self.aera.channels.values()
+            )
+            self._connected = True
 
     def set_parameters(self, setpoints: Sequence[float]) -> None:
         """Set Aera flow setpoints.
@@ -103,34 +105,31 @@ class AeraMFC(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         setpoints = self._parameters
-        for channel, setpoint, range_ in zip(
-            self.aera.channels.values(), setpoints, self._ranges
-        ):
-            channel.setpoint = 100 * setpoint / range_
-            if setpoint == 0:
-                channel.valve_mode = "close"
-            else:
-                channel.valve_mode = "flow"
+        with self.lock:
+            for channel, setpoint, range_ in zip(
+                self.aera.channels.values(), setpoints, self._ranges
+            ):
+                channel.setpoint = 100 * setpoint / range_
+                if setpoint == 0:
+                    channel.valve_mode = "close"
+                else:
+                    channel.valve_mode = "flow"
         self._parameters = None
 
-    def get_data(self) -> Tuple[DataTuple]:
+    def get_data(self) -> List[DataTuple]:
         """Read flow for each MFC channel.
 
         Returns:
             DataTuples with flow for each channel.
         """
         flow_rates: List[float] = []
-        for channel, range_ in zip(self.aera.channels.values(), self._ranges):
-            flow_rates.append(channel.actual_flow * range_ / 100)
-        return (
+        with self.lock:
+            for channel, range_ in zip(self.aera.channels.values(), self._ranges):
+                flow_rates.append(channel.actual_flow * range_ / 100)
+        return list(
             DataTuple(label, flow_rate)
             for label, flow_rate in zip(self.data_label, flow_rates)
         )
-
-    @property
-    def finished(self) -> bool:
-        """Get whether Aera MFCs are finished. Always False."""
-        return False
 
     def stop_measurement(self) -> None:
         """Stop Aera MFC measurement. Not implemented."""
@@ -138,6 +137,7 @@ class AeraMFC(NupylabInstrument):
 
     def shutdown(self) -> None:
         """Shutdown Aera MFC gas flow and close serial connection."""
-        for channel in self.aera.channels.values():
-            channel.valve_mode = "close"
-        self.aera.adapter.close()
+        with self.lock:
+            for channel in self.aera.channels.values():
+                channel.valve_mode = "close"
+            self.aera.adapter.close()

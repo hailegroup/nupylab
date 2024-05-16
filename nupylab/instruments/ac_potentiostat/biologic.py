@@ -1,7 +1,7 @@
 """Adapts Biologic driver to NUPylab instrument class for use with NUPyLab GUIs."""
 from __future__ import annotations
 import importlib
-from typing import Sequence, Tuple, Union, TYPE_CHECKING, Optional, List, Type, Callable
+from typing import Sequence, Union, TYPE_CHECKING, Optional, List, Type, Callable
 
 import numpy as np
 from nupylab.drivers.biologic import BiologicPotentiostat, OCV
@@ -18,9 +18,9 @@ class Biologic(NupylabInstrument):
     Attributes:
         data_label: labels for DataTuples.
         name: name of instrument.
+        lock: thread lock for preventing simultaneous calls to instrument.
         biologic: Biologic driver class.
         channels: active measurement channels.
-
     """
 
     def __init__(
@@ -64,13 +64,17 @@ class Biologic(NupylabInstrument):
         for c in self.channels:
             self._chan_bool[c] = 1
         self._measuring_ocv: bool = False
+        self.ocv = None
+        self._finished: bool = False
+        self._eis_condition = None
         super().__init__(data_label, name)
 
     def connect(self) -> None:
         """Connect to Biologic."""
-        self.biologic.connect()
-        self.biologic.load_firmware(self._chan_bool)
-        self._connected = True
+        with self.lock:
+            self.biologic.connect()
+            self.biologic.load_firmware(self._chan_bool)
+            self._connected = True
 
     def _initialize_eis(
         self,
@@ -90,6 +94,7 @@ class Biologic(NupylabInstrument):
                 "initial_frequency": max_freq,
                 "final_frequency": min_freq,
                 "frequency_number": freq_steps,
+                "record_every_dt": record_time
             }
         )
         if technique in ("PEIS" or "SPEIS"):
@@ -146,8 +151,9 @@ class Biologic(NupylabInstrument):
             record_every_dt=record_time,
             E_range="KBIO_ERANGE_AUTO",
         )
-        for c in self.channels:
-            self.biologic.load_technique(c, ocv, first=True, last=True)
+        with self.lock:
+            for c in self.channels:
+                self.biologic.load_technique(c, self.ocv, first=True, last=True)
         self._eis_condition = eis_condition
         self._initialize_eis(
             maximum_frequency,
@@ -172,36 +178,42 @@ class Biologic(NupylabInstrument):
                 f"`{self.__class__.__name__}` method `set_parameters` "
                 "must be called before calling its `start` method."
             )
-        if len(self.channels) == 1:
-            self.biologic.start_channel(self.channels[0])
-        else:
-            self.biologic.start_channels(self._chan_bool)
+        with self.lock:
+            if len(self.channels) == 1:
+                self.biologic.start_channel(self.channels[0])
+            else:
+                self.biologic.start_channels(self._chan_bool)
         self._measuring_ocv = True
         self._parameters = None
 
-    def get_data(self) -> Tuple[DataTuple]:
+    def get_data(self) -> List[DataTuple]:
         """Get OCV or EIS data for each channel.
 
         Returns:
             DataTuples in the order E_we, frequency, Z_re, and -Z_im for each
             channel if measuring EIS, E_we only if measuring OCV.
         """
-        all_data = [self.biologic.get_data(c) for c in self.channels]
-        data = []
-        # Switch from OCV to EIS upon external condition, like furnace program complete
-        if self.eis_condition:
-            if len(self.channels) == 1:
-                channel = self.channels[0]
-                self.biologic.stop_channel(channel)
-                self.biologic.load_technique(channel, self._eis, first=True, last=True)
-                self.biologic.start_channel(channel)
-            else:
-                self.biologic.stop_channels(self._chan_bool)
-                for c in self.channels:
-                    self.biologic.load_technique(c, self._eis, first=True, last=True)
-                self.biologic.start_channels(self._chan_bool)
-            self._measuring_ocv = False
+        with self.lock:
+            all_data = [self.biologic.get_data(c) for c in self.channels]
+            if not self._measuring_ocv:
+                self._finished = all(
+                    self.biologic.get_channel_infos(c)["State"] == 0 for c in self.channels
+                )
+            # Switch from OCV to EIS upon external condition, like furnace program complete
+            if self.eis_condition:
+                if len(self.channels) == 1:
+                    channel = self.channels[0]
+                    self.biologic.stop_channel(channel)
+                    self.biologic.load_technique(channel, self._eis, first=True, last=True)
+                    self.biologic.start_channel(channel)
+                else:
+                    self.biologic.stop_channels(self._chan_bool)
+                    for c in self.channels:
+                        self.biologic.load_technique(c, self._eis, first=True, last=True)
+                    self.biologic.start_channels(self._chan_bool)
+                self._measuring_ocv = False
 
+        data = []
         for kbio_data, c in zip(all_data, self.channels):
             if kbio_data is None:
                 continue
@@ -211,15 +223,15 @@ class Biologic(NupylabInstrument):
                 z_phase = kbio_data.Phase_Zwe_numpy
                 z_re = abs_z * np.cos(z_phase)
                 z_im = abs_z * np.sin(z_phase)
-                data = (
+                data.append((
                     DataTuple(self.data_label[0], kbio_data.Ewe),
                     DataTuple(self.data_label[1], kbio_data.freq),
                     DataTuple(self.data_label[2], z_re),
-                    DataTuple(self.data_label[3], -z_im),
+                    DataTuple(self.data_label[3], -z_im),)
                 )
             else:
-                data = DataTuple(self.data_label[0], kbio_data.Ewe)
-            return data
+                data.append(DataTuple(self.data_label[0], kbio_data.Ewe))
+        return data
 
     @property
     def eis_condition(self) -> bool:
@@ -231,19 +243,22 @@ class Biologic(NupylabInstrument):
     @property
     def finished(self) -> bool:
         """Get whether Biologic channels are finished."""
-        channel_infos = self.biologic.get_channel_infos(0)
-        return channel_infos["State"] == 0
+        if self._measuring_ocv:  # Never finished if measuring OCV
+            return False
+        return self._finished
 
     def stop_measurement(self) -> None:
         """Stop measurement on all Biologic channels."""
-        if len(self.channels) == 1:
-            self.biologic.stop_channel(self.channels[0])
-        else:
-            self.biologic.stop_channels(self._chan_bool)
+        with self.lock:
+            if len(self.channels) == 1:
+                self.biologic.stop_channel(self.channels[0])
+            else:
+                self.biologic.stop_channels(self._chan_bool)
 
     def shutdown(self) -> None:
         """Disconnect from Biologic."""
-        self.biologic.disconnect()
+        with self.lock:
+            self.biologic.disconnect()
 
 
 PEIS_DICT = {
