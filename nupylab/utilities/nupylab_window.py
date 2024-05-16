@@ -1,9 +1,10 @@
 """Base window module for NUPyLab GUIs."""
 
 from __future__ import annotations
+import inspect
 import logging
 import os
-from typing import Dict, Sequence, TYPE_CHECKING
+from typing import Dict, Sequence, TYPE_CHECKING, Type
 
 from pymeasure.display.windows.managed_dock_window import ManagedDockWindow
 from pymeasure.experiment import (
@@ -38,13 +39,13 @@ class NupylabWindow(ManagedDockWindow):
 
     def __init__(
         self,
-        procedure_class: NupylabProcedure,
+        procedure_class: Type[NupylabProcedure],
         table_column_labels: Sequence[str],
         x_axis: Sequence[str],
         y_axis: Sequence[str],
         inputs: Sequence[str],
         *args,
-        **kwargs
+        **kwargs,
     ) -> None:
         """Initialize main window GUI.
 
@@ -65,7 +66,7 @@ class NupylabWindow(ManagedDockWindow):
                 ParameterTableWidget("Experiment Parameters", table_column_labels),
             ),
             *args,
-            **kwargs
+            **kwargs,
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
 
@@ -101,14 +102,19 @@ class NupylabWindow(ManagedDockWindow):
             "0": False,
         }
         cast_dict: dict = {}
-        for parameter, column in zip(
-            self.procedure_class.TABLE_PARAMETERS, converted_df.columns
+        for param_name, column in zip(
+            self.procedure_class.TABLE_PARAMETERS.values(), converted_df.columns
         ):
-            # non-empty strings evaluate to True; apply map instead for boolean columns
-            param_cast = self.parameter_types[type(parameter)]
-            if param_cast is bool:
-                converted_df[column] = converted_df[column].str.casefold().map(bool_map)
-            cast_dict.update(column, param_cast)
+            for name, value in inspect.getmembers(self.procedure_class):
+                if name == param_name:
+                    # non-empty strings evaluate to True
+                    # apply map instead for boolean columns
+                    param_cast = self.parameter_types[type(value)]
+                    if param_cast is bool:
+                        converted_df[column] = (
+                            converted_df[column].str.casefold().map(bool_map)
+                        )
+                    cast_dict.update({column: param_cast})
         converted_df = converted_df.astype(cast_dict)
         return converted_df
 
@@ -124,11 +130,12 @@ class NupylabWindow(ManagedDockWindow):
         previous_procedure = None
 
         for table_row in converted_df.itertuples(index=False):
-            procedure: NupylabProcedure = self.make_procedure(previous_procedure)
+            procedure: NupylabProcedure = self.make_procedure()
             procedure.num_steps = num_steps
             procedure.current_step = current_step
-            for i, parameter in enumerate(procedure.TABLE_PARAMETERS):
-                parameter = table_row[i]
+            for i, parameter in enumerate(procedure.TABLE_PARAMETERS.values()):
+                setattr(procedure, parameter, table_row[i])
+            procedure.refresh_parameters()
             procedure.previous_procedure = previous_procedure
             current_step += 1
             filename: str = unique_filename(

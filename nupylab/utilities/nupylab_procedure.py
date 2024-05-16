@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 from math import nan
-from typing import Callable, List, Optional, TYPE_CHECKING, Union, Sequence
+from typing import Callable, List, Optional, TYPE_CHECKING, Union, Sequence, Dict
 from queue import Empty, SimpleQueue
 from threading import Thread
 from time import monotonic, sleep
@@ -29,21 +29,19 @@ class NupylabProcedure(Procedure):
 
     Running this procedure or its subclasses calls startup, execute, and shutdown
     methods sequentially.
+
+    Attrs:
+        previous_procedure: Nupylab Procedure class from previous step. Maintains
+                    previous instrument connections.
     """
 
     # Parameters common to all NUPyLab GUIs
     record_time = FloatParameter("Record Time", units="s", default=2.0)
-    start_time = FloatParameter("Start Time", maximum=1e12)
     num_steps = IntegerParameter("Number of Measurement Steps")
     current_step = IntegerParameter("Current Step")
 
     def __init__(self) -> None:
-        """Initialize default data and instrument list.
-
-        Args:
-            previous_procedure: Nupylab Procedure class from previous step. Maintains
-                previous instrument connections.
-        """
+        """Initialize default data and instrument list."""
         self._data: dict = {"System Time": None, "Time (s)": 0}
         # Initialize values with NaN to avoid complaints
         self._data_defaults: dict = {
@@ -60,21 +58,23 @@ class NupylabProcedure(Procedure):
 
         super().__init__()
 
+    TABLE_PARAMETERS: Dict[str, str] = {}
+
     def _check_errors(self) -> None:
         if not self.DATA_COLUMNS:
             raise NotImplementedError(
-                "Attribute `DATA_COLUMNS` must be overridden by child class"
+                "Attribute `DATA_COLUMNS` must be overridden by child class "
                 f"`{self.__class__.__name__}`."
             )
-        if not hasattr(self, "TABLE_PARAMETERS"):
+        if not self.TABLE_PARAMETERS:
             raise NotImplementedError(
-                "Attribute `TABLE_PARAMETERS` missing from"
-                f"procedure `{self.__class__.__name__}`."
+                "Attribute `TABLE_PARAMETERS` must be overridden by child class "
+                f"`{self.__class__.__name__}`."
             )
         if hasattr(self, "X_AXIS"):
             for x in self.X_AXIS:
                 if x not in self.DATA_COLUMNS:
-                    raise AttributeError(f"`X_AXIS` entry `{x}` missing from"
+                    raise AttributeError(f"`X_AXIS` entry `{x}` missing from "
                                          f"`DATA_COLUMNS`: {self.DATA_COLUMNS}")
 
         if hasattr(self, "Y_AXIS"):
@@ -86,10 +86,10 @@ class NupylabProcedure(Procedure):
         if hasattr(self, "INPUTS"):
             for input_ in self.INPUTS:
                 if not hasattr(self, input_):
-                    raise AttributeError(f"`INPUTS` entry `{input_}` does not"
+                    raise AttributeError(f"`INPUTS` entry `{input_}` does not "
                                          "correspond to any defined parameters.")
-                if locals()[input_] in self.TABLE_PARAMETERS.values():
-                    raise NupylabError(f"Parameter {input_} cannot be listed in both"
+                if input_ in self.TABLE_PARAMETERS.values():
+                    raise NupylabError(f"Parameter {input_} cannot be listed in both "
                                        "`INPUTS` and `TABLE_PARAMETERS.")
 
     def set_instruments(self) -> None:
@@ -128,7 +128,7 @@ class NupylabProcedure(Procedure):
             thread.start()
 
         while True:
-            sleep_time = self.record_time * self._counter - (
+            sleep_time: float = self.record_time * self._counter - (
                 monotonic() - self._start_time
             )
             sleep(max(0, sleep_time))

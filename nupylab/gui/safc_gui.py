@@ -50,7 +50,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 
     Running this procedure calls startup, execute, and shutdown methods sequentially.
     In addition to the parameters listed below, this procedure inherits `record_time`,
-    `start_time`, `num_steps`, and `current_steps` from parent class.
+    `num_steps`, and `current_steps` from parent class.
     """
 
     # Units in parentheses must be valid pint units
@@ -100,20 +100,20 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     amplitude_voltage = FloatParameter("Amplitude Voltage", units="V")
     points_per_decade = IntegerParameter("Points Per Decade")
 
-    TABLE_PARAMETERS: Dict[str, Parameter] = {
-        "Target Temperature [C]": target_temperature,
-        "Ramp Rate [C/min]": ramp_rate,
-        "Dwell Time [min]": dwell_time,
-        "MFC 1 [sccm]": mfc_1_setpoint,
-        "MFC 2 [sccm]": mfc_2_setpoint,
-        "MFC 3 [sccm]": mfc_3_setpoint,
-        "MFC 4 [sccm]": mfc_4_setpoint,
-        "EIS? [True/False]": eis_toggle,
-        "EIS Sample Number": eis_sample,
-        "Maximum Frequency [Hz]": maximum_frequency,
-        "Minimum Frequency [Hz]": minimum_frequency,
-        "Amplitude Voltage [V]": amplitude_voltage,
-        "Points per Decade": points_per_decade,
+    TABLE_PARAMETERS: Dict[str, str] = {
+        "Target Temperature [C]": "target_temperature",
+        "Ramp Rate [C/min]": "ramp_rate",
+        "Dwell Time [min]": "dwell_time",
+        "MFC 1 [sccm]": "mfc_1_setpoint",
+        "MFC 2 [sccm]": "mfc_2_setpoint",
+        "MFC 3 [sccm]": "mfc_3_setpoint",
+        "MFC 4 [sccm]": "mfc_4_setpoint",
+        "EIS? [True/False]": "eis_toggle",
+        "EIS Sample Number": "eis_sample",
+        "Maximum Frequency [Hz]": "maximum_frequency",
+        "Minimum Frequency [Hz]": "minimum_frequency",
+        "Amplitude Voltage [V]": "amplitude_voltage",
+        "Points per Decade": "points_per_decade",
     }
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.

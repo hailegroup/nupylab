@@ -42,7 +42,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
     Running this procedure calls startup, execute, and shutdown methods sequentially.
     In addition to the parameters listed below, this procedure inherits `record_time`,
-    `start_time`, `num_steps`, and `current_steps` from parent class.
+    `num_steps`, and `current_steps` from parent class.
     """
 
     # Units in parentheses must be valid pint units
@@ -59,32 +59,34 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     rm = pyvisa.ResourceManager()
     resources = rm.list_resources()
 
-    furnace_port = ListParameter("Eurotherm Port", choices=resources, ui_class=None)
-    furnace_address = IntegerParameter(
+    furnace_port: ListParameter = ListParameter(
+        "Eurotherm Port", choices=resources, ui_class=None
+    )
+    furnace_address: IntegerParameter = IntegerParameter(
         "Eurotherm Address", minimum=1, maximum=254, step=1, default=1
     )
-    target_temperature = FloatParameter("Target Temperature", units="C")
-    ramp_rate = FloatParameter("Ramp Rate", units="C/min")
-    dwell_time = FloatParameter("Dwell Time", units="min")
+    target_temperature: FloatParameter = FloatParameter("Target Temperature", units="C")
+    ramp_rate: FloatParameter = FloatParameter("Ramp Rate", units="C/min")
+    dwell_time: FloatParameter = FloatParameter("Dwell Time", units="min")
 
-    potentiostat_port = Parameter(
+    potentiostat_port: Parameter = Parameter(
         "Biologic Port", default="USB0", ui_class=None, group_by="eis_toggle"
     )
-    eis_toggle = BooleanParameter("Run EIS")
-    maximum_frequency = FloatParameter("Maximum Frequency", units="Hz")
-    minimum_frequency = FloatParameter("Minimum Frequency", units="Hz")
-    amplitude_voltage = FloatParameter("Amplitude Voltage", units="V")
-    points_per_decade = IntegerParameter("Points Per Decade")
+    eis_toggle: BooleanParameter = BooleanParameter("Run EIS")
+    maximum_frequency: FloatParameter = FloatParameter("Maximum Frequency", units="Hz")
+    minimum_frequency: FloatParameter = FloatParameter("Minimum Frequency", units="Hz")
+    amplitude_voltage: FloatParameter = FloatParameter("Amplitude Voltage", units="V")
+    points_per_decade: IntegerParameter = IntegerParameter("Points Per Decade")
 
-    TABLE_PARAMETERS: Dict[str, Parameter] = {
-        "Target Temperature [C]": target_temperature,
-        "Ramp Rate [C/min]": ramp_rate,
-        "Dwell Time [min]": dwell_time,
-        "EIS? [True/False]": eis_toggle,
-        "Maximum Frequency [Hz]": maximum_frequency,
-        "Minimum Frequency [Hz]": amplitude_voltage,
-        "Amplitude Voltage [V]": minimum_frequency,
-        "Points per Decade": points_per_decade
+    TABLE_PARAMETERS: Dict[str, str] = {
+        "Target Temperature [C]": "target_temperature",
+        "Ramp Rate [C/min]": "ramp_rate",
+        "Dwell Time [min]": "dwell_time",
+        "EIS? [True/False]": "eis_toggle",
+        "Maximum Frequency [Hz]": "maximum_frequency",
+        "Minimum Frequency [Hz]": "minimum_frequency",
+        "Amplitude Voltage [V]": "amplitude_voltage",
+        "Points per Decade": "points_per_decade"
     }
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.

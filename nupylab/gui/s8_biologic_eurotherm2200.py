@@ -29,8 +29,8 @@ from pymeasure.experiment import (
     BooleanParameter, FloatParameter, IntegerParameter, ListParameter, Parameter,
     Procedure, Results, unique_filename)
 
-from nupylab.instruments import BiologicPotentiostat, Eurotherm2200
-from nupylab.instruments.biologic import OCV, PEIS
+from nupylab.drivers import BiologicPotentiostat, Eurotherm2200
+from nupylab.drivers.biologic import OCV, PEIS
 from nupylab.utilities import ParameterTableWidget, DataTuple
 
 

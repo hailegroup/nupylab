@@ -20,9 +20,9 @@ Example:
 from __future__ import annotations
 from typing import Any, Dict, Union, Tuple, List
 
-import serial  # type: ignore
+import serial
 
-_OMRON_END_CODES = {
+_OMRON_END_CODES: Dict[str, str] = {
     "0F": "Could not execute the specified FINS command.",
     "10": "Parity error.",
     "11": "Framing error.",
@@ -33,7 +33,7 @@ _OMRON_END_CODES = {
     "18": "Frame length error.",
 }
 
-_OMRON_RESPONSE_CODES = {
+_OMRON_RESPONSE_CODES: Dict[str, str] = {
     "1001": "Command length too long.",
     "1002": "Command length too short.",
     "1003": "The specified number of elements does not agree with the actual number of "

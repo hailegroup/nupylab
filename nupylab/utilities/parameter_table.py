@@ -195,6 +195,8 @@ class ParameterTable(QtWidgets.QTableView):
             )
             filename = filename_and_ext[0]
             if filename:
+                if '.csv' not in filename:
+                    filename += '.csv'
                 df.to_csv(filename, index=False)
 
     def copy_action(self):
