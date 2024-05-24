@@ -1,5 +1,5 @@
 """
-Master GUI for SAFC station.
+GUI for SAFC station.
 
 This GUI connects to and displays data from
     * ROD-4 MFC Controller
@@ -15,31 +15,27 @@ python safc_gui.py
 
 import logging
 import sys
-from typing import List, Dict
+from typing import Dict, List
 
 import pyvisa
 
+# Instrument Imports #
+from nupylab.instruments.ac_potentiostat.agilent4284A import (
+    Agilent4284A as Potentiostat,
+)
+from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216 as Heater
+from nupylab.instruments.mfc.rod4 import ROD4 as MFC
+from nupylab.instruments.scanner.keithley705 import Keithley705 as Scanner
+from nupylab.instruments.thermocouple_sensor.hp3478A import HP3478A as TC_Sensor
+######################
+from nupylab.utilities import nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
     BooleanParameter,
     FloatParameter,
     IntegerParameter,
     ListParameter,
-    Parameter,
 )
-
-# Instrument Imports #
-from nupylab.instruments.mfc.rod4 import ROD4 as MFC
-from nupylab.instruments.ac_potentiostat.agilent4284A import (
-    Agilent4284A as Potentiostat,
-)
-from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216 as Heater
-from nupylab.instruments.scanner.keithley705 import Keithley705 as Scanner
-from nupylab.instruments.thermocouple_sensor.hp3478a import HP3478A as TC_Sensor
-######################
-
-from nupylab.utilities import nupylab_procedure, nupylab_window
-
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -146,6 +142,9 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 
         Pass in connections from previous step, if applicable, otherwise create new
         instances. Send current step parameters to appropriate instruments.
+
+        It is required for this method to create non-empty `instruments` and
+        `active_instruments` attributes.
         """
         if self.previous_procedure:
             furnace, mfc, potentiostat, tc_sensor, scanner = (
@@ -188,7 +187,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
         if self.eis_toggle:
             potentiostat.set_parameters(
-                self.record_time,
                 self.maximum_frequency,
                 self.minimum_frequency,
                 self.amplitude_voltage,
@@ -205,22 +203,13 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         self.active_instruments = (furnace, mfc, scanner)
 
 
-class MainWindow(nupylab_window.NupylabWindow):
-    """Main GUI window. Procedure must be specified."""
-
-    def __init__(self) -> None:
-        procedure = SAFCProcedure
-        super().__init__(
-            procedure_class=procedure,
-            table_column_labels=list(procedure.TABLE_PARAMETERS),
-            x_axis=procedure.X_AXIS,
-            y_axis=procedure.Y_AXIS,
-            inputs=procedure.INPUTS,
-        )
+def main():
+    """Run SAFC procedure."""
+    app = QtWidgets.QApplication(sys.argv)
+    window = nupylab_window.NupylabWindow(SAFCProcedure)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    main()

@@ -21,16 +21,16 @@ functions in Section 5 of the U12 User's Guide:
 http://labjack.com/support/u12/users-guide/5
 """
 
+from __future__ import annotations
+
 import atexit
 import ctypes
+import logging
 import math
 import sys
 import time
-import logging
-
 from struct import pack, unpack
 from typing import List, Optional, Tuple, Union
-
 
 _os_name: str = ""  # Set to "nt" or "posix" in _loadLibrary
 
@@ -107,12 +107,9 @@ class BitField(object):
     bit1 1
     bit0 1
 
-    As an added bonus, it can also be cast as an int or hex:
+    As an added bonus, it can also be cast as an int:
     >>> int(bf)
     107
-
-    >>> hex(bf)
-    '0x6b'
 
     See the description of the __init__ method for setting the label parameters.
     """
@@ -317,10 +314,6 @@ class BitField(object):
     def __int__(self) -> int:
         """Convert BitField value to int."""
         return self.asByte()
-
-    def __hex__(self) -> str:
-        """Convert BitField value to hex string."""
-        return hex(self.asByte())
 
     def __add__(self, other: int) -> int:
         """Prevent having to test if a variable is a bitfield or int."""
@@ -616,7 +609,7 @@ class U12(object):
             the U12 serial number as an integer.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> print(d.rawReadSerial())
         10004XXXX
@@ -640,7 +633,7 @@ class U12(object):
             the U12's Local ID as an integer.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> print(d.rawReadLocalId())
         0
@@ -665,7 +658,7 @@ class U12(object):
 
         It can also toggle the status LED and update the state of the IOs.
         See Section 5.1 of the User's Guide.
-        By default it will read AI0-3 (single-ended).
+        By default, it will read AI0-3 (single-ended).
 
         Args:
             channel0PGAMUX: A byte that contains channel0 information
@@ -685,21 +678,19 @@ class U12(object):
                 EchoValue, a repeat of the value passed in.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawAISample()
         {
-          'IO3toIO0States':
-            <BitField object: [ IO3 = Low (0), IO2 = Low (0),
+            'IO3toIO0States': <BitField object: [ IO3 = Low (0), IO2 = Low (0),
                                 IO1 = Low (0), IO0 = Low (0) ] >,
-          'Channel0': 1.46484375,
-          'Channel1': 1.4501953125,
-          'Channel2': 1.4599609375,
-          'Channel3': 1.4306640625,
-          'PGAOvervoltage': False,
-          'EchoValue': 0
+            'Channel0': 1.46484375,
+            'Channel1': 1.4501953125,
+            'Channel2': 1.4599609375,
+            'Channel3': 1.4306640625,
+            'PGAOvervoltage': False,
+            'EchoValue': 0
         }
-
         """
         command = [0] * 8
 
@@ -834,11 +825,10 @@ class U12(object):
             D7toD0OutputLatchStates, BitField of output latch states for D7-0
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawDIO()
         {
-
           'D15toD8Directions':
             <BitField object: [ D15 = Input (1), D14 = Input (1),
                                 D13 = Input (1), D12 = Input (1),
@@ -944,7 +934,7 @@ class U12(object):
         """Control and read the 32-bit counter. See Section 5.3 of the User's Guide.
 
         Args:
-            StrobeEnable: set to True to enable strobe.
+            StrobeEnabled: set to True to enable strobe.
             ResetCounter: set to True to reset the counter AFTER reading.
 
         Returns: A dictionary with the following keys:
@@ -954,7 +944,7 @@ class U12(object):
             Counter, the value of the counter
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawCounter()
         {
@@ -1056,7 +1046,7 @@ class U12(object):
             Counter, the value of the counter
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawCounterPWMDIO()
         {
@@ -1180,21 +1170,22 @@ class U12(object):
         By default, it does single-ended readings on AI0-3 at 100Hz for 8
         scans.
 
-        Args: channel0PGAMUX, A byte that contains channel0 information
-              channel1PGAMUX, A byte that contains channel1 information
-              channel2PGAMUX, A byte that contains channel2 information
-              channel3PGAMUX, A byte that contains channel3 information
-              NumberOfScans, The number of scans you wish to take. Rounded up
-                             to a power of 2.
-              TriggerIONum, IO to trigger burst on.
-              TriggerState, State to trigger on.
-              UpdateIO, True if you want to update the IO/D line. False to
-                        False to just read their values.
-              LEDState, Turns the status LED on or off.
-              IO3ToIO0States, 4 bits for IO3-0 states
-              FeatureReports, Use feature reports, or not.
-              TriggerOn, Use trigger to start acquisition.
-              SampleInterval, = int(6000000.0/(ScanRate * NumberOfChannels))
+        Args:
+            channel0PGAMUX: A byte that contains channel0 information
+            channel1PGAMUX: A byte that contains channel1 information
+            channel2PGAMUX: A byte that contains channel2 information
+            channel3PGAMUX: A byte that contains channel3 information
+            NumberOfScans: The number of scans you wish to take. Rounded up
+                to a power of 2.
+            TriggerIONum: IO to trigger burst on.
+            TriggerState: State to trigger on.
+            UpdateIO: True if you want to update the IO/D line, False to just
+                read their values.
+            LEDState: Turns the status LED on or off.
+            IO3ToIO0States: 4 bits for IO3-0 states
+            FeatureReports: Use feature reports, or not.
+            TriggerOn: Use trigger to start acquisition.
+            SampleInterval: = int(6000000.0/(ScanRate * NumberOfChannels))
                               must be greater than (or equal to) 733.
 
         Returns: A dictionary with the following keys:
@@ -1208,7 +1199,7 @@ class U12(object):
                 occurred.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawAIBurst()
         {
@@ -1470,16 +1461,17 @@ class U12(object):
         Example:
         Have a jumper wire connected from D0 to CNT.
 
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawDIO(D7toD0Directions = 0, UpdateDigital = True)
         >>> d.rawCounter(ResetCounter = True)
         >>> d.rawPulseout(ClearFirst = True)
         >>> print(d.rawCounter())
-        { 'IO3toIO0States': ... ,
-          'Counter': 5,
-          'D7toD0States': ... ,
-          'D15toD8States': ...
+        {
+            'IO3toIO0States': ... ,
+            'Counter': 5,
+            'D7toD0States': ... ,
+            'D15toD8States': ...
         }
         """
         command = [0] * 8
@@ -1535,7 +1527,7 @@ class U12(object):
         Note: The function will close the device after it has written the command.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawReset()
         """
@@ -1562,7 +1554,7 @@ class U12(object):
         Note: The function will close the device after it has written the command.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawReenumerate()
         """
@@ -1598,7 +1590,7 @@ class U12(object):
             FirmwareVersion, the firmware version of the U12.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> print(d.rawWatchdog())
         {'FirmwareVersion': '1.10'}
@@ -1659,7 +1651,8 @@ class U12(object):
                 DataByte3, the data byte at Address - 3
 
         Example:
-        >>> import u12, struct
+        >>> from nupylab.drivers import labjack_u12 as u12
+        >>> import struct
         >>> d = u12.U12()
         >>> r = d.rawReadRAM()
         >>> print(r)
@@ -1718,7 +1711,7 @@ class U12(object):
             DataByte3, the data byte at Address - 3
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> print(d.rawWriteRAM([1, 2, 3, 4], 0x200))
         {'DataByte3': 4, 'DataByte2': 3, 'DataByte1': 2, 'DataByte0': 1}
@@ -1795,7 +1788,7 @@ class U12(object):
             ErrorFlags, a BitField representing the error flags.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> # Set the full and half A,B,C to 9600
         >>> d.rawWriteRAM([0, 1, 1, 200], 0x073)
@@ -1903,7 +1896,7 @@ class U12(object):
             ErrorFlags, a BitField representing the error flags.
 
         Example:
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.rawSPI([1,2,3,4], NumberOfBytesToWriteRead = 4)
         {
@@ -2032,7 +2025,7 @@ class U12(object):
         Power ( Red ) -> +5V
         Enable ( Brown ) -> IO2
 
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> results = d.rawSHT1X()
         >>> print(results)
@@ -2136,7 +2129,7 @@ class U12(object):
 
         Args: See section 4.1 of the User's Guide
 
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.eAnalogIn(0)
         {'overVoltage': 0, 'idnum': 1, 'voltage': 1.435546875}
@@ -2183,7 +2176,7 @@ class U12(object):
 
         Args: See section 4.2 of the User's Guide
 
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.eAnalogOut(2, 2)
         {'idnum': 1}
@@ -2223,7 +2216,7 @@ class U12(object):
 
         Args: See section 4.3 of the User's Guide
 
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.eCount()
         {'count': 1383596032.0, 'ms': 251487257.0}
@@ -2266,7 +2259,7 @@ class U12(object):
 
         Args: See section 4.4 of the User's Guide
 
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.eDigitalIn(0)
         {'state': 0, 'idnum': 1}
@@ -2329,7 +2322,7 @@ class U12(object):
 
         Args: See section 4.5 of the User's Guide
 
-        >>> import u12
+        >>> from nupylab.drivers import labjack_u12 as u12
         >>> d = u12.U12()
         >>> d.eDigitalOut(0, 1)
         {idnum': 1}
@@ -2890,7 +2883,7 @@ class U12(object):
 
         >>> dev = U12()
         >>> dev.bitsToVolts(0, 0, 2662)
-        >>> 2.998046875
+        2.998046875
         """
         if _os_name == "nt":
             volts = ctypes.c_float()
@@ -2916,7 +2909,7 @@ class U12(object):
 
         >>> dev = U12()
         >>> dev.voltsToBits(0, 0, 3)
-        >>> 2662
+        2662
         """
         if _os_name == "nt":
             bits = ctypes.c_long(999)

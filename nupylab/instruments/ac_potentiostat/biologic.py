@@ -6,7 +6,7 @@ from typing import Sequence, Union, TYPE_CHECKING, Optional, List, Type, Callabl
 import numpy as np
 from nupylab.drivers.biologic import BiologicPotentiostat, OCV
 from nupylab.utilities import DataTuple, NupylabError
-from ..nupylab_instrument import NupylabInstrument
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 if TYPE_CHECKING:
     from nupylab.drivers.biologic import Technique
@@ -46,8 +46,7 @@ class Biologic(NupylabInstrument):
                 is used.
 
         Raises:
-            ValueError if `data_label` does not contain 4 entries per channel.
-
+            ValueError: if `data_label` does not contain 4 entries per channel.
         """
         if not hasattr(channels, "__len__"):
             channels = (channels,)
@@ -57,6 +56,7 @@ class Biologic(NupylabInstrument):
         self.biologic: BiologicPotentiostat = BiologicPotentiostat(
             model, port, eclib_path
         )
+        self.ocv = None
         self.channels = channels
         self._chan_bool: List[int] = [
             0,
@@ -64,7 +64,6 @@ class Biologic(NupylabInstrument):
         for c in self.channels:
             self._chan_bool[c] = 1
         self._measuring_ocv: bool = False
-        self.ocv = None
         self._finished: bool = False
         self._eis_condition = None
         super().__init__(data_label, name)
@@ -84,7 +83,7 @@ class Biologic(NupylabInstrument):
         ppd: int,
         record_time: float,
         technique: str,
-        EIS: Type[Technique],
+        eis: Type[Technique],
         **kwargs,
     ) -> None:
         freq_steps: int = round((np.log10(max_freq) - np.log10(min_freq)) * ppd) + 1
@@ -107,7 +106,7 @@ class Biologic(NupylabInstrument):
                     f"Biologic technique {technique} does not contain "
                     f"keyword argument {key}"
                 )
-        self._eis = EIS(**technique_dict)
+        self._eis = eis(**technique_dict)
 
     def set_parameters(
         self,
@@ -120,40 +119,37 @@ class Biologic(NupylabInstrument):
         eis_condition: Callable[[], bool],
         **kwargs,
     ) -> None:
-        """Set measurement parameters and prepare EIS technique.
+        """Set measurement parameters and prepare eis technique.
 
         Args:
             record_time: time between recording events.
-            maximum_frequency: maximum EIS frequency in Hz.
-            minimum_frequency: minimum EIS frequency in Hz.
-            amplitude: EIS amplitude in Volt or Amp, depending on whether technique is
+            maximum_frequency: maximum eis frequency in Hz.
+            minimum_frequency: minimum eis frequency in Hz.
+            amplitude: eis amplitude in Volt or Amp, depending on whether technique is
                 PEIS or GEIS.
-            points_per_decade: EIS frequency points per decade.
-            technique: EIS technique to run, must be `PEIS`, `GEIS`, `SPEIS`, or
+            points_per_decade: eis frequency points per decade.
+            technique: eis technique to run, must be `PEIS`, `GEIS`, `SPEIS`, or
                 `SGEIS`. Defaults to `PEIS`.
-            eis_condition: function indicating whether to begin EIS measurement.
+            eis_condition: function indicating whether to begin eis measurement.
             **kwargs: additional kwargs to pass to `technique`.
 
         Raises:
-            KeyError if `technique` is not supported.
+            KeyError: if `technique` is not supported.
         """
         technique = technique.upper()
         if technique not in ("PEIS", "GEIS", "SPEIS", "SGEIS"):
             raise KeyError(
                 f"Technique {technique} must be `PEIS`, `GEIS`, `SPEIS`, or `SGEIS`."
             )
-        EIS: Type[Technique] = getattr(
+        eis: Type[Technique] = getattr(
             importlib.import_module("nupylab.drivers.biologic"), technique
         )
-        ocv: OCV = OCV(
+        self.ocv: OCV = OCV(
             duration=24 * 60 * 60,
-            record_every_dE=0.1,
+            record_every_de=0.1,
             record_every_dt=record_time,
-            E_range="KBIO_ERANGE_AUTO",
+            e_range="KBIO_ERANGE_AUTO",
         )
-        with self.lock:
-            for c in self.channels:
-                self.biologic.load_technique(c, self.ocv, first=True, last=True)
         self._eis_condition = eis_condition
         self._initialize_eis(
             maximum_frequency,
@@ -162,16 +158,17 @@ class Biologic(NupylabInstrument):
             points_per_decade,
             record_time,
             technique,
-            EIS,
+            eis,
             **kwargs,
         )
+        self._finished = False
         self._parameters = True  # Placeholder just to indicate parameters are set.
 
     def start(self) -> None:
         """Start OCV measurement on Biologic channel(s).
 
         Raises:
-            NupylabError if `start` method is called before `set_parameters`.
+            NupylabError: if `start` method is called before `set_parameters`.
         """
         if self._parameters is None:
             raise NupylabError(
@@ -179,6 +176,8 @@ class Biologic(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         with self.lock:
+            for c in self.channels:
+                self.biologic.load_technique(c, self.ocv, first=True, last=True)
             if len(self.channels) == 1:
                 self.biologic.start_channel(self.channels[0])
             else:
@@ -187,11 +186,11 @@ class Biologic(NupylabInstrument):
         self._parameters = None
 
     def get_data(self) -> List[DataTuple]:
-        """Get OCV or EIS data for each channel.
+        """Get OCV or eis data for each channel.
 
         Returns:
             DataTuples in the order E_we, frequency, Z_re, and -Z_im for each
-            channel if measuring EIS, E_we only if measuring OCV.
+            channel if measuring eis, E_we only if measuring OCV.
         """
         with self.lock:
             all_data = [self.biologic.get_data(c) for c in self.channels]
@@ -199,7 +198,7 @@ class Biologic(NupylabInstrument):
                 self._finished = all(
                     self.biologic.get_channel_infos(c)["State"] == 0 for c in self.channels
                 )
-            # Switch from OCV to EIS upon external condition, like furnace program complete
+            # Switch from OCV to eis upon external condition, like furnace program complete
             if self.eis_condition:
                 if len(self.channels) == 1:
                     channel = self.channels[0]
@@ -235,7 +234,7 @@ class Biologic(NupylabInstrument):
 
     @property
     def eis_condition(self) -> bool:
-        """Get whether to begin EIS measurement."""
+        """Get whether to begin eis measurement."""
         if not self._measuring_ocv:  # Prevents unnecessary function calls
             return False
         return self._eis_condition()
@@ -274,9 +273,9 @@ PEIS_DICT = {
     "wait_for_steady": 1.0,
     "drift_correction": False,
     "record_every_dt": 0.1,
-    "record_every_dI": 0.1,
-    "I_range": "KBIO_IRANGE_AUTO",
-    "E_range": "KBIO_ERANGE_2_5",
+    "record_every_di": 0.1,
+    "i_range": "KBIO_IRANGE_AUTO",
+    "e_range": "KBIO_ERANGE_2_5",
     "bandwidth": "KBIO_BW_5",
 }
 
@@ -295,9 +294,9 @@ SPEIS_DICT = {
     "wait_for_steady": 1.0,
     "drift_correction": False,
     "record_every_dt": 0.1,
-    "record_every_dI": 0.1,
-    "I_range": "KBIO_IRANGE_AUTO",
-    "E_range": "KBIO_ERANGE_2_5",
+    "record_every_di": 0.1,
+    "i_range": "KBIO_IRANGE_AUTO",
+    "e_range": "KBIO_ERANGE_2_5",
     "bandwidth": "KBIO_BW_5",
 }
 
@@ -314,9 +313,9 @@ GEIS_DICT = {
     "wait_for_steady": 1.0,
     "drift_correction": False,
     "record_every_dt": 0.1,
-    "record_every_dE": 0.1,
-    "I_range": "KBIO_IRANGE_1mA",
-    "E_range": "KBIO_ERANGE_AUTO",
+    "record_every_de": 0.1,
+    "i_range": "KBIO_IRANGE_1mA",
+    "e_range": "KBIO_ERANGE_AUTO",
     "bandwidth": "KBIO_BW_5",
 }
 
@@ -335,8 +334,8 @@ SGEIS_DICT = {
     "wait_for_steady": 1.0,
     "drift_correction": False,
     "record_every_dt": 0.1,
-    "record_every_dE": 0.1,
-    "I_range": "KBIO_IRANGE_1mA",
-    "E_range": "KBIO_ERANGE_AUTO",
+    "record_every_de": 0.1,
+    "i_range": "KBIO_IRANGE_1mA",
+    "e_range": "KBIO_ERANGE_AUTO",
     "bandwidth": "KBIO_BW_5",
 }

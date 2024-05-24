@@ -1,9 +1,11 @@
 """Classes for adding table of parameters as a tab in station GUIs."""
 
+from typing import List, Optional, Sequence
+
 import pandas as pd
+
+from pymeasure.display.Qt import QtCore, QtGui, QtWidgets
 from pymeasure.display.widgets import TabWidget
-from pymeasure.display.Qt import QtWidgets, QtCore, QtGui
-from typing import Optional, Sequence
 
 
 class FileLineEdit(QtWidgets.QLineEdit):
@@ -54,7 +56,7 @@ class FileLineEdit(QtWidgets.QLineEdit):
             self,
             "/path/to/parameters.csv",
             self._get_starting_directory(),
-            ("csv File(*.csv)")
+            "csv File(*.csv)"
         )
         if ".csv" in filename:
             self.setText(filename)
@@ -158,7 +160,7 @@ class ParameterTable(QtWidgets.QTableView):
 
     def __init__(
         self,
-        table_columns: Sequence[str],
+        table_columns: List[str],
         float_digits: int = 1,
         parent=None
     ) -> None:
@@ -250,8 +252,9 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
         """Initialize UI and layout.
 
         Args:
-            name (str): Name of tab widget
-            float_digits (int): float-point resolution in table
+            name: name of tab widget
+            table_columns: string labels of column headers
+            float_digits: float-point resolution in table
             parent: parent class
         """
         super().__init__(name, parent)
@@ -288,6 +291,7 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
     def preview_widget(self, parent=None):
         """Return a widget suitable for preview during loading."""
         return ParameterTableWidget("Table preview",
+                                    ["Preview", "Preview", "Preview"],
                                     float_digits=self.float_digits,
                                     parent=None,
                                     )

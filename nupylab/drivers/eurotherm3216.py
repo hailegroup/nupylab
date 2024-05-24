@@ -33,7 +33,7 @@ class Eurotherm3216(minimalmodbus.Instrument):
 
     The 3216 has a program with 8 segments, all of which are executed upon program run,
     and each consisting of a target setpoint, ramp rate, and dwell time. Segment
-    parameters are accessible by referencing the list of segment sub-classes they are
+    parameters are accessible by referencing the list of segment subclasses they are
     attached to, e.g. `segments[0].ramp_rate` for the ramp rate of the first segment.
 
     Attributes:
@@ -56,7 +56,7 @@ class Eurotherm3216(minimalmodbus.Instrument):
         super().__init__(port, clientaddress, **kwargs)
         self.serial.baudrate = baudrate
         self.serial.timeout = timeout
-        self.segments = (self.Segent(i, self) for i in range(1, 9))
+        self.segments = [self.Segment(i, self) for i in range(1, 9)]
 
     # Float and long integer registers are double sized and offset
     def read_float(

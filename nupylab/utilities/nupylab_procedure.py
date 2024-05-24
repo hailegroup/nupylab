@@ -13,7 +13,7 @@ from pymeasure.experiment import FloatParameter, IntegerParameter, Procedure
 from nupylab.utilities import DataTuple, NupylabError
 
 if TYPE_CHECKING:
-    from nupylab.instruments.nupylab_instrument import NupylabInstrument
+    from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 
 log = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class NupylabProcedure(Procedure):
 
     Attrs:
         previous_procedure: Nupylab Procedure class from previous step. Maintains
-                    previous instrument connections.
+            previous instrument connections.
     """
 
     # Parameters common to all NUPyLab GUIs
@@ -42,7 +42,7 @@ class NupylabProcedure(Procedure):
 
     def __init__(self) -> None:
         """Initialize default data and instrument list."""
-        self._data: dict = {"System Time": None, "Time (s)": 0}
+        self._data: dict = {"System Time": None, "Time (s)": 0.0}
         # Initialize values with NaN to avoid complaints
         self._data_defaults: dict = {
             k: nan for k in (k for k in self.DATA_COLUMNS if k not in self._data)
@@ -103,11 +103,15 @@ class NupylabProcedure(Procedure):
         if self.previous_procedure is None:
             self._check_errors()
         self.set_instruments()
+        if not self.instruments or not self.active_instruments:
+            raise NupylabError("Method `set_instruments` must create non-empty "
+                               "`instruments` and `active_instruments` attributes.")
         for instrument in self.active_instruments:
             if not instrument.connected:
                 instrument.connect()
                 log.info("Connection to %s successful.", instrument.name)
             instrument.start()
+        self.previous_procedure = None  # Prevent procedure-chaining in memory
         sleep(1)  # give instruments time to start their respective programs
 
     def execute(self) -> None:
@@ -151,10 +155,8 @@ class NupylabProcedure(Procedure):
 
     def shutdown(self) -> None:
         """Shut down instruments if all steps have run or there was an error."""
-        if (
-            self.status == (Procedure.FAILED or Procedure.ABORTED)
-            or self.num_steps == self.current_step
-        ):
+        if (self.should_stop() or self.status == Procedure.FAILED or self.num_steps ==
+                self.current_step):
             for instrument in self.instruments:
                 try:
                     if instrument.connected:
@@ -183,11 +185,16 @@ class NupylabProcedure(Procedure):
             queue: queue to place data in.
             *args: additional args to pass to `process`
         """
+        counter: int = 0
         while not self.should_stop() and not self.finished:
-            queue.put(process(*args))
-            sleep_time = self.record_time * self._counter - (
-                monotonic() - self._start_time
-            )
+            if counter != self._counter:
+                queue.put(process(*args))
+                counter = self._counter
+                sleep_time: float = self.record_time * self._counter - (
+                    monotonic() - self._start_time
+                )
+            else:
+                sleep_time = 0.1  # Wait for counter to iterate
             sleep(max(0, sleep_time))
 
     def _parse_results(self, result: Union[list, tuple]) -> None:
@@ -196,6 +203,7 @@ class NupylabProcedure(Procedure):
         if not isinstance(result, DataTuple):
             for r in result:
                 self._parse_results(r)
+            return
         if not hasattr(result.value, "__len__"):
             self._data[result.label] = result.value
         elif len(result.value) == 0:  # do not include empty results

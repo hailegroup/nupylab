@@ -1,10 +1,10 @@
 """Adapts ROD-4 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
-from typing import List, Tuple, Sequence
+from typing import List, Sequence
 
-from pymeasure.instruments.proterial import rod4
 from nupylab.utilities import DataTuple, NupylabError
-from ..nupylab_instrument import NupylabInstrument
+from pymeasure.instruments.proterial import rod4
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 
 class ROD4(NupylabInstrument):
@@ -20,7 +20,7 @@ class ROD4(NupylabInstrument):
     def __init__(
         self,
         port: str,
-        data_label: Tuple[str],
+        data_label: Sequence[str],
         name: str = "ROD-4",
     ) -> None:
         """Initialize ROD-4 data labels, name, and connection parameters.

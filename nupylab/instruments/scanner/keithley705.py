@@ -1,9 +1,9 @@
 """Adapts Keithley 705 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
 from typing import Union, Sequence, Dict, Tuple, List, Optional, Callable
-from pymeasure.instruments.keithley import keithley705
+from nupylab.drivers import keithley705
 from nupylab.utilities import DataTuple, NupylabError
-from ..nupylab_instrument import NupylabInstrument
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 
 class Keithley705(NupylabInstrument):

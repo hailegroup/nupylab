@@ -1,10 +1,12 @@
 """Adapts AeraMFC driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
-from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
+from __future__ import annotations
 
-from pymeasure.instruments.proterial import aera_mfc
+from typing import List, Optional, Sequence, TYPE_CHECKING, Union
+
 from nupylab.utilities import DataTuple, NupylabError
-from ..nupylab_instrument import NupylabInstrument
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
+from pymeasure.instruments.proterial import aera_mfc
 
 if TYPE_CHECKING:
     from pymeasure.instruments.proterial.aera_mfc import AeraChannel
@@ -61,6 +63,9 @@ class AeraMFC(NupylabInstrument):
             self._port = port
             self._addresses = (addresses,)
             self._mfc_classes = (mfc_classes,)
+
+        self.aera: Optional[aera_mfc.AeraMFC] = None
+        self._ranges = None
 
         super().__init__(data_label, name)
 

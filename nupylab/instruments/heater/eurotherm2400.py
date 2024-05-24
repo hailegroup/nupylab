@@ -2,7 +2,7 @@
 
 from nupylab.drivers import eurotherm2400
 from nupylab.utilities import DataTuple, NupylabError
-from ..nupylab_instrument import NupylabInstrument
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 
 class Eurotherm2400(NupylabInstrument):

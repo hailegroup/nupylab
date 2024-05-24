@@ -5,7 +5,7 @@ from typing import Sequence, List, Optional, Callable
 import numpy as np
 from pymeasure.instruments.agilent import agilent4284A
 from nupylab.utilities import DataTuple, NupylabError
-from ..nupylab_instrument import NupylabInstrument
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 
 class Agilent4284A(NupylabInstrument):
@@ -23,7 +23,6 @@ class Agilent4284A(NupylabInstrument):
         port: str,
         data_label: Sequence[str],
         name: str = "Agilent 4284A",
-        **kwargs,
     ) -> None:
         """Initialize Agilent data labels, name, and connection parameters.
 
@@ -35,14 +34,15 @@ class Agilent4284A(NupylabInstrument):
             name: name of instrument.
 
         Raises:
-            ValueError if `data_label` does not contain 3 entries.
-
+            ValueError: if `data_label` does not contain 3 entries.
         """
         if len(data_label) != 3:
             raise ValueError("Agilent 4284A data_label must be sequence of length 3.")
         self.agilent = None
         self._port = port
         self._finished: bool = False
+        self._freq_list = None
+        self._eis_condition = None
         super().__init__(data_label, name)
 
     def connect(self) -> None:
@@ -60,19 +60,19 @@ class Agilent4284A(NupylabInstrument):
         technique: str,
         eis_condition: Callable[[], bool],
     ) -> None:
-        """Set EIS measurement parameters.
+        """Set eis measurement parameters.
 
         Args:
-            maximum_frequency: maximum EIS frequency in Hz.
-            minimum_frequency: minimum EIS frequency in Hz.
-            amplitude: EIS amplitude in Volt or Amp, depending on whether technique is
+            maximum_frequency: maximum eis frequency in Hz.
+            minimum_frequency: minimum eis frequency in Hz.
+            amplitude: eis amplitude in Volt or Amp, depending on whether technique is
                 PEIS or GEIS.
-            points_per_decade: EIS frequency points per decade.
-            technique: EIS technique to run, must be `PEIS` or `GEIS`.
-            eis_condition: function indicating whether to begin EIS measurement.
+            points_per_decade: eis frequency points per decade.
+            technique: eis technique to run, must be `PEIS` or `GEIS`.
+            eis_condition: function indicating whether to begin eis measurement.
 
         Raises:
-            KeyError if `technique` is not supported.
+            KeyError: if `technique` is not supported.
         """
         technique = technique.upper()
         if technique not in ("PEIS", "GEIS"):
@@ -94,10 +94,10 @@ class Agilent4284A(NupylabInstrument):
         self._parameters = True  # Placeholder just to indicate parameters are set.
 
     def start(self) -> None:
-        """Prepare EIS measurement. Verifies EIS parameters were set.
+        """Prepare eis measurement. Verifies eis parameters were set.
 
         Raises:
-            NupylabError if `start` method is called before `set_parameters`.
+            NupylabError: if `start` method is called before `set_parameters`.
         """
         if self._parameters is None:
             raise NupylabError(
@@ -107,10 +107,10 @@ class Agilent4284A(NupylabInstrument):
         self._parameters = None
 
     def get_data(self) -> Optional[List[DataTuple]]:
-        """Get EIS data.
+        """Get eis data.
 
         Returns:
-            DataTuples in the order of frequency, Z_re, and -Z_im if measuring EIS,
+            DataTuples in the order of frequency, Z_re, and -Z_im if measuring eis,
             None otherwise
         """
         if not self.eis_condition:
@@ -130,18 +130,18 @@ class Agilent4284A(NupylabInstrument):
 
     @property
     def eis_condition(self) -> bool:
-        """Get whether to begin EIS measurement."""
+        """Get whether to begin eis measurement."""
         if self.finished:  # Prevents unnecessary function calls
             return False
         return self._eis_condition()
 
     @property
     def finished(self) -> bool:
-        """Get whether EIS measurement is finished."""
+        """Get whether eis measurement is finished."""
         return self._finished
 
     def stop_measurement(self) -> None:
-        """Stop EIS measurement. Not implemented."""
+        """Stop eis measurement. Not implemented."""
 
     def shutdown(self) -> None:
         """Disconnect from Agilent 4284A."""

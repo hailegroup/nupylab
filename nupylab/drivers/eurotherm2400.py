@@ -21,9 +21,11 @@ of display settings such as dwell units.
 """
 
 from __future__ import annotations
+
 import logging
-import minimalmodbus  # type: ignore
 from typing import Any, Optional
+
+import minimalmodbus  # type: ignore
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -39,12 +41,13 @@ class Eurotherm2400(minimalmodbus.Instrument):
             dictionaries.
     """
 
-    def __init__(self,
-                 port: str,
-                 clientaddress: int,
-                 baudrate: int = 9600,
-                 timeout: float = 1,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        port: str,
+        clientaddress: int,
+        baudrate: int = 9600,
+        timeout: float = 1,
+    ) -> None:
         """Connect to Eurotherm and initialize program and setpoint list.
 
         Args:
@@ -329,6 +332,8 @@ class Eurotherm2400(minimalmodbus.Instrument):
                     offset (int): segment register offset
                     eurotherm: Eurotherm2400 instance
                 """
+                super().__init__()
+                self.registers = None
                 self.offset = offset
                 self.eurotherm = eurotherm
 

@@ -18,7 +18,8 @@ Example:
 """
 
 from __future__ import annotations
-from typing import Any, Dict, Union, Tuple, List
+
+from typing import Any, Dict, List, Tuple, Union
 
 import serial
 
@@ -88,7 +89,21 @@ _OMRON_PROGRAM_STATUS: Dict[int, Union[str, Tuple[str, str]]] = {
 }
 
 
-class OmronChannel:
+def _parse_status(val: int, status_dict: dict) -> List[str]:
+    status: List[str] = []
+    for k, v in status_dict.items():
+        if isinstance(v, tuple):
+            if k & val == k:
+                status.append(v[1])
+            else:
+                status.append(v[0])
+        else:
+            if k & val == k:
+                status.append(v)
+    return status
+
+
+class OmronE5Channel:
     """Individual input channel for Omron E5AR and E5ER.
 
     Attributes:
@@ -112,19 +127,6 @@ class OmronChannel:
         else:
             self._decimals = self.analog_decimals
 
-    def _parse_status(self, val: int, status_dict: dict) -> List[str]:
-        status: List[str] = []
-        for k, v in status_dict.items():
-            if isinstance(v, tuple):
-                if k & val == k:
-                    status.append(v[1])
-                else:
-                    status.append(v[0])
-            else:
-                if k & val == k:
-                    status.append(v)
-        return status
-
     # Command format:
     #   * MRC                   2 bytes
     #   * SRC                   2 bytes
@@ -143,7 +145,7 @@ class OmronChannel:
     def status(self) -> List[str]:
         """Read Omron status."""
         response: int = self.omron.read_int(f"0101C00{self._offset}01000001")
-        return self._parse_status(response, _OMRON_STATUS)
+        return _parse_status(response, _OMRON_STATUS)
 
     @property
     def internal_setpoint(self) -> float:
@@ -158,6 +160,7 @@ class OmronChannel:
             -5.0 to 105.0 for standard ouput
             -105.0 to 105.0 for heat/cool output
             -10.0 to 110.0 for position proportional output
+
         Settable only if :attr:`operating_mode` is set to `manual`.
         """
         return self.omron.read_decimal(f"0101C60{self._offset}00000001")
@@ -192,7 +195,7 @@ class OmronChannel:
         lower_limit = self.omron.read_decimal(
             f"0101C90{self._offset}04000001", self._decimals
         )
-        return (lower_limit, upper_limit)
+        return lower_limit, upper_limit
 
     @alarm_1_limits_1.setter
     def alarm_1_limits_1(self, limits: Tuple[float, float]) -> None:
@@ -224,7 +227,7 @@ class OmronChannel:
         lower_limit = self.omron.read_decimal(
             f"0101C90{self._offset}07000001", self._decimals
         )
-        return (lower_limit, upper_limit)
+        return lower_limit, upper_limit
 
     @alarm_1_limits_2.setter
     def alarm_1_limits_2(self, limits: Tuple[float, float]) -> None:
@@ -326,7 +329,7 @@ class OmronChannel:
             18: "0 to 5 V",
             19: "0 to 10 V",
         }
-        return (val, input_map[val])
+        return val, input_map[val]
 
     @input_type.setter
     def input_type(self, val: Union[int, str]) -> None:
@@ -362,11 +365,12 @@ class OmronChannel:
         self.omron.write_int(f"0102CC0{self._offset}0C000001", val)
 
 
-class OmronChannelE5T(OmronChannel):
+class OmronE5TChannel(OmronE5Channel):
     """Individual input channel for Omron E5AR-T and E5ER-T.
 
     Attributes:
         omron: Omron parent class.
+        program: class for active program containing a list of segments.
     """
 
     def __init__(self, parent: OmronE5T, channel_num: int) -> None:
@@ -379,6 +383,7 @@ class OmronChannelE5T(OmronChannel):
         super().__init__(parent, channel_num)
         self.omron: OmronE5T = parent
         self.program = self.Program(self, channel_num)
+        self._program_num = None
 
     @property
     def setpoint_mode(self) -> str:
@@ -408,7 +413,7 @@ class OmronChannelE5T(OmronChannel):
         Valid set values are `run` or `reset`.
         """
         response: int = self.omron.read_int(f"0101C40{self._offset}07000001")
-        return self._parse_status(response, _OMRON_PROGRAM_STATUS)
+        return _parse_status(response, _OMRON_PROGRAM_STATUS)
 
     @program_status.setter
     def program_status(self, val: str) -> None:
@@ -469,11 +474,11 @@ class OmronChannelE5T(OmronChannel):
         Only supports 8 segments regardless of channel setting.
 
         Attributes:
-            omron: Omron parent class of channel.
-            segments_used: number of segments used.
+            channel: Omron channel program belongs to.
+            segments: list of segment classes
         """
 
-        def __init__(self, channel: OmronChannelE5T, channel_num: int):
+        def __init__(self, channel: OmronE5TChannel, channel_num: int):
             """Create program class.
 
             Args:
@@ -512,16 +517,16 @@ class OmronChannelE5T(OmronChannel):
 
             def __init__(
                 self,
-                program: OmronChannelE5T.Program,
+                program: OmronE5TChannel.Program,
                 address: str,
             ) -> None:
                 """Create program segment.
 
                 Args:
-                    program: OmronChannelE5T program instance.
+                    program: OmronE5TChannel program instance.
                     address: first two characters of segment address.
                 """
-                self.program: OmronChannelE5T.Program = program
+                self.program: OmronE5TChannel.Program = program
                 self.address = address
                 self.omron: OmronE5T = program.channel.omron
                 self.decimals: int = program.channel._decimals
@@ -572,12 +577,30 @@ class OmronChannelE5T(OmronChannel):
                 )
 
 
+def _bcc_calc(message: bytes) -> bytes:
+    """Calculate block check character for an arbitrary message."""
+    bcc = 0
+    for byte in message:
+        bcc = bcc ^ byte
+    return bcc.to_bytes(1, byteorder="big")
+
+
+def _check_end_code(code: str) -> None:
+    if code != "00":
+        raise OmronException(f"End code {code}: {_OMRON_END_CODES[code]}")
+
+
+def _check_response_code(code: str) -> None:
+    if code != "0000":
+        raise OmronException(f"Response code {code}: {_OMRON_RESPONSE_CODES[code]}")
+
+
 class OmronE5:
     """Instrument class for Omron E5A(E)R-T based on CompoWay/F communication.
 
     Attributes:
         serial: pySerial serial port object, for setting data transfer parameters.
-        setpoints: dict of available setpoints.
+        default_channel: channel to write and read from if not explicitly specified
     """
 
     def __init__(
@@ -642,26 +665,11 @@ class OmronE5:
         self.write("0102CD001700000100000000")  # Set programming mode to time
 
     def _set_channels(self, channels: int) -> None:
-        self.ch_1: OmronChannel = OmronChannel(self, 1)
-        self.ch_2: OmronChannel = OmronChannel(self, 2)
+        self.ch_1: OmronE5Channel = OmronE5Channel(self, 1)
+        self.ch_2: OmronE5Channel = OmronE5Channel(self, 2)
         if channels == 4:
-            self.ch_3: OmronChannel = OmronChannel(self, 3)
-            self.ch_4: OmronChannel = OmronChannel(self, 4)
-
-    def _bcc_calc(self, message: bytes) -> bytes:
-        """Calculate block check character for an arbitrary message."""
-        bcc = 0
-        for byte in message:
-            bcc = bcc ^ byte
-        return bcc.to_bytes(1, byteorder="big")
-
-    def _check_end_code(self, code: str) -> None:
-        if code != "00":
-            raise OmronException(f"End code {code}: {_OMRON_END_CODES[code]}")
-
-    def _check_response_code(self, code: str) -> None:
-        if code != "0000":
-            raise OmronException(f"Response code {code}: {_OMRON_RESPONSE_CODES[code]}")
+            self.ch_3: OmronE5Channel = OmronE5Channel(self, 3)
+            self.ch_4: OmronE5Channel = OmronE5Channel(self, 4)
 
     def read_int(self, command: str, signed: bool = False) -> int:
         """Read command and convert to signed integer.
@@ -735,7 +743,7 @@ class OmronE5:
 
     def _write(self, command: str) -> None:
         message: bytes = (self._address + "000" + command + "\x03").encode("utf-8")
-        bcc: bytes = self._bcc_calc(message)
+        bcc: bytes = _bcc_calc(message)
         message = b"".join((b"\x02", message, bcc))
         self.serial.write(message)
 
@@ -754,16 +762,16 @@ class OmronE5:
 
         response: bytes = self.serial.read_until(expected=b"\x03")
         bcc: bytes = self.serial.read(size=1)
-        bcc_calc: bytes = self._bcc_calc(response[1:])
+        bcc_calc: bytes = _bcc_calc(response[1:])
         if bcc != bcc_calc:
             raise OmronException(
                 f"Omron BCC error: expected {bcc_calc!r} but received {bcc!r}."
             )
         end_code: str = response[5:7].decode()
-        self._check_end_code(end_code)
+        _check_end_code(end_code)
         # Bytes 7 - 10 are just MRC and SRC and can be ignored
         response_code: str = response[11:15].decode()
-        self._check_response_code(response_code)
+        _check_response_code(response_code)
         return response[15:-1]  # Returns empty bytes if no data
 
     @property
@@ -773,7 +781,7 @@ class OmronE5:
         index = 0
         while version[index] == "0":
             index += 1
-        return "".join((version[index], ".", version[(index + 1) :]))
+        return "".join((version[index], ".", version[(index + 1):]))
 
     @property
     def writing_enabled(self) -> bool:
@@ -838,17 +846,15 @@ class OmronE5T(OmronE5):
 
     Attributes:
         serial: pySerial serial port object, for setting data transfer parameters.
-        setpoints: dict of available setpoints.
-        programs: list of available programs, each program containing a list of segment
-            dictionaries.
+        default_channel: channel to write and read from if not explicitly specified
     """
 
     def _set_channels(self, channels: int) -> None:
-        self.ch_1: OmronChannelE5T = OmronChannelE5T(self, 1)
-        self.ch_2: OmronChannelE5T = OmronChannelE5T(self, 2)
+        self.ch_1: OmronE5TChannel = OmronE5TChannel(self, 1)
+        self.ch_2: OmronE5TChannel = OmronE5TChannel(self, 2)
         if channels == 4:
-            self.ch_3: OmronChannelE5T = OmronChannelE5T(self, 3)
-            self.ch_4: OmronChannelE5T = OmronChannelE5T(self, 4)
+            self.ch_3: OmronE5TChannel = OmronE5TChannel(self, 3)
+            self.ch_4: OmronE5TChannel = OmronE5TChannel(self, 4)
 
     @property
     def time_units(self) -> str:

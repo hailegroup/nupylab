@@ -495,13 +495,13 @@ INVERSE_T = (
 
 
 def calculate_temperature(
-    millivoltage: float, TC_type: str, cold_junction_temp: float = 23
+    millivoltage: float, tc_type: str, cold_junction_temp: float = 23
 ) -> float:
     """Calculate temperature with cold junction correction.
 
     Args:
         millivoltage: measured reading in millivolts.
-        TC_type: thermocouple type.
+        tc_type: thermocouple type.
         cold_junction_temp: cold junction temperature in Celsius.
 
     Returns:
@@ -511,39 +511,40 @@ def calculate_temperature(
         ValueError if millivoltage or cold_junction_temp are outside applicable TC
         range.
     """
-    cj_voltage = convert_to_voltage(cold_junction_temp, TC_type)
-    return convert_to_temperature(millivoltage + cj_voltage, TC_type)
+    cj_voltage = convert_to_voltage(cold_junction_temp, tc_type)
+    return convert_to_temperature(millivoltage + cj_voltage, tc_type)
 
 
 def calculate_voltage(
-    temperature: float, TC_type: str, cold_junction_temp: float = 23
+    temperature: float, tc_type: str, cold_junction_temp: float = 23
 ) -> float:
     """Calculate measured voltage with cold junction correction.
 
-    Args:
-        temperature: hot junction temperature in Celsius.
-        TC_type: thermocouple type.
-        cold_junction_temp: cold junction temperature in Celsius.
+     Args:
+         temperature: hot junction temperature in Celsius.
+         tc_type: thermocouple type.
+         cold_junction_temp: cold junction temperature in Celsius.
 
-    Returns:
-        measured voltage in millivolts.
+     Returns:
+         measured voltage in millivolts.
 
-    Raises:
-        ValueError if temperature or cold_junction_temp are outside applicable TC
-        range.
+     Raises:
+         ValueError if temperature or cold_junction_temp are outside applicable TC
+         range.
     """
-    cj_voltage = convert_to_voltage(cold_junction_temp, TC_type)
-    hj_voltage = convert_to_voltage(temperature, TC_type)
+    cj_voltage = convert_to_voltage(cold_junction_temp, tc_type)
+    hj_voltage = convert_to_voltage(temperature, tc_type)
     return hj_voltage - cj_voltage
 
 
-def convert_to_temperature(millivoltage: float, TC_type: str) -> float:
+def convert_to_temperature(millivoltage: float, tc_type: str) -> float:
     """Convert voltage in millivolts to temperature in Celsius."""
-    table = globals()[f"INVERSE_{TC_type.upper()}"]
+    coeff = None
+    table = globals()[f"INVERSE_{tc_type.upper()}"]
     if millivoltage < table[0][0] or millivoltage > table[-1][1]:
         raise ValueError("voltage out of valid range for TC")
     for subset in table:
-        if millivoltage >= subset[0] and millivoltage <= subset[1]:
+        if subset[0] <= millivoltage <= subset[1]:
             coeff = subset
             break
         else:
@@ -554,19 +555,20 @@ def convert_to_temperature(millivoltage: float, TC_type: str) -> float:
     return temperature
 
 
-def convert_to_voltage(temperature: float, TC_type: str) -> float:
+def convert_to_voltage(temperature: float, tc_type: str) -> float:
     """Convert temperature in Celsius to voltage in millivolts."""
-    table = globals()[f"TYPE_{TC_type.upper()}"]
+    coeff = None
+    table = globals()[f"TYPE_{tc_type.upper()}"]
     if temperature < table[0][0] or temperature > table[-1][1]:
         raise ValueError("temperature out of valid range for TC")
     for subset in table:
-        if temperature >= subset[0] and temperature <= subset[1]:
+        if subset[0] <= temperature <= subset[1]:
             coeff = subset
             break
         else:
             continue
     millivoltage = 0
-    if TC_type.upper() != 'K':
+    if tc_type.upper() != 'K':
         for index, c in enumerate(coeff[2:]):
             millivoltage += c * temperature**index
     else:

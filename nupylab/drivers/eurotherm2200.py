@@ -33,17 +33,15 @@ class Eurotherm2200(minimalmodbus.Instrument):
 
     Attributes:
         serial: pySerial serial port object, for setting data transfer parameters.
-        setpoints: dict of available setpoints.
-        programs: list of available programs, each program containing a list of segment
-            dictionaries.
     """
 
-    def __init__(self,
-                 port: str,
-                 clientaddress: int,
-                 baudrate: int = 9600,
-                 timeout: float = 1,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        port: str,
+        clientaddress: int,
+        baudrate: int = 9600,
+        timeout: float = 1,
+    ) -> None:
         """Connect to Eurotherm and initialize program and setpoint list.
 
         Args:
@@ -100,17 +98,17 @@ class Eurotherm2200(minimalmodbus.Instrument):
     #############
 
     @property
-    def process_value(self):
+    def process_value(self) -> float:
         """Process variable."""
         return self.read_float(1)
 
     @property
-    def output_level(self):
+    def output_level(self) -> float:
         """Power output in percent."""
         return self.read_float(3)
 
     @property
-    def target_setpoint(self):
+    def target_setpoint(self) -> float:
         """Target setpoint (if in manual mode)."""
         return self.read_float(2)
 
@@ -119,8 +117,8 @@ class Eurotherm2200(minimalmodbus.Instrument):
         self.write_float(2, val)
 
     @property
-    def operating_mode(self):
-        """Auto/manual mode select."""
+    def operating_mode(self) -> str:
+        """Control operating mode. Valid options are `auto` or `manual`."""
         auto_man_dict = {0: "auto",
                          1: "manual"}
         return auto_man_dict[self.read_register(273)]
@@ -132,7 +130,7 @@ class Eurotherm2200(minimalmodbus.Instrument):
         self.write_register(273, auto_man_dict[val.casefold()])
 
     @property
-    def working_setpoint(self):
+    def working_setpoint(self) -> float:
         """Working set point. Read only."""
         return self.read_float(5)
 
@@ -141,8 +139,8 @@ class Eurotherm2200(minimalmodbus.Instrument):
     #################
 
     @property
-    def active_setpoint(self):
-        """1: SP1, 2: SP2"""
+    def active_setpoint(self) -> int:
+        """Active setpoint. 1 = SP1, 2 = SP2."""
         return self.read_register(15)+1
 
     @active_setpoint.setter
@@ -171,7 +169,7 @@ class Eurotherm2200(minimalmodbus.Instrument):
         self.write_float(25, val)
 
     @property
-    def setpoint_rate_limit(self):
+    def setpoint_rate_limit(self) -> float:
         """Ramp rate limit."""
         return self.read_float(35)
 

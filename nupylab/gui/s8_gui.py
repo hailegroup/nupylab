@@ -1,5 +1,5 @@
 """
-GUI for high-impedance station.
+GUI for S8 impedance station.
 
 This GUI connects to and displays data from
     * Eurotherm 2216e Furnace Controller
@@ -12,10 +12,15 @@ python s8_gui.py
 
 import logging
 import sys
-from typing import List, Dict
+from typing import Dict, List
 
 import pyvisa
 
+# Instrument Imports #
+from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
+from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
+######################
+from nupylab.utilities import nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
     BooleanParameter,
@@ -24,14 +29,6 @@ from pymeasure.experiment import (
     ListParameter,
     Parameter,
 )
-
-# Instrument Imports #
-from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
-from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
-######################
-
-from nupylab.utilities import nupylab_procedure, nupylab_window
-
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -46,6 +43,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     """
 
     # Units in parentheses must be valid pint units
+    # First two entries must be "System Time" and "Time (s)"
     DATA_COLUMNS: List[str] = [
         "System Time",
         "Time (s)",
@@ -72,7 +70,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     potentiostat_port: Parameter = Parameter(
         "Biologic Port", default="USB0", ui_class=None, group_by="eis_toggle"
     )
-    eis_toggle: BooleanParameter = BooleanParameter("Run EIS")
+    eis_toggle: BooleanParameter = BooleanParameter("Run eis")
     maximum_frequency: FloatParameter = FloatParameter("Maximum Frequency", units="Hz")
     minimum_frequency: FloatParameter = FloatParameter("Minimum Frequency", units="Hz")
     amplitude_voltage: FloatParameter = FloatParameter("Amplitude Voltage", units="V")
@@ -82,7 +80,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Target Temperature [C]": "target_temperature",
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
-        "EIS? [True/False]": "eis_toggle",
+        "eis? [True/False]": "eis_toggle",
         "Maximum Frequency [Hz]": "maximum_frequency",
         "Minimum Frequency [Hz]": "minimum_frequency",
         "Amplitude Voltage [V]": "amplitude_voltage",
@@ -110,8 +108,11 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
         Pass in connections from previous step, if applicable, otherwise create new
         instances. Send current step parameters to appropriate instruments.
+
+        It is required for this method to create non-empty `instruments` and
+        `active_instruments` attributes.
         """
-        if self.previous_procedure:
+        if self.previous_procedure is not None:
             furnace, potentiostat = self.previous_procedure.instruments
         else:
             furnace = Heater(
@@ -145,22 +146,13 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
             self.active_instruments = (furnace,)
 
 
-class MainWindow(nupylab_window.NupylabWindow):
-    """Main GUI window. Procedure must be specified."""
-
-    def __init__(self) -> None:
-        procedure = S8Procedure
-        super().__init__(
-            procedure_class=procedure,
-            table_column_labels=list(procedure.TABLE_PARAMETERS),
-            x_axis=procedure.X_AXIS,
-            y_axis=procedure.Y_AXIS,
-            inputs=procedure.INPUTS,
-        )
+def main():
+    """Run S8 procedure."""
+    app = QtWidgets.QApplication(sys.argv)
+    window = nupylab_window.NupylabWindow(S8Procedure)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    main()

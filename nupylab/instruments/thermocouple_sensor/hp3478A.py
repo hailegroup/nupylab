@@ -4,14 +4,14 @@ from typing import Optional
 
 from pymeasure.instruments.hp import hp3478A
 from nupylab.utilities import DataTuple, thermocouples
-from ..nupylab_instrument import NupylabInstrument
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 
 class HP3478A(NupylabInstrument):
     """HP 3478A instrument class. Adapts driver to NUPyLab thermocouple sensor.
 
     Attributes:
-        data_labels: label for DataTuple.
+        data_label: label for DataTuple.
         name: name of instrument.
         hp3478a: HP3478A driver class.
         cj_temp: cold junction temperature in Celsius.
@@ -22,22 +22,23 @@ class HP3478A(NupylabInstrument):
     def __init__(
         self,
         port: str,
-        data_labels: str,
+        data_label: str,
         name: str = "HP 3478A",
     ) -> None:
         """Initialize HP 3478A data labels, name, and connection parameters.
 
         Args:
             port: string name of port, e.g. `GPIB::1`
-            data_labels: label for DataTuple, should match entry in DATA_COLUMNS of
+            data_label: label for DataTuple, should match entry in DATA_COLUMNS of
                 calling procedure class.
             name: name of instrument.
         """
         self._port: str = port
         self.cj_temp: float = 23
         self.cj_flag: bool = False
-        self.hp3478a: hp3478A.HP3478A
-        super().__init__(data_labels, name)
+        self.hp3478a: Optional[hp3478A.HP3478A] = None
+        self._tc_type: str = "K"
+        super().__init__(data_label, name)
 
     def connect(self) -> None:
         """Connect to HP 3478A."""
@@ -79,7 +80,7 @@ class HP3478A(NupylabInstrument):
         temp: float = thermocouples.calculate_temperature(
             voltage * 1000, self.tc_type, self.cj_temp
         )
-        return DataTuple(self.data_labels, temp)
+        return DataTuple(self.data_label, temp)
 
     def stop_measurement(self) -> None:
         """Stop measurement on HP 3478A. Not implemented."""

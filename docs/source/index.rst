@@ -6,12 +6,32 @@
 Welcome to NUPyLab's documentation!
 ===================================
 
+NUPyLab was conceived primarily as a LabVIEW replacement for experiments in the
+`Haile Group`_ lab, but others may find useful components as well. It is
+heavily built on `PyMeasure`_.
+
+See instructions for :doc:`installation <tutorial/installation>`, then check
+out how to run your own :doc:`experiment <tutorial/experiment>`.
+
+.. _Haile Group: https://addis.ms.northwestern.edu/
+.. _PyMeasure: https://pymeasure.readthedocs.io/en/latest/
+
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Using NUPyLab
 
    introduction
-   nupylab
+   tutorial/index
+
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
+
+   api/gui
+   api/instruments/index
+   api/drivers/index
+   api/utilities/index
 
 Indices and tables
 ==================

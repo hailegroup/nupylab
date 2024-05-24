@@ -6,8 +6,8 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-import sys
 import os
+import sys
 
 rootdir = os.path.abspath('../../')
 sys.path.insert(0, rootdir)
@@ -23,6 +23,7 @@ release = version
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
+autoclass_content = "both"
 extensions = ['sphinx.ext.napoleon']
 
 templates_path = ['_templates']

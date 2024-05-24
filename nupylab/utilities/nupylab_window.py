@@ -1,11 +1,13 @@
 """Base window module for NUPyLab GUIs."""
 
 from __future__ import annotations
+
 import inspect
 import logging
 import os
-from typing import Dict, Sequence, TYPE_CHECKING, Type
+from typing import Dict, TYPE_CHECKING, Type
 
+from nupylab.utilities.parameter_table import ParameterTableWidget
 from pymeasure.display.windows.managed_dock_window import ManagedDockWindow
 from pymeasure.experiment import (
     BooleanParameter,
@@ -14,7 +16,6 @@ from pymeasure.experiment import (
     Results,
     unique_filename,
 )
-from nupylab.utilities.parameter_table import ParameterTableWidget
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -40,35 +41,36 @@ class NupylabWindow(ManagedDockWindow):
     def __init__(
         self,
         procedure_class: Type[NupylabProcedure],
-        table_column_labels: Sequence[str],
-        x_axis: Sequence[str],
-        y_axis: Sequence[str],
-        inputs: Sequence[str],
-        *args,
         **kwargs,
     ) -> None:
         """Initialize main window GUI.
 
         Args:
             procedure_class: NUPyLab procedure class to run.
-            table_column_labels: labels to apply to parameters table columns.
-            x_axis: items in DATA_COLUMNS to plot along x axes in docked plots.
-            y_axis: items in DATA_COLUMNS to plot along y axes in docked plots.
-            inputs: input parameters not belonging to the parameters table.
+            **kwargs: optional keyword arguments that will be passed to
+                :class:`pymeasure.display.windows.managed_window.ManagedDockWindow`
         """
+        kwargs.setdefault("linewidth", 2)
+        if hasattr(procedure_class, "X_AXIS"):
+            kwargs.setdefault("x_axis", procedure_class.X_AXIS)
+        if hasattr(procedure_class, "Y_AXIS"):
+            kwargs.setdefault("y_axis", procedure_class.Y_AXIS)
+        if hasattr(procedure_class, "INPUTS"):
+            kwargs.setdefault("inputs", procedure_class.INPUTS)
+        table_column_labels = list(procedure_class.TABLE_PARAMETERS)
         super().__init__(
-            procedure_class=procedure_class,
-            x_axis=x_axis,
-            y_axis=y_axis,
-            inputs=inputs,
+            procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
                 ParameterTableWidget("Experiment Parameters", table_column_labels),
             ),
-            *args,
             **kwargs,
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
+
+    def new_curve(self, wdg, results, color=None, **kwargs):
+        kwargs.setdefault("connect", "finite")
+        return super().new_curve(wdg, results, color=None, **kwargs)
 
     def verify_parameters(self, table_df: pd.DataFrame) -> pd.DataFrame:
         """Verify shape of dataframe and attempt to convert datatype.

@@ -4,7 +4,7 @@ from typing import Sequence, List
 
 from pymeasure.instruments.keithley import keithley2182
 from nupylab.utilities import DataTuple
-from ..nupylab_instrument import NupylabInstrument
+from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 
 class Keithley2182(NupylabInstrument):
@@ -20,8 +20,8 @@ class Keithley2182(NupylabInstrument):
     def __init__(
         self,
         port: str,
-        pO2_intercept: float,
-        pO2_slope: float,
+        po2_intercept: float,
+        po2_slope: float,
         data_label: Sequence[str],
         name: str = "Keithley 2182",
     ) -> None:
@@ -29,8 +29,8 @@ class Keithley2182(NupylabInstrument):
 
         Args:
             port: string name of port, e.g. `ASRL::1::INSTR`.
-            pO2_intercept: calibrated pO2 sensor voltage vs temperature intercept.
-            pO2_slope: calibrated pO2 sensor voltage vs temperature slope.
+            po2_intercept: calibrated pO2 sensor voltage vs temperature intercept.
+            po2_slope: calibrated pO2 sensor voltage vs temperature slope.
             data_label: labels for DataTuples. :meth:`get_data` returns temperature,
                 pO2, and pO2 sensor voltage, and corresponding labels should match
                 entries in DATA_COLUMNS.
@@ -44,8 +44,8 @@ class Keithley2182(NupylabInstrument):
         self.keithley = None
         if len(data_label) != 3:
             raise ValueError("Keithley 2182 data_label must be sequence of length 3.")
-        self._intercept: float = pO2_intercept
-        self._slope: float = pO2_slope
+        self._intercept: float = po2_intercept
+        self._slope: float = po2_slope
         self._port = port
         super().__init__(data_label, name)
 
@@ -64,15 +64,15 @@ class Keithley2182(NupylabInstrument):
         """Start pO2 measurement. Not implemented."""
 
     def get_data(self) -> List[DataTuple]:
-        """Get pO2 sensor data.
+        """Get po2 sensor data.
 
         Returns:
-            DataTuples in the order of sensor temperature in deg C, pO2 in atm, and
+            DataTuples in the order of sensor temperature in deg C, po2 in atm, and
             sensor voltage in Volts.
         """
         voltage: float
         temperature: float
-        pO2: float
+        po2: float
         # Toggle between which channel is measured first to speed up measurement cycle
         with self.lock:
             if self._ch_1_first:
@@ -85,12 +85,12 @@ class Keithley2182(NupylabInstrument):
                 self.keithley.ch_1.setup_voltage()
                 voltage = -1 * self.keithley.voltage
                 self._ch_1_first = True
-        pO2 = 0.2095 * 10 ** (
+        po2 = 0.2095 * 10 ** (
             20158 * ((voltage - self._slope) / (temperature + 273.15) - self._intercept)
         )
         data = [
             DataTuple(self.data_label[0], temperature),
-            DataTuple(self.data_label[1], pO2),
+            DataTuple(self.data_label[1], po2),
             DataTuple(self.data_label[2], voltage),
         ]
         return data

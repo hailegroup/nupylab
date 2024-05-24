@@ -1,5 +1,5 @@
 """
-Master GUI for S4 impedance station.
+GUI for S4 impedance station.
 
 This GUI connects to and displays data from
     * ROD-4 MFC Controller
@@ -14,10 +14,19 @@ python s4_gui.py
 
 import logging
 import sys
-from typing import List, Dict
+from typing import Dict, List
 
 import pyvisa
 
+from nupylab.instruments.ac_potentiostat.biologic import (
+    Biologic as Potentiostat,
+)
+# Instrument Imports #
+from nupylab.instruments.heater.eurotherm2400 import Eurotherm2400 as Heater
+from nupylab.instruments.mfc.rod4 import ROD4 as MFC
+from nupylab.instruments.o2_sensor.keithley2182 import Keithley2182 as PO2_Sensor
+######################
+from nupylab.utilities import nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
     BooleanParameter,
@@ -26,19 +35,6 @@ from pymeasure.experiment import (
     ListParameter,
     Parameter,
 )
-
-# Instrument Imports #
-from nupylab.instruments.mfc.rod4 import ROD4 as MFC
-from nupylab.instruments.ac_potentiostat.biologic import (
-    Biologic as Potentiostat,
-)
-from nupylab.instruments.heater.eurotherm2400 import Eurotherm2400 as Heater
-from nupylab.instruments.o2_sensor.keithley2182 import Keithley2182 as PO2_Sensor
-
-######################
-
-from nupylab.utilities import nupylab_procedure, nupylab_window
-
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -53,6 +49,7 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
     """
 
     # Units in parentheses must be valid pint units
+    # First two entries must be "System Time" and "Time (s)"
     DATA_COLUMNS: List[str] = [
         "System Time",
         "Time (s)",
@@ -94,7 +91,7 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
     po2_slope = FloatParameter("pO2 Sensor Cal Slope", group_by="pO2_toggle")
     po2_intercept = FloatParameter("pO2 Sensor Cal Intercept", group_by="pO2_toggle")
 
-    eis_toggle = BooleanParameter("Run EIS")
+    eis_toggle = BooleanParameter("Run eis")
     maximum_frequency = FloatParameter("Maximum Frequency", units="Hz")
     minimum_frequency = FloatParameter("Minimum Frequency", units="Hz")
     amplitude_voltage = FloatParameter("Amplitude Voltage", units="V")
@@ -108,7 +105,7 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
         "MFC 2 [sccm]": "mfc_2_setpoint",
         "MFC 3 [sccm]": "mfc_3_setpoint",
         "MFC 4 [sccm]": "mfc_4_setpoint",
-        "EIS? [True/False]": "eis_toggle",
+        "eis? [True/False]": "eis_toggle",
         "Maximum Frequency [Hz]": "maximum_frequency",
         "Minimum Frequency [Hz]": "minimum_frequency",
         "Amplitude Voltage [V]": "amplitude_voltage",
@@ -144,8 +141,11 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
 
         Pass in connections from previous step, if applicable, otherwise create new
         instances. Send current step parameters to appropriate instruments.
+
+        It is required for this method to create non-empty `instruments` and
+        `active_instruments` attributes.
         """
-        if self.previous_procedure:
+        if self.previous_procedure is not None:
             furnace, mfc, potentiostat, po2_sensor = self.previous_procedure.instruments
         else:
             furnace = Heater(
@@ -202,22 +202,13 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
             self.active_instruments.append(po2_sensor)
 
 
-class MainWindow(nupylab_window.NupylabWindow):
-    """Main GUI window. Procedure must be specified."""
-
-    def __init__(self) -> None:
-        procedure = S4Procedure
-        super().__init__(
-            procedure_class=procedure,
-            table_column_labels=list(procedure.TABLE_PARAMETERS),
-            x_axis=procedure.X_AXIS,
-            y_axis=procedure.Y_AXIS,
-            inputs=procedure.INPUTS,
-        )
+def main():
+    """Run S4 procedure."""
+    app = QtWidgets.QApplication(sys.argv)
+    window = nupylab_window.NupylabWindow(S4Procedure)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    main()
