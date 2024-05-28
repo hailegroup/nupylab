@@ -1,1 +1,9 @@
 sphinx-rtd-theme
+gpib-ctypes
+minimalmodbus
+numpy
+pandas
+pint
+pymeasure
+pyvisa
+pyvisa-py

@@ -13,6 +13,10 @@ heavily built on `PyMeasure`_.
 See instructions for :doc:`installation <tutorial/installation>`, then check
 out how to run your own :doc:`experiment <tutorial/experiment>`.
 
+.. image:: https://readthedocs.org/projects/nupylab/badge/?version=latest
+    :target: https://nupylab.readthedocs.io/en/latest/?badge=latest
+    :alt: Documentation Status
+
 .. _Haile Group: https://addis.ms.northwestern.edu/
 .. _PyMeasure: https://pymeasure.readthedocs.io/en/latest/
 
