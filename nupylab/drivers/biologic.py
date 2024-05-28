@@ -1134,10 +1134,10 @@ class Technique:
 
         Args:
             args: Tuple of technique arguments as TechniqueArgument instances.
-            technique_filename: The name of the technique filename.
-                .. note:: This must be the vmp3 series version, i.e. name.ecc
-                  NOT name4.ecc, the replacement of technique file names is taken care
-                  of in load technique
+            technique_filename: The name of the technique filename. This must
+                be the vmp3 series version, i.e. name.ecc NOT name4.ecc,
+                the replacement of technique file names is taken care
+                of in load technique
         """
         self.args = args
         self.technique_filename = technique_filename
