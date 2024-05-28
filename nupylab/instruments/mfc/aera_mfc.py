@@ -6,10 +6,10 @@ from typing import List, Optional, Sequence, TYPE_CHECKING, Union
 
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
-from pymeasure.instruments.proterial import aera_mfc
+from nupylab.drivers import aera_mfc
 
 if TYPE_CHECKING:
-    from pymeasure.instruments.proterial.aera_mfc import AeraChannel
+    from nupylab.drivers.aera_mfc import AeraChannel
 
 
 class AeraMFC(NupylabInstrument):

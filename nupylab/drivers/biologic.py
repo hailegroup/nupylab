@@ -32,8 +32,8 @@
  vs. 64 bit status is that of Windows, not of Python.
 
 .. note :: If it is desired to run this driver and the EC-lab development DLL
- on **Linux**, this can be achieved by installing the **zugbruecke module**,
- which also requires a system **Wine** installation.
+ on **Linux**, this can be achieved by running in Wine. This requires the
+ NUPyLab and Python installation to also be installed in a Wine environment.
 
 .. note:: All methods mentioned in the documentation are implemented unless
  mentioned in the list below:
@@ -67,12 +67,6 @@ try:
     from ctypes import WinDLL
 except ImportError as e:
     import_err = e
-if import_err is not None:
-    try:
-        from zugbruecke.ctypes import WinDLL
-        import_err = None
-    except ImportError as e:
-        import_err = e
 if import_err is not None:
     RUNNING_SPHINX = False
     for module in sys.modules:

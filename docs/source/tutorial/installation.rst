@@ -49,10 +49,13 @@ installation with :code:`pip show nupylab`.
 
 Installing VISA
 ---------------
-Most instruments communicate with a VISA adapter, which requires either the
+Many instruments communicate through a VISA adapter, which requires either the
 VISA library provided by a vendor like `National Instruments`_, or the pure
 Python backend `PyVISA-Py`_. See the `PyVISA documentation`_ for more
-information about configuring the backend.
+information about configuring the backend. In most cases it is sufficient to
+allow PyVISA to automatically select the backend, which will choose IVI if
+available, PyVISA-Py if not. PyVISA-Py is listed as a dependency of NUPyLab, so
+most instruments should work out of the box.
 
 .. _National Instruments: https://www.ni.com/en/support/downloads/drivers/download.ni-visa.html
 .. _PyVISA-Py: https://pyvisa.readthedocs.io/projects/pyvisa-py/en/latest/
@@ -70,6 +73,8 @@ edit the NUPyLab code, you can contribute to the `GitHub repository`_:
     5. Change the current working directory to the location of the clone
     6. Install NUPyLab in editable mode: :code:`pip install -e .`
     7. Create a new git branch for your feature and submit a pull request with your edits
+
+See :doc:`Creating a New Station GUI <new_stations>` for more information.
 
 .. _GitHub repository: https://github.com/hailegroup/nupylab
 
