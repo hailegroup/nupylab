@@ -12,11 +12,8 @@ Run the program by changing to the directory containing this file and calling:
 python s4_gui.py
 """
 
-import logging
 import sys
 from typing import Dict, List
-
-import pyvisa
 
 from nupylab.instruments.ac_potentiostat.biologic import (
     Biologic as Potentiostat,
@@ -26,7 +23,7 @@ from nupylab.instruments.heater.eurotherm2400 import Eurotherm2400 as Heater
 from nupylab.instruments.mfc.rod4 import ROD4 as MFC
 from nupylab.instruments.o2_sensor.keithley2182 import Keithley2182 as PO2_Sensor
 ######################
-from nupylab.utilities import nupylab_procedure, nupylab_window
+from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
     BooleanParameter,
@@ -35,9 +32,6 @@ from pymeasure.experiment import (
     ListParameter,
     Parameter,
 )
-
-log = logging.getLogger(__name__)
-log.addHandler(logging.NullHandler())
 
 
 class S4Procedure(nupylab_procedure.NupylabProcedure):
@@ -67,8 +61,7 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
         "-Z_im (ohm)",
     ]
 
-    rm = pyvisa.ResourceManager()
-    resources = rm.list_resources()
+    resources = list_resources()
 
     furnace_port = ListParameter("Eurotherm Port", choices=resources)
     furnace_address = IntegerParameter(

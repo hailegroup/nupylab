@@ -13,11 +13,8 @@ Run the program by changing to the directory containing this file and calling:
 python safc_gui.py
 """
 
-import logging
 import sys
 from typing import Dict, List
-
-import pyvisa
 
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.agilent4284A import (
@@ -28,7 +25,7 @@ from nupylab.instruments.mfc.rod4 import ROD4 as MFC
 from nupylab.instruments.scanner.keithley705 import Keithley705 as Scanner
 from nupylab.instruments.thermocouple_sensor.hp3478A import HP3478A as TC_Sensor
 ######################
-from nupylab.utilities import nupylab_procedure, nupylab_window
+from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
     BooleanParameter,
@@ -36,9 +33,6 @@ from pymeasure.experiment import (
     IntegerParameter,
     ListParameter,
 )
-
-log = logging.getLogger(__name__)
-log.addHandler(logging.NullHandler())
 
 
 class SAFCProcedure(nupylab_procedure.NupylabProcedure):
@@ -66,8 +60,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "-Z_im (ohm)",
     ]
 
-    rm = pyvisa.ResourceManager()
-    resources = rm.list_resources()
+    resources = list_resources()
 
     furnace_port = ListParameter("Eurotherm Port", choices=resources, ui_class=None)
     furnace_address = IntegerParameter(

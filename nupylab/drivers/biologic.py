@@ -68,13 +68,9 @@ try:
 except ImportError as e:
     import_err = e
 if import_err is not None:
-    RUNNING_SPHINX = False
-    for module in sys.modules:
-        if 'sphinx' in module:
-            RUNNING_SPHINX = True
     # Let the module continue after this fatal import error if we are running
     # on read the docs or we can detect that sphinx is imported
-    if not (os.environ.get('READTHEDOCS', None) == 'True' or RUNNING_SPHINX):
+    if not (os.environ.get('READTHEDOCS', None) == 'True' or 'sphinx' in sys.modules):
         raise import_err
 del import_err
 

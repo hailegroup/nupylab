@@ -10,17 +10,14 @@ Run the program by changing to the directory containing this file and calling:
 python s8_gui.py
 """
 
-import logging
 import sys
 from typing import Dict, List
-
-import pyvisa
 
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
 ######################
-from nupylab.utilities import nupylab_procedure, nupylab_window
+from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
     BooleanParameter,
@@ -29,9 +26,6 @@ from pymeasure.experiment import (
     ListParameter,
     Parameter,
 )
-
-log = logging.getLogger(__name__)
-log.addHandler(logging.NullHandler())
 
 
 class S8Procedure(nupylab_procedure.NupylabProcedure):
@@ -54,8 +48,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "-Z_im (ohm)",
     ]
 
-    rm = pyvisa.ResourceManager()
-    resources = rm.list_resources()
+    resources = list_resources()
 
     furnace_port: ListParameter = ListParameter(
         "Eurotherm Port", choices=resources, ui_class=None
