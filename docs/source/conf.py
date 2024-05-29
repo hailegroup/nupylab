@@ -9,16 +9,12 @@
 import os
 import sys
 
-rootdir = os.path.abspath('../../')
-sys.path.insert(0, rootdir)
-
-with open(os.path.join(rootdir, 'VERSION.txt')) as version_file:
-    version = version_file.read().strip()
+from nupylab import __version__
 
 project = 'NUPyLab'
 copyright = '2024, Haile Group'
 author = 'Haile Group'
-release = version
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

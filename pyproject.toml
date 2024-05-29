@@ -43,7 +43,7 @@ qt6 = ["PySide6"]
 test = ["PySide6", "pytest", "pytest-qt", "pytest-cov", "mypy", "tox"]
 
 [tool.setuptools.dynamic]
-version = {file = "VERSION.txt"}
+version = {attr = "nupylab.__version__"}
 
 [tool.black]
 line-length = 88
