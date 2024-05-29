@@ -8,7 +8,7 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath('..'))  # Allow modules to be found
+sys.path.insert(0, os.path.abspath('../../'))  # Allow modules to be found
 from nupylab import __version__
 
 project = 'NUPyLab'
