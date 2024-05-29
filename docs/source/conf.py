@@ -5,14 +5,17 @@
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
+import os
+import sys
 
-from importlib_metadata import version
+sys.path.insert(0, os.path.abspath('..'))  # Allow modules to be found
+from nupylab import __version__
 
 project = 'NUPyLab'
 copyright = '2024, Haile Group'
 author = 'Haile Group'
-release = version("nupylab")
-version = release
+release = __version__
+version = '.'.join(release.split('.')[:3])
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
