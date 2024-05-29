@@ -6,15 +6,13 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-import os
-import sys
-
-from nupylab import __version__
+from importlib_metadata import version
 
 project = 'NUPyLab'
 copyright = '2024, Haile Group'
 author = 'Haile Group'
-release = __version__
+release = version("nupylab")
+version = release
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
