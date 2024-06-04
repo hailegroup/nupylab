@@ -15,10 +15,8 @@ python s4_gui.py
 import sys
 from typing import Dict, List
 
-from nupylab.instruments.ac_potentiostat.biologic import (
-    Biologic as Potentiostat,
-)
 # Instrument Imports #
+from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
 from nupylab.instruments.heater.eurotherm2400 import Eurotherm2400 as Heater
 from nupylab.instruments.mfc.rod4 import ROD4 as MFC
 from nupylab.instruments.o2_sensor.keithley2182 import Keithley2182 as PO2_Sensor
@@ -195,13 +193,13 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
             self.active_instruments.append(po2_sensor)
 
 
-def main():
+def main(*args):
     """Run S4 procedure."""
-    app = QtWidgets.QApplication(sys.argv)
+    app = QtWidgets.QApplication(*args)
     window = nupylab_window.NupylabWindow(S4Procedure)
     window.show()
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv)

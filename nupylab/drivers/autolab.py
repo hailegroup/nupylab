@@ -1,18 +1,19 @@
 """
 Python adapter for the Metrohm Autolab SDK, version 2.1.
 
+This driver is incomplete and not currently functional.
+
 Autolab control requires pythonnet (.NET framework support) and Autolab SDK. Adapted
 from pyMetrohmAUTOLAB https://github.com/shuayliu/pyMetrohmAUTOLAB
 """
 
-
-import time
-from math import log10, floor
 import logging
+import os
+import time
+from math import floor, log10
+
 import clr
 import numpy as np
-import os
-from typing import Optional
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())

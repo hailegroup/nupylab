@@ -26,7 +26,7 @@ Then you can just double-click the file to run the station code.
 
     @echo OFF
     rem Define the path to your conda installation
-    set CONDAPATH=C:\Users\<username>\Miniconda3
+    set CONDAPATH=C:\Users\<username>\miniconda3
     set ENVPATH=%CONDAPATH%\envs\nupylab
     call %CONDAPATH%\Scripts\activate.bat %ENVPATH%
     rem Run a python script in that environment

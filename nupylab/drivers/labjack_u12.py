@@ -27,12 +27,19 @@ import atexit
 import ctypes
 import logging
 import math
+import os
 import sys
 import time
 from struct import pack, unpack
 from typing import List, Optional, Tuple, Union
 
-_os_name: str = ""  # Set to "nt" or "posix" in _loadLibrary
+try:
+    import nupylab_extras
+    os.add_dll_directory(nupylab_extras.labjack_u12.path)
+except ImportError:
+    pass
+
+PLATFORM: str = sys.platform  # "win32", "darwin", "linux#", "cygwin"
 
 
 class U12Exception(Exception):
@@ -213,9 +220,9 @@ class BitField(object):
 
         items = min(8, len(self.labelList))
         for i in reversed(range(items)):
-            self.rawBits.append(((raw >> (i)) & 1))
+            self.rawBits.append(((raw >> i) & 1))
             self.data.append(
-                self.oneLabel if bool(((raw >> (i)) & 1)) else self.zeroLabel
+                self.oneLabel if bool(((raw >> i) & 1)) else self.zeroLabel
             )
 
     def asByte(self) -> int:
@@ -334,75 +341,81 @@ def errcheck(ret: int, *args) -> int:
         return ret
 
 
-def _loadLinuxSo() -> ctypes.CDLL:
-    lib: ctypes.CDLL = ctypes.CDLL("liblabjackusb.so", use_errno=True)
+def _loadLinuxSo(lib_path: Optional[str] = None) -> ctypes.CDLL:
+    if lib_path is None:
+        lib: ctypes.CDLL = ctypes.CDLL("liblabjackusb.so", use_errno=True)
+    else:
+        lib: ctypes.CDLL = ctypes.CDLL(lib_path, use_errno=True)
     lib.LJUSB_Stream.errcheck = errcheck
     lib.LJUSB_Read.errcheck = errcheck
     return lib
 
 
-def _loadMacDylib() -> ctypes.CDLL:
-    try:
+def _loadMacDylib(lib_path: Optional[str] = None) -> ctypes.CDLL:
+    if lib_path is None:
         lib: ctypes.CDLL = ctypes.CDLL("liblabjackusb.dylib", use_errno=True)
-    except Exception:
-        # Try to load with full path.
-        lib = ctypes.CDLL("/usr/local/lib/liblabjackusb.dylib", use_errno=True)
+    else:
+        lib: ctypes.CDLL = ctypes.CDLL(lib_path)
     lib.LJUSB_Stream.errcheck = errcheck
     lib.LJUSB_Read.errcheck = errcheck
     return lib
 
 
-def _loadLibrary() -> Union[ctypes.CDLL, ctypes.WinDLL]:
-    """Return a ctypes dll pointer to the library."""
-    global _os_name
+def _loadLibrary(
+    platform: str, lib_path: Optional[str] = None
+) -> Union[ctypes.CDLL, ctypes.WinDLL]:
+    """Load LabJack library.
 
-    _os_name = "nt"
-    try:
-        if sys.platform.startswith("win32"):
-            # Windows detected
-            return ctypes.WinDLL("ljackuw.dll")
-        if sys.platform.startswith("cygwin"):
-            # Cygwin detected. WinDLL not available, but CDLL seems to work.
-            return ctypes.CDLL("ljackuw.dll")
-    except Exception as e:
-        raise U12Exception("Could not load LabJack UW driver.") from e
+    Args:
+        platform: name of OS platform.
+        lib_path: path to ljackuw.dll or Exodriver.
 
-    _os_name = "posix"
-    addStr = "Exodriver"
+    Returns:
+        ctypes dll pointer to the library.
+    """
+    if platform == "win32":
+        try:
+            if lib_path is not None:
+                return ctypes.WinDLL("ljackuw.dll")
+            return ctypes.WinDLL(lib_path)
+        except Exception as exc:
+            raise U12Exception("Could not load LabJack UW driver.") from exc
+
+    if platform == "cygwin":
+        try:
+            if lib_path is None:
+                return ctypes.CDLL("ljackuw.dll")
+            return ctypes.CDLL(lib_path)
+        except Exception as exc:
+            raise U12Exception("Could not load LabJack UW driver.") from exc
+
+    addStr: str = "Exodriver"
     try:
-        if sys.platform.startswith("linux"):
+        if platform.startswith("linux"):
             # Linux detected
             addStr = "Linux SO"
-            return _loadLinuxSo()
-        if sys.platform.startswith("darwin"):
+            return _loadLinuxSo(lib_path)
+        if platform == "darwin":
             # Mac detected
             addStr = "Mac Dylib"
-            return _loadMacDylib()
+            return _loadMacDylib(lib_path)
         # Other OS? Just try to load the Exodriver like a Linux SO
         addStr = "Other SO"
-        return _loadLinuxSo()
-    except OSError as e:
+        return _loadLinuxSo(lib_path)
+    except OSError as exc:
         raise U12Exception(
             "Could not load the Exodriver driver.\n\n"
             "Check that the Exodriver is installed, and the permissions are set "
             "correctly."
-        ) from e
-    except Exception as e:
+        ) from exc
+    except Exception as exc:
         raise U12Exception(
             f"Could not load the {addStr} for some reason other than it not being "
             "installed."
-        ) from e
+        ) from exc
 
 
-try:
-    staticLib = _loadLibrary()
-except U12Exception:
-    e = sys.exc_info()[1]
-    print("%s: %s" % (type(e), e))
-    staticLib = None
-
-
-class U12(object):
+class U12:
     """
     U12 Class for all U12 specific commands.
 
@@ -413,6 +426,7 @@ class U12(object):
     def __init__(
         self,
         id: int = -1,
+        lib_path: Optional[str] = None,
         serialNumber: Optional[int] = None,
         debug: Union[bool, logging.Logger] = False,
     ) -> None:
@@ -420,19 +434,21 @@ class U12(object):
 
         Args:
             id: integer id number.
+            lib_path: path to labjackuw.dll file or Exodriver, depending on OS.
             serialNumber: integer serial number.
             debug: boolean indicating whether to print out debug messages, or Logger
                 object for sending debug messages to.
         """
         self.id = id
         self.serialNumber: Optional[int] = serialNumber
+        self._lib = _loadLibrary(PLATFORM, lib_path)
         self.deviceName: str = "U12"
         self.streaming: bool = False
         self.handle = None
         self.debug: bool = debug
         self._autoCloseSetup: bool = False
 
-        if _os_name != "nt":
+        if PLATFORM != "win32":
             # Save some variables to save state.
             self.pwmAVoltage = 0
             self.pwmBVoltage = 0
@@ -462,16 +478,16 @@ class U12(object):
         a handle. On Windows, this method does nothing. On Mac OS X and Linux,
         this method acquires a device handle and saves it to the U12 object.
         """
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             pass
         else:
             self._debugprint("open called")
             devType = ctypes.c_ulong(1)
-            openDev = staticLib.LJUSB_OpenDevice
+            openDev = self._lib.LJUSB_OpenDevice
             openDev.restype = ctypes.c_void_p
 
             if serialNumber is not None:
-                numDevices = staticLib.LJUSB_GetDevCount(devType)
+                numDevices = self._lib.LJUSB_GetDevCount(devType)
 
                 for i in range(numDevices):
                     handle = openDev(i + 1, 0, devType)
@@ -496,7 +512,7 @@ class U12(object):
                     )
 
             elif id != -1:
-                numDevices = staticLib.LJUSB_GetDevCount(devType)
+                numDevices = self._lib.LJUSB_GetDevCount(devType)
 
                 for i in range(numDevices):
                     handle = openDev(i + 1, 0, devType)
@@ -541,8 +557,9 @@ class U12(object):
                     self.id = self.rawReadLocalId()
 
             else:
-                raise U12Exception("Unable to open U12: invalid combination of "
-                                   "parameters.")
+                raise U12Exception(
+                    "Unable to open U12: invalid combination of " "parameters."
+                )
 
             if not self._autoCloseSetup:
                 # Only need to register auto-close once per device.
@@ -551,15 +568,15 @@ class U12(object):
 
     def close(self):
         """Close the U12. Linux and Mac only."""
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             pass
         else:
-            staticLib.LJUSB_CloseDevice(self.handle)
+            self._lib.LJUSB_CloseDevice(self.handle)
             self.handle = None
 
     def write(self, writeBuffer):
         """Write contents of writeBuffer to U12. Linux and Mac only."""
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             pass
         else:
             if self.handle is None:
@@ -572,7 +589,7 @@ class U12(object):
             for i in range(len(writeBuffer)):
                 newA[i] = ctypes.c_byte(writeBuffer[i])
 
-            writeBytes = staticLib.LJUSB_Write(
+            writeBytes = self._lib.LJUSB_Write(
                 self.handle, ctypes.byref(newA), len(writeBuffer)
             )
 
@@ -585,7 +602,7 @@ class U12(object):
 
     def read(self, numBytes=8, timeout=1000):
         """Read U12 buffer. Linux and Mac only."""
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             pass
         else:
             if self.handle is None:
@@ -593,7 +610,7 @@ class U12(object):
                     "The U12's handle is None. Please open a U12 with open()."
                 )
             newA = (ctypes.c_byte * numBytes)()
-            readBytes = staticLib.LJUSB_ReadTO(
+            readBytes = self._lib.LJUSB_ReadTO(
                 self.handle, ctypes.byref(newA), numBytes, timeout
             )
             # Return a list of integers in command-response mode
@@ -609,8 +626,7 @@ class U12(object):
             the U12 serial number as an integer.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> print(d.rawReadSerial())
         10004XXXX
         """
@@ -633,8 +649,7 @@ class U12(object):
             the U12's Local ID as an integer.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> print(d.rawReadLocalId())
         0
         """
@@ -665,9 +680,10 @@ class U12(object):
             channel1PGAMUX: A byte that contains channel1 information
             channel2PGAMUX: A byte that contains channel2 information
             channel3PGAMUX: A byte that contains channel3 information
+            UpdateIO: whether to update IO.
+            LEDState: Turns the status LED on or off.
             IO3toIO0States: A byte that represents the states of IO0 to IO3
                 UpdateIO, If true, set IO0 to IO 3 to match IO3toIO0States
-            LEDState: Turns the status LED on or off.
             EchoValue: Sometimes, you want what you put in.
 
         Returns:
@@ -678,8 +694,7 @@ class U12(object):
                 EchoValue, a repeat of the value passed in.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawAISample()
         {
             'IO3toIO0States': <BitField object: [ IO3 = Low (0), IO2 = Low (0),
@@ -750,12 +765,13 @@ class U12(object):
                 "Expected an AISample response, got %s instead." % results[0]
             )
 
-        returnDict = {}
-        returnDict["EchoValue"] = results[1]
-        returnDict["PGAOvervoltage"] = bool(bf.bit4)
-        returnDict["IO3toIO0States"] = BitField(
-            results[0], "IO", list(range(3, -1, -1)), "Low", "High"
-        )
+        returnDict = {
+            "EchoValue": results[1],
+            "PGAOvervoltage": bool(bf.bit4),
+            "IO3toIO0States": BitField(
+                results[0], "IO", list(range(3, -1, -1)), "Low", "High"
+            )
+        }
 
         # Update the current IO states.
         if bool(UpdateIO):
@@ -825,8 +841,7 @@ class U12(object):
             D7toD0OutputLatchStates, BitField of output latch states for D7-0
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawDIO()
         {
           'D15toD8Directions':
@@ -944,8 +959,7 @@ class U12(object):
             Counter, the value of the counter
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawCounter()
         {
           'D15toD8States':
@@ -1046,8 +1060,7 @@ class U12(object):
             Counter, the value of the counter
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawCounterPWMDIO()
         {
           'D15toD8States':
@@ -1109,17 +1122,17 @@ class U12(object):
         self.write(command)
         results = self.read()
 
-        returnDict = {}
-
-        returnDict["D15toD8States"] = BitField(
-            results[1], "D", list(range(15, 7, -1)), "Low", "High"
-        )
-        returnDict["D7toD0States"] = BitField(
-            results[2], "D", list(range(7, -1, -1)), "Low", "High"
-        )
-        returnDict["IO3toIO0States"] = BitField(
-            (results[3] >> 4), "IO", list(range(3, -1, -1)), "Low", "High"
-        )
+        returnDict = {
+            "D15toD8States": BitField(
+                results[1], "D", list(range(15, 7, -1)), "Low", "High"
+            ),
+            "D7toD0States": BitField(
+                results[2], "D", list(range(7, -1, -1)), "Low", "High"
+            ),
+            "IO3toIO0States": BitField(
+                (results[3] >> 4), "IO", list(range(3, -1, -1)), "Low", "High"
+            )
+        }
 
         # Update the current IO directions and states.
         if bool(UpdateDigital):
@@ -1142,8 +1155,6 @@ class U12(object):
         channel2PGAMUX=10,
         channel3PGAMUX=11,
         NumberOfScans=8,
-        TriggerIONum=0,
-        TriggerState=0,
         UpdateIO=False,
         LEDState=True,
         IO3ToIO0States=0,
@@ -1177,8 +1188,6 @@ class U12(object):
             channel3PGAMUX: A byte that contains channel3 information
             NumberOfScans: The number of scans you wish to take. Rounded up
                 to a power of 2.
-            TriggerIONum: IO to trigger burst on.
-            TriggerState: State to trigger on.
             UpdateIO: True if you want to update the IO/D line, False to just
                 read their values.
             LEDState: Turns the status LED on or off.
@@ -1199,8 +1208,7 @@ class U12(object):
                 occurred.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawAIBurst()
         {
           'Channel0': [1.484375, 1.513671875, ... , 1.46484375],
@@ -1293,22 +1301,17 @@ class U12(object):
         for i in range(NumScans):
             resultsList.append(self.read())
 
-        returnDict = {}
-
-        returnDict["BufferOverflowOrChecksumErrors"] = list()
-        returnDict["PGAOvervoltages"] = list()
-        returnDict["IO3toIO0States"] = list()
-
-        returnDict["IterationCounters"] = list()
-        returnDict["Backlogs"] = list()
-
-        returnDict["Channel0"] = list()
-
-        returnDict["Channel1"] = list()
-
-        returnDict["Channel2"] = list()
-
-        returnDict["Channel3"] = list()
+        returnDict = {
+            "BufferOverflowOrChecksumErrors": [],
+            "PGAOvervoltages": [],
+            "IO3toIO0States": [],
+            "IterationCounters": [],
+            "Backlogs": [],
+            "Channel0": [],
+            "Channel1": [],
+            "Channel2": [],
+            "Channel3": []
+        }
 
         for results in resultsList:
             bf = BitField(rawByte=results[0])
@@ -1461,8 +1464,7 @@ class U12(object):
         Example:
         Have a jumper wire connected from D0 to CNT.
 
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawDIO(D7toD0Directions = 0, UpdateDigital = True)
         >>> d.rawCounter(ResetCounter = True)
         >>> d.rawPulseout(ClearFirst = True)
@@ -1527,8 +1529,7 @@ class U12(object):
         Note: The function will close the device after it has written the command.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawReset()
         """
         command = [0] * 8
@@ -1554,8 +1555,7 @@ class U12(object):
         Note: The function will close the device after it has written the command.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawReenumerate()
         """
         command = [0] * 8
@@ -1590,8 +1590,7 @@ class U12(object):
             FirmwareVersion, the firmware version of the U12.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> print(d.rawWatchdog())
         {'FirmwareVersion': '1.10'}
         """
@@ -1651,14 +1650,13 @@ class U12(object):
                 DataByte3, the data byte at Address - 3
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
         >>> import struct
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> r = d.rawReadRAM()
         >>> print(r)
         {'DataByte3': 5, 'DataByte2': 246, 'DataByte1': 139, 'DataByte0': 170}
-        >>> bytes = [ r['DataByte3'], r['DataByte2'], r['DataByte1'], r['DataByte0'] ]
-        >>> print(struct.unpack(">I", struct.pack("BBBB", *bytes))[0])
+        >>> bytes_ = [ r['DataByte3'], r['DataByte2'], r['DataByte1'], r['DataByte0'] ]
+        >>> print(struct.unpack(">I", struct.pack("BBBB", *bytes_))[0])
         100043690
         """
         command = [0] * 8
@@ -1711,8 +1709,7 @@ class U12(object):
             DataByte3, the data byte at Address - 3
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> print(d.rawWriteRAM([1, 2, 3, 4], 0x200))
         {'DataByte3': 4, 'DataByte2': 3, 'DataByte1': 2, 'DataByte0': 1}
         """
@@ -1788,8 +1785,7 @@ class U12(object):
             ErrorFlags, a BitField representing the error flags.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> # Set the full and half A,B,C to 9600
         >>> d.rawWriteRAM([0, 1, 1, 200], 0x073)
         >>> d.rawWriteRAM([5, 1, 2, 48], 0x076)
@@ -1811,7 +1807,7 @@ class U12(object):
                 "Data wasn't a list, or Data list length was too long (> 4)."
             )
 
-        NumberOfBytesToWrite = NumberOfBytesToRead & 0xFF
+        NumberOfBytesToWrite = NumberOfBytesToWrite & 0xFF
         NumberOfBytesToRead = NumberOfBytesToRead & 0xFF
         if NumberOfBytesToWrite > 18:
             raise U12Exception("Can only write 18 or fewer bytes at a time.")
@@ -1896,8 +1892,7 @@ class U12(object):
             ErrorFlags, a BitField representing the error flags.
 
         Example:
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.rawSPI([1,2,3,4], NumberOfBytesToWriteRead = 4)
         {
          'DataByte3': 4,
@@ -1982,7 +1977,7 @@ class U12(object):
 
     def rawSHT1X(
         self,
-        Data=[3, 0, 0, 0],
+        Data=(3, 0, 0, 0),
         WaitForMeasurementReady=True,
         IssueSerialReset=False,
         Add1MsDelay=False,
@@ -2025,8 +2020,7 @@ class U12(object):
         Power ( Red ) -> +5V
         Enable ( Brown ) -> IO2
 
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> results = d.rawSHT1X()
         >>> print(results)
         {
@@ -2060,13 +2054,10 @@ class U12(object):
         command = [0] * 8
 
         if NumberOfBytesToWrite != 0:
-            if not isinstance(Data, list) or len(Data) > 4:
-                raise U12Exception(
-                    "Data wasn't a list, or Data list length was too long (> 4)."
-                )
-
+            if len(Data) > 4:
+                raise U12Exception("Data length was too long (> 4).")
             padData = [0] * (4 - len(Data))
-            command[:4] = padData + Data[::-1]
+            command[:4] = padData + list(Data[::-1])
 
         if max(NumberOfBytesToWrite, NumberOfBytesToRead) > 4:
             raise U12Exception("Can only read/write up to 4 bytes at a time.")
@@ -2129,20 +2120,19 @@ class U12(object):
 
         Args: See section 4.1 of the User's Guide
 
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.eAnalogIn(0)
         {'overVoltage': 0, 'idnum': 1, 'voltage': 1.435546875}
         """
         if idNum is None:
             idNum = self.id
 
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             ljid = ctypes.c_long(idNum)
             ad0 = ctypes.c_long(999)
             ad1 = ctypes.c_float(999)
 
-            ecode = staticLib.EAnalogIn(
+            ecode = self._lib.EAnalogIn(
                 ctypes.byref(ljid),
                 demo,
                 channel,
@@ -2176,17 +2166,16 @@ class U12(object):
 
         Args: See section 4.2 of the User's Guide
 
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.eAnalogOut(2, 2)
         {'idnum': 1}
         """
         if idNum is None:
             idNum = self.id
 
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             ljid = ctypes.c_long(idNum)
-            ecode = staticLib.EAnalogOut(
+            ecode = self._lib.EAnalogOut(
                 ctypes.byref(ljid),
                 demo,
                 ctypes.c_float(analogOut0),
@@ -2216,8 +2205,7 @@ class U12(object):
 
         Args: See section 4.3 of the User's Guide
 
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.eCount()
         {'count': 1383596032.0, 'ms': 251487257.0}
         """
@@ -2225,12 +2213,12 @@ class U12(object):
         if idNum is None:
             idNum = self.id
 
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             ljid = ctypes.c_long(idNum)
             count = ctypes.c_double()
             ms = ctypes.c_double()
 
-            ecode = staticLib.ECount(
+            ecode = self._lib.ECount(
                 ctypes.byref(ljid),
                 demo,
                 resetCounter,
@@ -2243,7 +2231,7 @@ class U12(object):
 
             return {"idnum": ljid.value, "count": count.value, "ms": ms.value}
         else:
-            results = self.rawCounter(ResetCounter=resetCounter)
+            results = self.rawCounter(ResetCounter=bool(resetCounter))
 
             return {
                 "idnum": self.id,
@@ -2259,8 +2247,7 @@ class U12(object):
 
         Args: See section 4.4 of the User's Guide
 
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.eDigitalIn(0)
         {'state': 0, 'idnum': 1}
         """
@@ -2268,11 +2255,11 @@ class U12(object):
         if idNum is None:
             idNum = self.id
 
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             ljid = ctypes.c_long(idNum)
             state = ctypes.c_long(999)
 
-            ecode = staticLib.EDigitalIn(
+            ecode = self._lib.EDigitalIn(
                 ctypes.byref(ljid), demo, channel, readD, ctypes.byref(state)
             )
 
@@ -2282,8 +2269,6 @@ class U12(object):
             return {"idnum": ljid.value, "state": state.value}
         else:
             DIOData = self.rawDIO()
-            IOBlockName = ""
-            chIndex = 9999
 
             if readD:
                 if channel > 7:
@@ -2322,19 +2307,18 @@ class U12(object):
 
         Args: See section 4.5 of the User's Guide
 
-        >>> from nupylab.drivers import labjack_u12 as u12
-        >>> d = u12.U12()
+        >>> d = U12()
         >>> d.eDigitalOut(0, 1)
-        {idnum': 1}
+        {'idnum': 1}
         """
         # Check id num
         if idNum is None:
             idNum = self.id
 
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             ljid = ctypes.c_long(idNum)
 
-            ecode = staticLib.EDigitalOut(
+            ecode = self._lib.EDigitalOut(
                 ctypes.byref(ljid), demo, channel, writeD, state
             )
 
@@ -2344,8 +2328,6 @@ class U12(object):
             return {"idnum": ljid.value}
         else:
             DIOData = self.rawDIO()
-            IOBlockName = ""
-            chIndex = 9999
 
             if writeD:
                 if channel > 7:
@@ -2361,8 +2343,7 @@ class U12(object):
                 # Set the state of the channel
                 DIOData[IOBlockName + "States"][chIndex] = state
 
-            else:
-                IOBlockName = "IO3toIO0"  # Reading one of IO3-IO0
+            else:  # Reading one of IO3-IO0
                 chIndex = 3 - channel  # Data indexed [IO3,IO2,IO1,IO0]
                 # Set the direction of the channel to 0 (output)
                 self.IO3toIO0DirAndStates[chIndex] = 0
@@ -2389,7 +2370,7 @@ class U12(object):
         stateIOin=0,
         updateIO=0,
         ledOn=0,
-        gains=[0, 0, 0, 0],
+        gains=(0, 0, 0, 0),
         disableCal=0,
     ):
         """
@@ -2410,9 +2391,9 @@ class U12(object):
         idNum = ctypes.c_long(idNum)
 
         # Check to make sure that everything is checked
-        if not isIterable(channels):
+        if not hasattr(channels, "__iter__"):
             raise TypeError("channels must be iterable")
-        if not isIterable(gains):
+        if not hasattr(gains, "__iter__"):
             raise TypeError("gains must be iterable")
         if len(channels) < numChannels:
             raise ValueError("channels must have at least numChannels elements")
@@ -2427,7 +2408,7 @@ class U12(object):
         voltages = floatArrayType(0, 0, 0, 0)
         stateIOin = ctypes.c_long(stateIOin)
 
-        ecode = staticLib.AISample(
+        ecode = self._lib.AISample(
             ctypes.byref(idNum),
             demo,
             ctypes.byref(stateIOin),
@@ -2462,7 +2443,7 @@ class U12(object):
         stateIOin=0,
         updateIO=0,
         ledOn=0,
-        gains=[0, 0, 0, 0],
+        gains=(0, 0, 0, 0),
         disableCal=0,
         triggerIO=0,
         triggerState=0,
@@ -2504,7 +2485,7 @@ class U12(object):
         stateIOout = (ctypes.c_long * 4096)()
         overVoltage = ctypes.c_long(999)
 
-        ecode = staticLib.AIBurst(
+        ecode = self._lib.AIBurst(
             ctypes.byref(idNum),
             int(demo),
             int(stateIOin),
@@ -2545,7 +2526,7 @@ class U12(object):
         stateIOin=0,
         updateIO=0,
         ledOn=0,
-        gains=[0, 0, 0, 0],
+        gains=(0, 0, 0, 0),
         disableCal=0,
         readCount=0,
     ):
@@ -2558,7 +2539,7 @@ class U12(object):
         {'scanRate': 200.0, 'idnum': 1}
         """
         # Configure return type
-        staticLib.AIStreamStart.restype = ctypes.c_long
+        self._lib.AIStreamStart.restype = ctypes.c_long
 
         # check list sizes
         if len(channels) < numChannels:
@@ -2576,7 +2557,7 @@ class U12(object):
         gainsArray = listToCArray(gains, ctypes.c_long)
         scanRate = ctypes.c_float(scanRate)
 
-        ecode = staticLib.AIStreamStart(
+        ecode = self._lib.AIStreamStart(
             ctypes.byref(idNum),
             demo,
             stateIOin,
@@ -2636,7 +2617,7 @@ class U12(object):
         ljScanBacklog = ctypes.c_long(99999)
         overVoltage = ctypes.c_long(999)
 
-        ecode = staticLib.AIStreamRead(
+        ecode = self._lib.AIStreamRead(
             localID,
             numScans,
             timeout,
@@ -2677,7 +2658,7 @@ class U12(object):
         if localID is None:
             localID = self.id
 
-        ecode = staticLib.AIStreamClear(localID)
+        ecode = self._lib.AIStreamClear(localID)
 
         if ecode != 0:
             raise U12Exception(ecode)
@@ -2733,7 +2714,7 @@ class U12(object):
         count = ctypes.c_ushort(999)
 
         # Create arrays and other ctypes
-        ecode = staticLib.AOUpdate(
+        ecode = self._lib.AOUpdate(
             ctypes.byref(idNum),
             demo,
             trisD,
@@ -2788,7 +2769,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.AsynchConfig(
+        ecode = self._lib.AsynchConfig(
             ctypes.byref(idNum),
             demo,
             timeoutMult,
@@ -2832,8 +2813,8 @@ class U12(object):
         >>> dev.asynchConfig(96, 1, 1, 22, 2, 1)
         >>> {'idNum': 1}
         >>> dev.asynch(19200, [0, 0])
-        >>> {'data': <u12.c_long_Array_18 object at 0x00DEFB70>,
-             'idnum': <type 'long'>}
+        {'data': <u12.c_long_Array_18 object at 0x00DEFB70>,
+        'idnum': <type 'long'>}
         """
         # Check id number
         if idNum is None:
@@ -2854,7 +2835,7 @@ class U12(object):
             dataArray[i] = data[i]
         dataArray = listToCArray(dataArray, ctypes.c_long)
 
-        ecode = staticLib.Asynch(
+        ecode = self._lib.Asynch(
             ctypes.byref(idNum),
             demo,
             portB,
@@ -2885,9 +2866,9 @@ class U12(object):
         >>> dev.bitsToVolts(0, 0, 2662)
         2.998046875
         """
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             volts = ctypes.c_float()
-            ecode = staticLib.BitsToVolts(chnum, chgain, bits, ctypes.byref(volts))
+            ecode = self._lib.BitsToVolts(chnum, chgain, bits, ctypes.byref(volts))
 
             if ecode != 0:
                 print(ecode)
@@ -2911,9 +2892,9 @@ class U12(object):
         >>> dev.voltsToBits(0, 0, 3)
         2662
         """
-        if _os_name == "nt":
+        if PLATFORM == "win32":
             bits = ctypes.c_long(999)
-            ecode = staticLib.VoltsToBits(
+            ecode = self._lib.VoltsToBits(
                 chnum, chgain, ctypes.c_float(volts), ctypes.byref(bits)
             )
 
@@ -2947,7 +2928,7 @@ class U12(object):
         stateIO = ctypes.c_long(999)
         count = ctypes.c_ulong(999)
 
-        ecode = staticLib.Counter(
+        ecode = self._lib.Counter(
             ctypes.byref(idNum),
             demo,
             ctypes.byref(stateD),
@@ -3042,7 +3023,7 @@ class U12(object):
         if trisIO is None:
             trisIO = 0
 
-        ecode = staticLib.DigitalIO(
+        ecode = self._lib.DigitalIO(
             ctypes.byref(idNum),
             int(demo),
             ctypes.byref(trisD),
@@ -3074,8 +3055,8 @@ class U12(object):
         >>> dev.getDriverVersion()
         >>> 1.21000003815
         """
-        staticLib.GetDriverVersion.restype = ctypes.c_float
-        return staticLib.GetDriverVersion()
+        self._lib.GetDriverVersion.restype = ctypes.c_float
+        return self._lib.GetDriverVersion()
 
     def getFirmwareVersion(self, idNum=None):
         """Retrieve the firmware version from the LabJack's processor.
@@ -3092,8 +3073,8 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        staticLib.GetFirmwareVersion.restype = ctypes.c_float
-        firmware = staticLib.GetFirmwareVersion(ctypes.byref(idNum))
+        self._lib.GetFirmwareVersion.restype = ctypes.c_float
+        firmware = self._lib.GetFirmwareVersion(ctypes.byref(idNum))
 
         if firmware > 512:
             raise U12Exception(firmware - 512)
@@ -3122,7 +3103,7 @@ class U12(object):
         servicePackMajor = ctypes.c_ulong()
         servicePackMinor = ctypes.c_ulong()
 
-        ecode = staticLib.GetWinVersion(
+        ecode = self._lib.GetWinVersion(
             ctypes.byref(majorVersion),
             ctypes.byref(minorVersion),
             ctypes.byref(buildNumber),
@@ -3151,9 +3132,9 @@ class U12(object):
 
         >>> dev = U12()
         >>> dev.listAll()
-        >>> {'serialnumList': <u12.c_long_Array_127 object at 0x00E2AD50>,
-             'numberFound': 1,
-             'localIDList': <u12.c_long_Array_127 object at 0x00E2ADA0>}
+        {'serialnumList': <u12.c_long_Array_127 object at 0x00E2AD50>,
+        'numberFound': 1,
+        'localIDList': <u12.c_long_Array_127 object at 0x00E2ADA0>}
         """
         # Create arrays and ctypes
         productIDList = listToCArray([0] * 127, ctypes.c_long)
@@ -3166,7 +3147,7 @@ class U12(object):
         reserved = ctypes.c_long()
         numberFound = ctypes.c_long()
 
-        ecode = staticLib.ListAll(
+        ecode = self._lib.ListAll(
             ctypes.byref(productIDList),
             ctypes.byref(serialnumList),
             ctypes.byref(localIDList),
@@ -3199,7 +3180,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.LocalID(ctypes.byref(idNum), localID)
+        ecode = self._lib.LocalID(ctypes.byref(idNum), localID)
         if ecode != 0:
             raise U12Exception(ecode)
 
@@ -3219,7 +3200,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.NoThread(ctypes.byref(idNum), noThread)
+        ecode = self._lib.NoThread(ctypes.byref(idNum), noThread)
         if ecode != 0:
             raise U12Exception(ecode)
 
@@ -3250,7 +3231,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.PulseOut(
+        ecode = self._lib.PulseOut(
             ctypes.byref(idNum),
             demo,
             lowFirst,
@@ -3279,7 +3260,8 @@ class U12(object):
         lowFirst=0,
     ):
         """
-        PulseOutStart and PulseOutFinish are used as an alternative to PulseOut (See PulseOut for more information)
+        PulseOutStart and PulseOutFinish are used as an alternative to PulseOut.
+        (See PulseOut for more information)
         Args: See section 4.26 of the User's Guide
 
         >>> dev = U12()
@@ -3292,7 +3274,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.PulseOutStart(
+        ecode = self._lib.PulseOutStart(
             ctypes.byref(idNum),
             demo,
             lowFirst,
@@ -3324,7 +3306,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.PulseOutFinish(ctypes.byref(idNum), demo, timeoutMS)
+        ecode = self._lib.PulseOutFinish(ctypes.byref(idNum), demo, timeoutMS)
         if ecode != 0:
             raise U12Exception(ecode)
 
@@ -3346,7 +3328,7 @@ class U12(object):
         timeB = ctypes.c_long(0)
         timeC = ctypes.c_long(0)
 
-        ecode = staticLib.PulseOutCalc(
+        ecode = self._lib.PulseOutCalc(
             ctypes.byref(frequency), ctypes.byref(timeB), ctypes.byref(timeC)
         )
         if ecode != 0:
@@ -3362,7 +3344,8 @@ class U12(object):
         """
         Name: U12.reEnum(idNum=None)
         Args: See section 4.29 of the User's Guide
-        Desc: Causes the LabJack to electrically detach from and re-attach to the USB so it will re-enumerate
+        Desc: Causes the LabJack to electrically detach from and re-attach to the USB so
+            it will re-enumerate.
 
         >>> dev = U12()
         >>> dev.reEnum()
@@ -3374,7 +3357,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.ReEnum(ctypes.byref(idNum))
+        ecode = self._lib.ReEnum(ctypes.byref(idNum))
         if ecode != 0:
             raise U12Exception(ecode)
 
@@ -3396,7 +3379,7 @@ class U12(object):
             idNum = self.id
         idNum = ctypes.c_long(idNum)
 
-        ecode = staticLib.Reset(ctypes.byref(idNum))
+        ecode = self._lib.Reset(ctypes.byref(idNum))
         if ecode != 0:
             raise U12Exception(ecode)
 
@@ -3422,7 +3405,10 @@ class U12(object):
 
         >>> dev = U12()
         >>> dev.sht1X()
-        >>> {'tempC': 24.69999885559082, 'rh': 39.724445343017578, 'idnum': 1, 'tempF': 76.459999084472656}
+        {'tempC': 24.69999885559082,
+        'rh': 39.724445343017578,
+        'idnum': 1,
+        'tempF': 76.459999084472656}
         """
         # Check id number
         if idNum is None:
@@ -3434,7 +3420,7 @@ class U12(object):
         tempF = ctypes.c_float(0)
         rh = ctypes.c_float(0)
 
-        ecode = staticLib.SHT1X(
+        ecode = self._lib.SHT1X(
             ctypes.byref(idNum),
             demo,
             softComm,
@@ -3466,9 +3452,8 @@ class U12(object):
         dataRate=0,
     ):
         """
-        Name: U12.shtComm(numWrite, numRead, datatx, idNum=None, softComm=0, waitMeas=0, serialReset=0, dataRate=0)
+        Low-level public function to send and receive up to 4 bytes to from an SHT1X sensor
         Args: See section 4.32 of the User's Guide
-        Desc: Low-level public function to send and receive up to 4 bytes to from an SHT1X sensor
         """
 
         # Check id number
@@ -3482,9 +3467,9 @@ class U12(object):
 
         # Create ctypes
         datatx = listToCArray(datatx, ctypes.c_ubyte)
-        datarx = (ctypes.c_ubyte * 4)((0) * 4)
+        datarx = (ctypes.c_ubyte * 4)(0, 0, 0, 0)
 
-        ecode = staticLib.SHTComm(
+        ecode = self._lib.SHTComm(
             ctypes.byref(idNum),
             softComm,
             waitMeas,
@@ -3510,7 +3495,7 @@ class U12(object):
         datatx = listToCArray(datatx, ctypes.c_ubyte)
         datarx = listToCArray(datarx, ctypes.c_ubyte)
 
-        return staticLib.SHTCRC(
+        return self._lib.SHTCRC(
             statusReg, numWrite, numRead, ctypes.byref(datatx), ctypes.byref(datarx)
         )
 
@@ -3529,9 +3514,8 @@ class U12(object):
         configD=0,
     ):
         """
-        Name: U12.synch(mode, numWriteRead, data, idNum=None, demo=0, msDelay=0, husDelay=0, controlCS=0, csLine=None, csState=0, configD=0)
+        This function retrieves temperature and/or humidity readings from an SHT1X sensor.
         Args: See section 4.35 of the User's Guide
-        Desc: This function retrieves temperature and/or humidity readings from an SHT1X sensor.
         """
         # Check id number
         if idNum is None:
@@ -3547,7 +3531,7 @@ class U12(object):
             cData[i] = data[i]
         cData = listToCArray(cData, ctypes.c_long)
 
-        ecode = staticLib.Synch(
+        ecode = self._lib.Synch(
             ctypes.byref(idNum),
             demo,
             mode,
@@ -3586,7 +3570,7 @@ class U12(object):
         if len(stateDn) != 3:
             raise ValueError("stateDn must have 3 elements")
 
-        ecode = staticLib.Watchdog(
+        ecode = self._lib.Watchdog(
             ctypes.byref(idNum),
             demo,
             active,
@@ -3627,7 +3611,7 @@ class U12(object):
         ad2 = ctypes.c_ulong()
         ad3 = ctypes.c_ulong()
 
-        ec = staticLib.ReadMem(
+        ec = self._lib.ReadMem(
             ctypes.byref(ljid),
             ctypes.c_long(address),
             ctypes.byref(ad3),
@@ -3665,7 +3649,7 @@ class U12(object):
             idnum = self.id
 
         ljid = ctypes.c_ulong(idnum)
-        ec = staticLib.WriteMem(
+        ec = self._lib.WriteMem(
             ctypes.byref(ljid),
             int(unlocked),
             address,
@@ -3683,7 +3667,7 @@ class U12(object):
         outBuff = (ctypes.c_char * 16)()
         retBuff = ""
 
-        ec = staticLib.LJHash(
+        ec = self._lib.LJHash(
             ctypes.cast(hashStr, ctypes.POINTER(ctypes.c_char)),
             size,
             ctypes.cast(outBuff, ctypes.POINTER(ctypes.c_char)),
@@ -3697,48 +3681,32 @@ class U12(object):
 
         return retBuff
 
+    def getErrorString(self, error_code: int):
+        """Converts a LabJack error code into a string describing the error.
 
-def isIterable(var):
-    try:
-        iter(var)
-        return True
-    except:
-        return False
+        No hardware communication is involved.
+
+        Args: See section 4.19 of the User's Guide
+
+        >>> dev = U12()
+        >>> dev.getErrorString(1)
+        Unknown error
+        """
+        error_string = ctypes.create_string_buffer(50)
+        self._lib.GetErrorString(error_code, ctypes.byref(error_string))
+        return error_string.value
 
 
-def listToCArray(list, dataType):
-    arrayType = dataType * len(list)
+def listToCArray(list_, dataType):
+    arrayType = dataType * len(list_)
     array = arrayType()
-    for i in range(len(list)):
-        array[i] = list[i]
+    for i in range(len(list_)):
+        array[i] = list_[i]
 
     return array
 
 
-def cArrayToList(array):
-    list = []
-    for item in array:
-        list.append(item)
-
-    return list
-
-
-def getErrorString(errorcode):
-    """
-    Name: U12.getErrorString(errorcode)
-    Args: See section 4.19 of the User's Guide
-    Desc: Converts a LabJack errorcode, returned by another function, into a string describing the error. No hardware communication is involved.
-
-    >>> dev = U12()
-    >>> dev.getErrorString(1)
-    >>> Unknown error
-    """
-    errorString = ctypes.c_char_p(" " * 50)
-    staticLib.GetErrorString(errorcode, errorString)
-    return errorString.value
-
-
-def hexWithoutQuotes(l):
+def hexWithoutQuotes(value):
     """Return a string listing hex without all the single quotes.
 
     >>> l = range(10)
@@ -3746,4 +3714,4 @@ def hexWithoutQuotes(l):
     [0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9]
 
     """
-    return str([hex(i) for i in l]).replace("'", "")
+    return str([hex(v) for v in value]).replace("'", "")

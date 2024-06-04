@@ -1,16 +1,17 @@
 """Base procedure module for NUPyLab GUIs."""
 
 from __future__ import annotations
-from datetime import datetime
+
 import logging
+from datetime import datetime
 from math import nan
-from typing import Callable, List, Optional, TYPE_CHECKING, Union, Sequence, Dict
 from queue import Empty, SimpleQueue
 from threading import Thread
 from time import monotonic, sleep
+from typing import Callable, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 
-from pymeasure.experiment import FloatParameter, IntegerParameter, Procedure
 from nupylab.utilities import DataTuple, NupylabError
+from pymeasure.experiment import FloatParameter, IntegerParameter, Procedure
 
 if TYPE_CHECKING:
     from nupylab.utilities.nupylab_instrument import NupylabInstrument
@@ -35,7 +36,7 @@ class NupylabProcedure(Procedure):
             previous instrument connections.
     """
 
-    # Parameters common to all NUPyLab GUIs
+    # Parameters common to all NUPyLab procedures
     record_time = FloatParameter("Record Time", units="s", default=2.0)
     num_steps = IntegerParameter("Number of Measurement Steps")
     current_step = IntegerParameter("Current Step")
@@ -126,7 +127,6 @@ class NupylabProcedure(Procedure):
             threads.append(thread)
 
         self._start_time = monotonic()
-        sleep_time: float
         for thread in threads:
             thread.start()
 
@@ -164,6 +164,11 @@ class NupylabProcedure(Procedure):
                 except Exception as e:
                     log.warning("Error shutting down %s: %s", instrument.name, e)
             log.info("Shutdown complete.")
+
+    @property
+    def progress(self) -> float:
+        """Get procedure step progress, from 0-100. Overwrite in subclass."""
+        return 0
 
     @property
     def finished(self):
@@ -240,7 +245,7 @@ class NupylabProcedure(Procedure):
 
         if len(self._multivalue_results) == 0:
             self.emit("results", self._data)
-            self.emit("progress", 0)
+            self.emit("progress", self.progress)
             self._data.update(self._data_defaults)  # reset data to defaults
             return filled_queues
 
@@ -252,5 +257,5 @@ class NupylabProcedure(Procedure):
                 self._data[result.label] = result.value[i]
             self.emit("results", self._data)
             self._data.update(self._data_defaults)  # reset data to defaults
-        self.emit("progress", 0)
+        self.emit("progress", self.progress)
         return filled_queues

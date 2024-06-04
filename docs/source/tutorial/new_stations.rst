@@ -24,19 +24,19 @@ drivers for each instrument. The types of drivers generally fall into three
 camps:
 
 1. Text-based communication over a serial connection, which may adhere to a
-   protocol like SCPI or some other format. Examples:
+protocol like SCPI or some other format. Examples:
 
-    * Proterial ROD-4A MFC Controller
-    * Keithely 2182A Nanovoltmeter
-    * Agilent 4284A LCR Meter
+  * Proterial ROD-4A MFC Controller
+  * Keithely 2182A Nanovoltmeter
+  * Agilent 4284A LCR Meter
 
 2. Serial communication by a non-text protocol. Examples:
-    * Eurotherm (MODBUS protocol)
-    * Omron (CompoWay/F protocol)
+  * Eurotherm (MODBUS protocol)
+  * Omron (CompoWay/F protocol)
 
 3. Communication by a pre-compiled library. Examples:
-    * Biologic (EC-Lab Development Package)
-    * LabJack U12 (ljackuw.dll)
+  * Biologic (EC-Lab Development Package)
+  * LabJack U12 (ljackuw.dll)
 
 Text-Based Serial Drivers
 -------------------------

@@ -196,13 +196,13 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         self.active_instruments = (furnace, mfc, scanner)
 
 
-def main():
+def main(*args):
     """Run SAFC procedure."""
-    app = QtWidgets.QApplication(sys.argv)
+    app = QtWidgets.QApplication(*args)
     window = nupylab_window.NupylabWindow(SAFCProcedure)
     window.show()
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv)

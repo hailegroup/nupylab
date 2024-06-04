@@ -1,7 +1,8 @@
 """Abstract instrument class module for NUPyLab procedures."""
 
 from threading import Lock
-from typing import Sequence, Union, Optional, Any
+from typing import Any, Optional, Sequence, Union
+
 from nupylab.utilities import DataTuple
 
 
@@ -16,10 +17,12 @@ class NupylabInstrument:
         lock: thread lock for preventing simultaneous calls to instrument.
     """
 
+    _port = None
+
     def __init__(
         self, data_label: Union[str, Sequence[str]], name: str, *args, **kwargs
     ) -> None:
-        """Instatiate generic NUPyLab instrument.
+        """Instantiate generic NUPyLab instrument.
 
         Args:
             data_label: one or more labels for DataTuples, should match entries in

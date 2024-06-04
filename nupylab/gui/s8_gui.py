@@ -36,18 +36,6 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     `num_steps`, and `current_steps` from parent class.
     """
 
-    # Units in parentheses must be valid pint units
-    # First two entries must be "System Time" and "Time (s)"
-    DATA_COLUMNS: List[str] = [
-        "System Time",
-        "Time (s)",
-        "Furnace Temperature (degC)",
-        "Ewe (V)",
-        "Frequency (Hz)",
-        "Z_re (ohm)",
-        "-Z_im (ohm)",
-    ]
-
     resources = list_resources()
 
     furnace_port: ListParameter = ListParameter(
@@ -68,6 +56,18 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     minimum_frequency: FloatParameter = FloatParameter("Minimum Frequency", units="Hz")
     amplitude_voltage: FloatParameter = FloatParameter("Amplitude Voltage", units="V")
     points_per_decade: IntegerParameter = IntegerParameter("Points Per Decade")
+
+    # Units in parentheses must be valid pint units
+    # First two entries must be "System Time" and "Time (s)"
+    DATA_COLUMNS: List[str] = [
+        "System Time",
+        "Time (s)",
+        "Furnace Temperature (degC)",
+        "Ewe (V)",
+        "Frequency (Hz)",
+        "Z_re (ohm)",
+        "-Z_im (ohm)",
+    ]
 
     TABLE_PARAMETERS: Dict[str, str] = {
         "Target Temperature [C]": "target_temperature",
@@ -139,13 +139,13 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
             self.active_instruments = (furnace,)
 
 
-def main():
+def main(*args):
     """Run S8 procedure."""
-    app = QtWidgets.QApplication(sys.argv)
+    app = QtWidgets.QApplication(*args)
     window = nupylab_window.NupylabWindow(S8Procedure)
     window.show()
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv)
