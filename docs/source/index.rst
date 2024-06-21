@@ -26,6 +26,7 @@ out how to run your own :doc:`experiment <tutorial/experiment>`.
 
    introduction
    tutorial/index
+   maintaining/index
 
 
 .. toctree::

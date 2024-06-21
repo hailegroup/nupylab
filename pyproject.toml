@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=69.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,7 +9,6 @@ authors = [
     {name = "Connor Carr", email = "ConnorCarr2021@u.northwestern.edu"}
 ]
 description = "Python-based lab instrument control for the Haile Group"
-urls = ["https://github.com/hailegroup/nupylab"]
 readme = "README.rst"
 requires-python = ">=3.8"
 classifiers = [
@@ -37,10 +36,14 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.urls]
+Repository = "https://github.com/hailegroup/nupylab"
+Documentation = "https://nupylab.readthedocs.io/en/latest/index.html"
+
 [project.optional-dependencies]
 qt5 = ["PySide2"]
 qt6 = ["PySide6"]
-test = ["PySide6", "pytest", "pytest-qt", "pytest-cov", "mypy", "tox"]
+develop = ["build", "PySide6", "pytest", "pytest-qt", "pytest-cov", "mypy", "tox"]
 
 [tool.setuptools.dynamic]
 version = {attr = "nupylab.__version__"}

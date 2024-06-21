@@ -31,10 +31,12 @@ protocol like SCPI or some other format. Examples:
   * Agilent 4284A LCR Meter
 
 2. Serial communication by a non-text protocol. Examples:
+
   * Eurotherm (MODBUS protocol)
   * Omron (CompoWay/F protocol)
 
 3. Communication by a pre-compiled library. Examples:
+
   * Biologic (EC-Lab Development Package)
   * LabJack U12 (ljackuw.dll)
 
