@@ -13,6 +13,8 @@ python s8_gui.py
 import sys
 from typing import Dict, List
 
+sys.path.append('C:\\Users\\SAFC1\\.nupylab\\nupylab')
+
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater

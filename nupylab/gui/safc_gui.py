@@ -16,6 +16,8 @@ python safc_gui.py
 import sys
 from typing import Dict, List
 
+sys.path.append('C:\\Users\\SAFC1\\.nupylab\\nupylab')
+
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.agilent4284A import (
     Agilent4284A as Potentiostat,
@@ -178,6 +180,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         scanner.set_parameters(2, tc_sensor, "1: Temperature (degC)")
         scanner.set_parameters(3, tc_sensor, "2: Temperature (degC)")
         scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
+        potentiostat.connect()
         if self.eis_toggle:
             potentiostat.set_parameters(
                 self.maximum_frequency,

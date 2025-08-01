@@ -64,12 +64,24 @@ class Keithley705(NupylabInstrument):
             pre_process: optional function to call before measuring channel.
         """
         # Check that new labels are compatible with instrument class requirements
-        if isinstance(instrument.data_label, str) and not isinstance(data_label, str):
+        # case 1: both are strings
+        if isinstance(instrument.data_label, str) and isinstance(data_label, str):
+            pass
+        # case 2: both are Sequences
+        elif isinstance(instrument.data_label, Sequence) and isinstance(data_label, Sequence):
+            if (length := len(instrument.data_label)) != len(data_label):
+                raise ValueError(f"{instrument.name} `data_label` must be sequence of "
+                                 f"{length} but received {data_label}, of length "
+                                 f"{len(data_label)}")
+        # case 3: other type
+        else:
             raise TypeError(f"{instrument.name} `data_label` must be of "
-                            f"type string but received {data_label}")
-        elif (length := len(instrument.data_label)) != len(data_label):
-            raise ValueError(f"{instrument.name} `data_label` must be sequence of "
-                             f"{length} but received {data_label}")
+                            f"type {type(instrument.data_label)} but received "
+                            f"{data_label}, of type {type(data_label)}")
+        # if I were to do this again:
+        # 1) string equlivelent to sequence of length 1
+        # 2) need to throw if your NupylabInstrument gets something that is not a sequence
+
         self._finished = False
         self.channels[channel] = (instrument, data_label, pre_process)
 
