@@ -16,8 +16,6 @@ python safc_gui.py
 import sys
 from typing import Dict, List
 
-sys.path.append('C:\\Users\\SAFC1\\.nupylab\\nupylab')
-
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.agilent4284A import (
     Agilent4284A as Potentiostat,
