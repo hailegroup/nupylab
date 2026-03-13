@@ -14,6 +14,7 @@ import sys
 from typing import Dict, List
 
 # Instrument Imports #
+from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
 from nupylab.instruments.dc_potentiostat.biologic import Biologic as DCPotentiostat
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
 ######################
@@ -29,7 +30,7 @@ from pymeasure.experiment import (
 
 
 class S8Procedure(nupylab_procedure.NupylabProcedure):
-    """Procedure for running chronopotentiometry or chronoamperometry station GUI.
+    """Procedure for running high impedance station GUI.
 
     Running this procedure calls startup, execute, and shutdown methods sequentially.
     In addition to the parameters listed below, this procedure inherits `record_time`,
@@ -38,7 +39,9 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
     resources = list_resources()
     biologic_models = ["SP300", "SP200"]
+    technique_options = ["None", "PEIS", "GEIS", "SPEIS", "SGEIS","CP","CA"]
 
+    ### Furnace parameters ###
     furnace_port: ListParameter = ListParameter(
         "Eurotherm Port", choices=resources, ui_class=None
     )
@@ -49,13 +52,29 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     ramp_rate: FloatParameter = FloatParameter("Ramp Rate", units="C/min")
     dwell_time: FloatParameter = FloatParameter("Dwell Time", units="min")
 
+    ### General Potentiostat Parameters ###
     potentiostat_port: Parameter = Parameter(
-        "Biologic Port", default="USB0", ui_class=None, group_by="dc_toggle"
+        "Biologic Port", default="USB0", ui_class=None, group_condition = lambda c: c!="None"
     )
-    potentiostat_model: ListParameter = ListParameter("Biologic Model", choices=biologic_models, ui_class=None)
-    dc_toggle: BooleanParameter = BooleanParameter("Run DC")
-    applied_step: FloatParameter = FloatParameter("Applied Stimulus",units="V or A")
-    duration_step: FloatParameter = FloatParameter("Hold Time", units="s")
+    potentiostat_model: ListParameter = ListParameter(
+        "Biologic Model", choices=biologic_models, ui_class=None, group_by="electrochem_technique", group_condition = lambda c: c!="None"
+    )
+    electrochem_technique: ListParameter = ListParameter(
+        "EChem Technique", choices=technique_options, default="None"
+    )
+
+    ### DC Potentiostat Parameters ###
+    applied_step: FloatParameter = FloatParameter(
+        "Applied Stimulus",units="V or A", group_by="electrochem_technique", group_condition = lambda c: c!="None"
+    )
+    duration_step: FloatParameter = FloatParameter("Hold Time", units="s", group_condition = lambda c: c!="None"
+    )
+
+    ### AC Potentiostat Parameters ###
+    maximum_frequency: FloatParameter = FloatParameter("Maximum Frequency", units="Hz")
+    minimum_frequency: FloatParameter = FloatParameter("Minimum Frequency", units="Hz")
+    amplitude_voltage: FloatParameter = FloatParameter("Amplitude Voltage", units="V")
+    points_per_decade: IntegerParameter = IntegerParameter("Points Per Decade")
 
     # Units in parentheses must be valid pint units
     # First two entries must be "System Time" and "Time (s)"
@@ -65,21 +84,29 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Furnace Temperature (degC)",
         "Ewe (V)",
         "I (A)",
+        "Frequency (Hz)",
+        "Z_re (ohm)",
+        "-Z_im (ohm)",
     ]
 
     TABLE_PARAMETERS: Dict[str, str] = {
         "Target Temperature [C]": "target_temperature",
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
-        "DC? [True/False]": "dc_toggle",
+        "EChem Technique": "electrochem_technique",
         "Applied Stimulus [V or A]": "applied_step",
         "Hold time [s]": "duration_step",
+        "Maximum Frequency [Hz]": "maximum_frequency",
+        "Minimum Frequency [Hz]": "minimum_frequency",
+        "Amplitude Voltage [V]": "amplitude_voltage",
+        "Points per Decade": "points_per_decade"
     }
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.
     # Number of plots is determined by the longer of X_AXIS or Y_AXIS
-    X_AXIS: List[str] = ["Time (s)"]
+    X_AXIS: List[str] = ["Z_re (ohm)", "Time (s)"]
     Y_AXIS: List[str] = [
+        "-Z_im (ohm)",
         "Ewe (V)",
         "I (A)",
         "Furnace Temperature (degC)",
@@ -102,32 +129,59 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         It is required for this method to create non-empty `instruments` and
         `active_instruments` attributes.
         """
+        dc_methods = ["CP", "CA"]
+        eis_methods = ["PEIS", "GEIS", "SPEIS", "SGEIS"]
+
         if self.previous_procedure is not None:
             furnace, potentiostat = self.previous_procedure.instruments
         else:
             furnace = Heater(
                 self.furnace_port, self.furnace_address, "Furnace Temperature (degC)"
             )
-            potentiostat = DCPotentiostat(
-                self.potentiostat_port,
-                self.potentiostat_model,
-                0,
-                (
-                    "Ewe (V)",
-                    "I (A)",
-                ),
-            )
+            if self.electrochem_technique in dc_methods:
+                potentiostat = DCPotentiostat(
+                    self.potentiostat_port,
+                    self.potentiostat_model,
+                    0,
+                    (
+                        "Ewe (V)",
+                        "I (A)",
+                    ),
+                )
+            if self.electrochem_technique in eis_methods:
+                potentiostat = Potentiostat(
+                    self.potentiostat_port,
+                    self.potentiostat_model,
+                    0,
+                    (
+                        "Ewe (V)",
+                        "Frequency (Hz)",
+                        "Z_re (ohm)",
+                        "-Z_im (ohm)",
+                    ),
+                )
         self.instruments = (furnace, potentiostat)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
-        if self.dc_toggle:
+        if self.electrochem_technique != "None":
             self.active_instruments = (furnace, potentiostat)
-            potentiostat.set_parameters(
-                self.record_time,
-                self.applied_step,
-                self.duration_step,
-                "CA",
-                lambda: furnace.finished,
-            )
+            if self.electrochem_technique in dc_methods:
+                potentiostat.set_parameters(
+                    self.record_time,
+                    self.applied_step,
+                    self.duration_step,
+                    self.electrochem_technique,
+                    lambda: furnace.finished,
+                )
+            if self.electrochem_technique in eis_methods:
+                potentiostat.set_parameters(
+                    self.record_time,
+                    self.maximum_frequency,
+                    self.minimum_frequency,
+                    self.amplitude_voltage,
+                    self.points_per_decade,
+                    self.electrochem_technique,
+                    lambda: furnace.finished,
+                )
         else:
             self.active_instruments = (furnace,)
 
