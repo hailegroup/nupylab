@@ -67,6 +67,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Frequency (Hz)",
         "Z_re (ohm)",
         "-Z_im (ohm)",
+        "|Z| (ohm)",
+        "Phase (degrees)"
     ]
 
     TABLE_PARAMETERS: Dict[str, str] = {
@@ -82,9 +84,11 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.
     # Number of plots is determined by the longer of X_AXIS or Y_AXIS
-    X_AXIS: List[str] = ["Z_re (ohm)", "Time (s)"]
+    X_AXIS: List[str] = ["Z_re (ohm)","frequency (Hz)", "Time (s)"]
     Y_AXIS: List[str] = [
         "-Z_im (ohm)",
+        "|Z| (ohm)",
+        "Phase (degrees)",
         "Ewe (V)",
         "Furnace Temperature (degC)",
     ]
@@ -120,6 +124,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
                     "Frequency (Hz)",
                     "Z_re (ohm)",
                     "-Z_im (ohm)",
+                    "|Z| (ohm)",
+                    "Phase (degrees)",
                 ),
             )
         self.instruments = (furnace, potentiostat)
