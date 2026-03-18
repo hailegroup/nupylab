@@ -37,6 +37,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     """
 
     resources = list_resources()
+    Potentiostat_options = ["Biologic",]
+    Biologic_models = ["SP200", "SP300"]
 
     furnace_port: ListParameter = ListParameter(
         "Eurotherm Port", choices=resources, ui_class=None
@@ -47,7 +49,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     target_temperature: FloatParameter = FloatParameter("Target Temperature", units="C")
     ramp_rate: FloatParameter = FloatParameter("Ramp Rate", units="C/min")
     dwell_time: FloatParameter = FloatParameter("Dwell Time", units="min")
-
+    potentiostat: ListParameter = ListParameter("Brand Potentiostat", default="Biologic", choices=Potentiostat_options)
+    potentiostat_model = ListParameter("Model Potentiostat", choices=Biologic_models, default="SP200")
     potentiostat_port: Parameter = Parameter(
         "Biologic Port", default="USB0", ui_class=None, group_by="eis_toggle"
     )
@@ -84,7 +87,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.
     # Number of plots is determined by the longer of X_AXIS or Y_AXIS
-    X_AXIS: List[str] = ["Z_re (ohm)","frequency (Hz)", "Time (s)"]
+    X_AXIS: List[str] = ["Z_re (ohm)","Frequency (Hz)", "Time (s)"]
     Y_AXIS: List[str] = [
         "-Z_im (ohm)",
         "|Z| (ohm)",
@@ -97,6 +100,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "record_time",
         "furnace_port",
         "furnace_address",
+        "potentiostat",
+        "potentiostat_model",
         "potentiostat_port",
     ]
 
@@ -117,7 +122,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
             )
             potentiostat = Potentiostat(
                 self.potentiostat_port,
-                "SP300",
+                self.potentiostat_model,
                 0,
                 (
                     "Ewe (V)",
