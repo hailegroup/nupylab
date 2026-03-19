@@ -96,9 +96,11 @@ class NupylabWindow(ManagedDockWindow):
 
         converted_df: pd.DataFrame = table_df.copy()
         bool_map: Dict[str, bool] = {
+            "t": True,
             "true": True,
             "yes": True,
             "1": True,
+            "f": False,
             "false": False,
             "no": False,
             "0": False,
