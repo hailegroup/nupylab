@@ -11,7 +11,7 @@ from nupylab.utilities.nupylab_instrument import NupylabInstrument
 if TYPE_CHECKING:
     from nupylab.drivers.biologic import Technique
 
-class Biologic(NupylabInstrument):
+class DCBiologic(NupylabInstrument):
     """Biologic instrument class. Abstracts driver for NUPyLab procedures.
 
     Attributes:
@@ -76,8 +76,8 @@ class Biologic(NupylabInstrument):
 
     def _initialize_DC(
         self,
-        app_step: list,
-        dur_step: list,
+        app_step: Sequence[float],
+        dur_step: Sequence[float],
         record_time: float,
         technique: str,
         dc: Type[Technique],
@@ -86,14 +86,14 @@ class Biologic(NupylabInstrument):
         technique_dict: dict = globals()[technique + "_DICT"].copy()
         technique_dict.update(
             {
-                "duration_step": dur_step,
+                "duration_step": dur_step[0],
                 "record_every_dt": record_time
             }
         )
         if technique in "CP":
-            technique_dict.update({"current_step": app_step})
+            technique_dict.update({"current_step": app_step[0]})
         else:
-            technique_dict.update({"voltage_step": app_step})
+            technique_dict.update({"voltage_step": app_step[0]})
         for key in kwargs.keys():
             if key not in technique_dict:
                 raise KeyError(
@@ -105,8 +105,8 @@ class Biologic(NupylabInstrument):
     def set_parameters(
         self,
         record_time: float,
-        applied_step: list,
-        duration_step: list,
+        applied_step: float,
+        duration_step: float,
         technique: str,
         dc_condition: Callable[[], bool],
         **kwargs,
