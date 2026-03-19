@@ -55,6 +55,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Biologic Port", default="USB0", ui_class=None, group_by="eis_toggle"
     )
     eis_toggle: BooleanParameter = BooleanParameter("Run eis")
+    initial_step: FloatParameter = FloatParameter("Initial Step", units="V", default=0)
+    duration_step: FloatParameter = FloatParameter("Duration Step", units="s")
     maximum_frequency: FloatParameter = FloatParameter("Maximum Frequency", units="Hz")
     minimum_frequency: FloatParameter = FloatParameter("Minimum Frequency", units="Hz")
     amplitude_voltage: FloatParameter = FloatParameter("Amplitude Voltage", units="V")
@@ -79,6 +81,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
         "eis? [True/False]": "eis_toggle",
+        "Initial Ewe or I [V or A]": "initial_step",
+        "Hold before EIS [s]": "duration_step",
         "Maximum Frequency [Hz]": "maximum_frequency",
         "Minimum Frequency [Hz]": "minimum_frequency",
         "Amplitude Voltage [V]": "amplitude_voltage",
@@ -139,6 +143,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
             self.active_instruments = (furnace, potentiostat)
             potentiostat.set_parameters(
                 self.record_time,
+                self.initial_step,
+                self.duration_step,
                 self.maximum_frequency,
                 self.minimum_frequency,
                 self.amplitude_voltage,

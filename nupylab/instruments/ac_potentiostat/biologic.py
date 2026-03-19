@@ -77,6 +77,8 @@ class Biologic(NupylabInstrument):
 
     def _initialize_eis(
         self,
+        step_0: float, #the initial voltage or current step (bias)
+        dur_0: float, #how long to hold step_0 before starting EIS
         max_freq: float,
         min_freq: float,
         amp: float,
@@ -90,6 +92,7 @@ class Biologic(NupylabInstrument):
         technique_dict: dict = globals()[technique + "_DICT"].copy()
         technique_dict.update(
             {
+                "duration_step": dur_0,
                 "initial_frequency": max_freq,
                 "final_frequency": min_freq,
                 "frequency_number": freq_steps,
@@ -98,8 +101,10 @@ class Biologic(NupylabInstrument):
         )
         if technique in ("PEIS" or "SPEIS"):
             technique_dict.update({"amplitude_voltage": amp})
+            technique_dict.update({"initial_voltage_step": step_0})
         else:
             technique_dict.update({"amplitude_current": amp})
+            technique_dict.update({"initial_current_step": step_0})
         for key in kwargs.keys():
             if key not in technique_dict:
                 raise KeyError(
@@ -111,6 +116,8 @@ class Biologic(NupylabInstrument):
     def set_parameters(
         self,
         record_time: float,
+        initial_step: float,
+        duration_step: float,
         maximum_frequency: float,
         minimum_frequency: float,
         amplitude: float,
@@ -152,6 +159,8 @@ class Biologic(NupylabInstrument):
         )
         self._eis_condition = eis_condition
         self._initialize_eis(
+            initial_step,
+            duration_step,
             maximum_frequency,
             minimum_frequency,
             amplitude,
