@@ -76,24 +76,26 @@ class DCBiologic(NupylabInstrument):
 
     def _initialize_DC(
         self,
-        app_step: Sequence[float],
-        dur_step: Sequence[float],
+        app_step: float,
+        dur_step: float,
         record_time: float,
         technique: str,
         dc: Type[Technique],
         **kwargs,
     )-> None:
+        app_step = [app_step]
+        dur_step = [dur_step]
         technique_dict: dict = globals()[technique + "_DICT"].copy()
         technique_dict.update(
             {
-                "duration_step": dur_step[0],
+                "duration_step": dur_step,
                 "record_every_dt": record_time
             }
         )
         if technique in "CP":
-            technique_dict.update({"current_step": app_step[0]})
+            technique_dict.update({"current_step": app_step})
         else:
-            technique_dict.update({"voltage_step": app_step[0]})
+            technique_dict.update({"voltage_step": app_step})
         for key in kwargs.keys():
             if key not in technique_dict:
                 raise KeyError(
