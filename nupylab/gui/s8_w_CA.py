@@ -35,24 +35,36 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     In addition to the parameters listed below, this procedure inherits `record_time`,
     `num_steps`, and `current_steps` from parent class.
     """
-
+    #Lists for references
     resources = list_resources()
     biologic_models = ["SP300", "SP200"]
+    method_list = ["CA", "CP"]
 
+    #Furnace parameters for left bar
     furnace_port: ListParameter = ListParameter(
         "Eurotherm Port", choices=resources, ui_class=None
     )
     furnace_address: IntegerParameter = IntegerParameter(
         "Eurotherm Address", minimum=1, maximum=254, step=1, default=1
     )
+
+    #Furnace parameters for steps
     target_temperature: FloatParameter = FloatParameter("Target Temperature", units="C")
     ramp_rate: FloatParameter = FloatParameter("Ramp Rate", units="C/min")
     dwell_time: FloatParameter = FloatParameter("Dwell Time", units="min")
 
+    #Potentiostat parameters for left bar
     potentiostat_port: Parameter = Parameter(
         "Biologic Port", default="USB0", ui_class=None, group_by="dc_toggle"
     )
-    potentiostat_model: ListParameter = ListParameter("Biologic Model", choices=biologic_models, ui_class=None)
+    potentiostat_model: ListParameter = ListParameter("Biologic Model", choices=biologic_models, default="SP200", ui_class=None)
+
+    # The procedure class can not take a string as an input, so we can't make a drop down menu to select a method for
+    # each step. We can only use booleans. Maybe a feature to add in the future? Would require re-working the
+    # nupylab_window file as well as others.
+    dc_technique: ListParameter = ListParameter("Technique", choices=method_list, default="CA")
+
+    # Potentiostat parameters for steps
     dc_toggle: BooleanParameter = BooleanParameter("Run DC")
     applied_step: FloatParameter = FloatParameter("Applied Stimulus",units="V or A")
     duration_step: FloatParameter = FloatParameter("Hold Time", units="s")
@@ -91,6 +103,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "furnace_address",
         "potentiostat_port",
         "potentiostat_model",
+        "dc_technique",
     ]
 
     def set_instruments(self) -> None:
@@ -125,7 +138,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
                 self.record_time,
                 self.applied_step,
                 self.duration_step,
-                "CA",
+                self.dc_technique,
                 lambda: furnace.finished,
             )
         else:
