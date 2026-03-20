@@ -14,7 +14,7 @@ import sys
 from typing import Dict, List
 
 # Instrument Imports #
-from nupylab.instruments.dc_potentiostat.biologic import Biologic as DCPotentiostat
+from nupylab.instruments.dc_potentiostat.biologic import DCBiologic as DCPotentiostat
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
