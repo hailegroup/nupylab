@@ -15,7 +15,6 @@ from typing import Dict, List
 
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
-from nupylab.instruments.dc_potentiostat.biologic import Biologic as DCPotentiostat
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
@@ -39,7 +38,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
     resources = list_resources()
     biologic_models = ["SP300", "SP200"]
-    technique_options = ["None", "PEIS", "GEIS", "SPEIS", "SGEIS","CP","CA"]
+    AC_techniques = ["PEIS", "GEIS", "SPEIS", "SGEIS"]
+    DC_techniques = ["CP","CA"]
 
     ### Furnace parameters ###
     furnace_port: ListParameter = ListParameter(
@@ -54,21 +54,23 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
     ### General Potentiostat Parameters ###
     potentiostat_port: Parameter = Parameter(
-        "Biologic Port", default="USB0", ui_class=None, group_condition = lambda c: c!="None"
+        "Biologic Port", default="USB0", ui_class=None
     )
     potentiostat_model: ListParameter = ListParameter(
-        "Biologic Model", choices=biologic_models, ui_class=None, group_by="electrochem_technique", group_condition = lambda c: c!="None"
+        "Biologic Model", choices=biologic_models, ui_class=None, default="SP200"
     )
-    electrochem_technique: ListParameter = ListParameter(
-        "EChem Technique", choices=technique_options, default="None"
-    )
+    # The procedure class can not take a string as an input, so we can't make a drop down menu to select a method for
+    # each step. We can only use booleans. Maybe a feature to add in the future? Would require re-working the
+    # nupylab_window file as well as others.
+    eis_techniques: ListParameter = ListParameter("EIS Technique", choices=AC_techniques, ui_class=None, default="PEIS")
+    dc_techniques: ListParameter = ListParameter("DC Technique", choices=DC_techniques, ui_class=None, default="CA")
+    eis_boolean: BooleanParameter = BooleanParameter("Run EIS?")
+    dc_boolean: BooleanParameter = BooleanParameter("Run DC?")
 
-    ### DC Potentiostat Parameters ###
-    applied_step: FloatParameter = FloatParameter(
-        "Applied Stimulus",units="V or A", group_by="electrochem_technique", group_condition = lambda c: c!="None"
-    )
-    duration_step: FloatParameter = FloatParameter("Hold Time", units="s", group_condition = lambda c: c!="None"
-    )
+    ### Potentiostat Parameters ###
+    #applied step and duration can also work for applying bias and hold time before starting EIS in EIS condition
+    applied_step: FloatParameter = FloatParameter("Applied Stimulus", units="V or A")
+    duration_step: FloatParameter = FloatParameter("Hold Time", units="s")
 
     ### AC Potentiostat Parameters ###
     maximum_frequency: FloatParameter = FloatParameter("Maximum Frequency", units="Hz")
@@ -87,13 +89,16 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Frequency (Hz)",
         "Z_re (ohm)",
         "-Z_im (ohm)",
+        "|Z| (ohm)",
+        "Phase (deg)",
     ]
 
     TABLE_PARAMETERS: Dict[str, str] = {
         "Target Temperature [C]": "target_temperature",
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
-        "EChem Technique": "electrochem_technique",
+        "Run EIS? [T/F]": "eis_boolean",
+        "Run DC? [T/F]": "dc_boolean",
         "Applied Stimulus [V or A]": "applied_step",
         "Hold time [s]": "duration_step",
         "Maximum Frequency [Hz]": "maximum_frequency",
@@ -107,6 +112,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     X_AXIS: List[str] = ["Z_re (ohm)", "Time (s)"]
     Y_AXIS: List[str] = [
         "-Z_im (ohm)",
+        "|Z| (ohm)",
+        "Phase (deg)",
         "Ewe (V)",
         "I (A)",
         "Furnace Temperature (degC)",
@@ -118,6 +125,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "furnace_address",
         "potentiostat_port",
         "potentiostat_model",
+        "dc_techniques",
+        "eis_techniques",
     ]
 
     def set_instruments(self) -> None:
@@ -138,50 +147,46 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
             furnace = Heater(
                 self.furnace_port, self.furnace_address, "Furnace Temperature (degC)"
             )
-            if self.electrochem_technique in dc_methods:
-                potentiostat = DCPotentiostat(
-                    self.potentiostat_port,
-                    self.potentiostat_model,
-                    0,
-                    (
-                        "Ewe (V)",
-                        "I (A)",
-                    ),
-                )
-            if self.electrochem_technique in eis_methods:
+            if self.eis_boolean and self.dc_boolean:
+                raise ValueError("EIS and DC boolean can not both be true in the same step.")
+
+            if self.eis_boolean or self.dc_boolean:
                 potentiostat = Potentiostat(
                     self.potentiostat_port,
                     self.potentiostat_model,
                     0,
                     (
                         "Ewe (V)",
+                        "I (A)",
                         "Frequency (Hz)",
                         "Z_re (ohm)",
                         "-Z_im (ohm)",
+                        "|Z| (ohm)",
+                        "Phase (deg)",
                     ),
                 )
         self.instruments = (furnace, potentiostat)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
-        if self.electrochem_technique != "None":
+        if self.eis_boolean or self.dc_boolean:
             self.active_instruments = (furnace, potentiostat)
-            if self.electrochem_technique in dc_methods:
-                potentiostat.set_parameters(
-                    self.record_time,
-                    self.applied_step,
-                    self.duration_step,
-                    self.electrochem_technique,
-                    lambda: furnace.finished,
-                )
-            if self.electrochem_technique in eis_methods:
-                potentiostat.set_parameters(
-                    self.record_time,
-                    self.maximum_frequency,
-                    self.minimum_frequency,
-                    self.amplitude_voltage,
-                    self.points_per_decade,
-                    self.electrochem_technique,
-                    lambda: furnace.finished,
-                )
+            if self.dc_boolean:
+                technique = self.dc_techniques
+            elif self.eis_boolean:
+                technique = self.eis_techniques
+            else:
+                technique = "None"
+
+            potentiostat.set_parameters(
+                self.record_time,
+                self.applied_step,
+                self.duration_step,
+                self.maximum_frequency,
+                self.minimum_frequency,
+                self.amplitude_voltage,
+                self.points_per_decade,
+                technique,
+                lambda: furnace.finished,
+            )
         else:
             self.active_instruments = (furnace,)
 

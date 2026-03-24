@@ -13,8 +13,9 @@ import sys
 from typing import Dict, List
 
 # Instrument Imports #
-from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
+from nupylab.instruments.ac_potentiostat.manual_biologic import Biologic as Potentiostat
 from nupylab.instruments.dc_potentiostat.biologic import DCBiologic as DCPotentiostat
+from nupylab.drivers.biologic import OCV
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
@@ -168,7 +169,8 @@ class Manual_Biologic_Procedure(nupylab_procedure.NupylabProcedure):
                 self.record_time,
                 self.initial_step,
                 self.duration_step,
-                self.DC_method
+                self.DC_method,
+                lambda: potentiostat._measuring_ocv==False,
             )
         elif self.eis_toggle:
             potentiostat.set_parameters(
@@ -179,7 +181,8 @@ class Manual_Biologic_Procedure(nupylab_procedure.NupylabProcedure):
                 self.minimum_frequency,
                 self.amplitude_voltage,
                 self.points_per_decade,
-                self.EIS_method
+                self.EIS_method,
+                lambda: potentiostat._measuring_ocv==False,
             )
 
 
