@@ -39,7 +39,9 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     resources = list_resources()
     Potentiostat_options = ["Biologic",]
     Biologic_models = ["SP200", "SP300"]
+    EIS_techniques = ["PEIS", "SPEIS", "GEIS", "SGEIS"]
 
+    #Furnace parameters
     furnace_port: ListParameter = ListParameter(
         "Eurotherm Port", choices=resources, ui_class=None
     )
@@ -49,11 +51,15 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     target_temperature: FloatParameter = FloatParameter("Target Temperature", units="C")
     ramp_rate: FloatParameter = FloatParameter("Ramp Rate", units="C/min")
     dwell_time: FloatParameter = FloatParameter("Dwell Time", units="min")
+
+    #Potentiostat Parameters
     potentiostat: ListParameter = ListParameter("Brand Potentiostat", default="Biologic", choices=Potentiostat_options)
     potentiostat_model = ListParameter("Model Potentiostat", choices=Biologic_models, default="SP200")
     potentiostat_port: Parameter = Parameter(
         "Biologic Port", default="USB0", ui_class=None, group_by="eis_toggle"
     )
+    potentiostat_technique = ListParameter("EIS Technique", default="PEIS", choices=EIS_techniques)
+
     eis_toggle: BooleanParameter = BooleanParameter("Run eis")
     initial_step: FloatParameter = FloatParameter("Initial Step", units="V", default=0)
     duration_step: FloatParameter = FloatParameter("Duration Step", units="s")
@@ -69,6 +75,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Time (s)",
         "Furnace Temperature (degC)",
         "Ewe (V)",
+        "I (A)",
         "Frequency (Hz)",
         "Z_re (ohm)",
         "-Z_im (ohm)",
@@ -97,6 +104,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "|Z| (ohm)",
         "Phase (degrees)",
         "Ewe (V)",
+        "I (A)",
         "Furnace Temperature (degC)",
     ]
     # Inputs must match name of selected procedure parameters
@@ -107,6 +115,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "potentiostat",
         "potentiostat_model",
         "potentiostat_port",
+        "potentiostat_technique",
     ]
 
     def set_instruments(self) -> None:
@@ -130,6 +139,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
                 0,
                 (
                     "Ewe (V)",
+                    "I (A)",
                     "Frequency (Hz)",
                     "Z_re (ohm)",
                     "-Z_im (ohm)",
@@ -149,7 +159,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
                 self.minimum_frequency,
                 self.amplitude_voltage,
                 self.points_per_decade,
-                "PEIS",
+                self.potentiostat_technique,
                 lambda: furnace.finished,
             )
         else:

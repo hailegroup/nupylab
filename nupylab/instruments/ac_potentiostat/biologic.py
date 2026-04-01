@@ -38,20 +38,20 @@ class Biologic(NupylabInstrument):
             port: string name of port, e.g. `USB0` or IP address.
             model: Biologic model, e.g. `SP200` or `SP300`.
             channels: Biologic channels to measure, zero-based.
-            data_label: labels for DataTuples. :meth:`get_data` returns four results
-                for each channel (E_we, frequency, Z_re, -Z_im, |Z|, and Phase), and corresponding
+            data_label: labels for DataTuples. :meth:`get_data` returns seven results
+                for each channel (E_we, I, frequency, Z_re, -Z_im, |Z|, and Phase), and corresponding
                 labels should match entries in DATA_COLUMNS.
             name: name of instrument.
             eclib_path: path to the directory containing the EClib DLL. If None, default
                 is used.
 
         Raises:
-            ValueError: if `data_label` does not contain 6 entries per channel.
+            ValueError: if `data_label` does not contain 7 entries per channel.
         """
         if not hasattr(channels, "__len__"):
             channels = (channels,)
-        if len(channels) * 6 != len(data_label):
-            raise ValueError("data_label must contain 6 entries per channel.")
+        if len(channels) * 7 != len(data_label):
+            raise ValueError("data_label must contain 7 entries per channel.")
         model = model.replace("-", "").replace(" ", "").upper()
         self.biologic: BiologicPotentiostat = BiologicPotentiostat(
             model, port, eclib_path
@@ -234,11 +234,12 @@ class Biologic(NupylabInstrument):
                 theta = np.arctan(z_im/z_re)*180/np.pi
                 data.append((
                     DataTuple(self.data_label[0], kbio_data.Ewe),
-                    DataTuple(self.data_label[1], kbio_data.freq),
-                    DataTuple(self.data_label[2], z_re),
-                    DataTuple(self.data_label[3], -z_im),
-                    DataTuple(self.data_label[4], np.abs(abs_z)),
-                    DataTuple(self.data_label[5], theta),)
+                    DataTuple(self.data_label[1], kbio_data.I),
+                    DataTuple(self.data_label[2], kbio_data.freq),
+                    DataTuple(self.data_label[3], z_re),
+                    DataTuple(self.data_label[4], -z_im),
+                    DataTuple(self.data_label[5], np.abs(abs_z)),
+                    DataTuple(self.data_label[6], theta),)
                 )
             else:
                 data.append(DataTuple(self.data_label[0], kbio_data.Ewe))
