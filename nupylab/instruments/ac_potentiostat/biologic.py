@@ -92,7 +92,7 @@ class Biologic(NupylabInstrument):
         technique_dict: dict = globals()[technique + "_DICT"].copy()
         technique_dict.update(
             {
-                "duration_step": dur_0,
+                "duration_step": dur_0*60,
                 "initial_frequency": max_freq,
                 "final_frequency": min_freq,
                 "frequency_number": freq_steps,

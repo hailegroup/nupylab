@@ -89,7 +89,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Dwell Time [min]": "dwell_time",
         "eis? [True/False]": "eis_toggle",
         "Initial Ewe or I [V or A]": "initial_step",
-        "Hold before EIS [s]": "duration_step",
+        "Hold before EIS [min]": "duration_step",
         "Maximum Frequency [Hz]": "maximum_frequency",
         "Minimum Frequency [Hz]": "minimum_frequency",
         "Amplitude Voltage [V]": "amplitude_voltage",
