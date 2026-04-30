@@ -46,7 +46,7 @@ class ROD4(NupylabInstrument):
         with self.lock:
             self.rod4 = rod4.ROD4(self._port)
             self._ranges = tuple(
-                float(channel.mfc_range) for channel in self.rod4.channels.values()
+                float(channel.mfc_range.lstrip('E')) for channel in self.rod4.channels.values()
             )
             self._connected = True
 
