@@ -104,7 +104,7 @@ class DataWorker(QObject):
             try:
                 flows = []
                 for channel, rng in zip(self.driver.channels.values(), self.ranges):
-                    flow_pct = channel.actual_flow
+                    flow_pct = float(channel.actual_flow)
                     flows.append(flow_pct * rng / 100.0)
                 self.data_ready.emit(flows)
             except Exception as exc:
