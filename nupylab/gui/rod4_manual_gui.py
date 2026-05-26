@@ -65,6 +65,10 @@ else:
 
 import pyqtgraph as pg
 
+def _parse_rod4_value(raw) -> float:
+    if isinstance(raw, str):
+        return float(raw.lstrip('E'))
+    return float(raw)
 
 NUM_CHANNELS = 4
 
@@ -104,7 +108,7 @@ class DataWorker(QObject):
             try:
                 flows = []
                 for channel, rng in zip(self.driver.channels.values(), self.ranges):
-                    flow_pct = float(channel.actual_flow)
+                    flow_pct = _parse_rod4_value(channel.actual_flow)
                     flows.append(flow_pct * rng / 100.0)
                 self.data_ready.emit(flows)
             except Exception as exc:
@@ -332,11 +336,7 @@ class ROD4GUI(QMainWindow):
             self.driver = rod4.ROD4(port)
             self._ranges = []
             for channel in self.driver.channels.values():
-                rng_raw = channel.mfc_range
-                if isinstance(rng_raw, str):
-                    rng = float(rng_raw.lstrip('E'))
-                else:
-                    rng = float(rng_raw)
+                rng = _parse_rod4_value(channel.mfc_range)
                 self._ranges.append(rng)
         except Exception as exc:
             print(f"[ROD-4 connection error] {exc}")
