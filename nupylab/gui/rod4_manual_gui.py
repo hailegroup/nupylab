@@ -65,10 +65,12 @@ else:
 
 import pyqtgraph as pg
 
+
 def _parse_rod4_value(raw) -> float:
     if isinstance(raw, str):
         return float(raw.lstrip('E'))
     return float(raw)
+
 
 NUM_CHANNELS = 4
 
@@ -78,10 +80,6 @@ LIVE_BG    = "#0a0a0a"
 LIVE_FG    = "#00e676"
 EDIT_STYLE = "background-color: #dff0f7; color: #111111;"
 
-
-# ---------------------------------------------------------------------------
-# Background polling thread
-# ---------------------------------------------------------------------------
 
 class DataWorker(QObject):
     """Polls all 4 ROD-4 channels on a background thread every interval_s seconds."""
@@ -115,10 +113,6 @@ class DataWorker(QObject):
                 self.error_occurred.emit(str(exc))
             time.sleep(self.interval_s)
 
-
-# ---------------------------------------------------------------------------
-# Main window
-# ---------------------------------------------------------------------------
 
 class ROD4GUI(QMainWindow):
 
@@ -154,10 +148,6 @@ class ROD4GUI(QMainWindow):
         self._reconnect_success.connect(self._on_reconnect_success)
         self._reconnect_failed.connect(self._on_reconnect_failed)
         self._reconnect_status.connect(lambda msg: self.statusBar().showMessage(msg))
-
-    # -----------------------------------------------------------------------
-    # UI layout
-    # -----------------------------------------------------------------------
 
     def _build_ui(self):
         root = QWidget()
@@ -229,11 +219,11 @@ class ROD4GUI(QMainWindow):
             "font-size: 14px; font-weight: bold; border: 1px solid #003300;"
         )
 
-        g.addWidget(QLabel("Channel"),        0, 0)
-        g.addWidget(QLabel("Range (sccm)"),   0, 1)
+        g.addWidget(QLabel("Channel"),         0, 0)
+        g.addWidget(QLabel("Range (sccm)"),    0, 1)
         g.addWidget(QLabel("Setpoint (sccm)"), 0, 2)
-        g.addWidget(QLabel("Actual (sccm)"),  0, 3)
-        g.addWidget(QLabel("Valve Mode"),     0, 4)
+        g.addWidget(QLabel("Actual (sccm)"),   0, 3)
+        g.addWidget(QLabel("Valve Mode"),      0, 4)
 
         self.setpoint_edits = []
         self.flow_displays  = []
@@ -308,20 +298,12 @@ class ROD4GUI(QMainWindow):
         f.setFrameShape(_HLINE)
         return f
 
-    # -----------------------------------------------------------------------
-    # File picker
-    # -----------------------------------------------------------------------
-
     def _browse_file(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Choose Log File", "", "CSV Files (*.csv);;All Files (*)"
         )
         if path:
             self.filepath_edit.setText(path)
-
-    # -----------------------------------------------------------------------
-    # Connect / Disconnect
-    # -----------------------------------------------------------------------
 
     def _toggle_connect(self, checked: bool):
         if checked:
@@ -407,10 +389,6 @@ class ROD4GUI(QMainWindow):
         self.port_edit.setEnabled(True)
         self.statusBar().showMessage("Disconnected.")
 
-    # -----------------------------------------------------------------------
-    # Apply setpoint for a single channel
-    # -----------------------------------------------------------------------
-
     def _apply_channel(self, ch_index: int):
         if not self._connected or self.driver is None:
             return
@@ -432,24 +410,52 @@ class ROD4GUI(QMainWindow):
         valve_mode = self.valve_combos[ch_index].currentText()
         sp_pct     = 100.0 * sp_sccm / rng
 
+        if sp_sccm == 0 and valve_mode == "flow":
+            valve_mode = "close"
+            print(f"[ROD-4 ch {ch_index + 1}] setpoint is 0, auto-closing valve")
+
+        channels = list(self.driver.channels.values())
+        channel  = channels[ch_index]
+
+        sp_error = None
+        vm_error = None
+
         try:
-            channels  = list(self.driver.channels.values())
-            channel   = channels[ch_index]
-            channel.setpoint   = sp_pct
-            channel.valve_mode = valve_mode
+            channel.setpoint = sp_pct
+            print(f"[ROD-4 ch {ch_index + 1}] wrote setpoint {sp_pct:.2f}%")
         except Exception as exc:
-            print(f"[ROD-4 setpoint error ch {ch_index + 1}] {exc}")
-            QMessageBox.warning(self, "Setpoint Error",
-                                f"Failed to set channel {ch_index + 1}:\n{exc}")
+            sp_error = exc
+            print(f"[ROD-4 ch {ch_index + 1} setpoint write error] {exc}")
+
+        try:
+            channel.valve_mode = valve_mode
+            print(f"[ROD-4 ch {ch_index + 1}] wrote valve_mode {valve_mode}")
+        except Exception as exc:
+            vm_error = exc
+            print(f"[ROD-4 ch {ch_index + 1} valve_mode write error] {exc}")
+
+        try:
+            time.sleep(0.2)
+            sp_readback = channel.setpoint
+            vm_readback = channel.valve_mode
+            print(f"[ROD-4 ch {ch_index + 1} readback] "
+                  f"setpoint={sp_readback}, valve_mode={vm_readback}")
+        except Exception as exc:
+            print(f"[ROD-4 ch {ch_index + 1} readback error] {exc}")
+
+        if sp_error or vm_error:
+            parts = []
+            if sp_error:
+                parts.append(f"Setpoint: {sp_error}")
+            if vm_error:
+                parts.append(f"Valve mode: {vm_error}")
+            QMessageBox.warning(self, "Write Error",
+                                f"Channel {ch_index + 1}:\n" + "\n".join(parts))
             return
 
         self.statusBar().showMessage(
             f"Channel {ch_index + 1} -> {sp_sccm:.1f} sccm ({valve_mode})", 4000
         )
-
-    # -----------------------------------------------------------------------
-    # Logging
-    # -----------------------------------------------------------------------
 
     def _toggle_logging(self, checked: bool):
         if checked:
@@ -497,10 +503,6 @@ class ROD4GUI(QMainWindow):
         self.browse_btn.setEnabled(True)
         self.statusBar().showMessage("Logging stopped.")
 
-    # -----------------------------------------------------------------------
-    # Data slot
-    # -----------------------------------------------------------------------
-
     def _on_data(self, flows):
         for i, flow in enumerate(flows):
             self.flow_displays[i].setText(f"{flow:.2f}")
@@ -522,10 +524,6 @@ class ROD4GUI(QMainWindow):
                 row.append(f"{flow:.3f}")
             self._log_writer.writerow(row)
             self._log_file.flush()
-
-    # -----------------------------------------------------------------------
-    # Error handling and auto-reconnect
-    # -----------------------------------------------------------------------
 
     def _on_worker_error(self, msg: str):
         for disp in self.flow_displays:
@@ -587,10 +585,6 @@ class ROD4GUI(QMainWindow):
         self.statusBar().showMessage(f"Error: {msg}")
         self._disconnect()
 
-    # -----------------------------------------------------------------------
-    # Helpers
-    # -----------------------------------------------------------------------
-
     def _poll_interval(self) -> float:
         try:
             return max(0.5, float(self.poll_interval_edit.text()))
@@ -601,10 +595,6 @@ class ROD4GUI(QMainWindow):
         self._disconnect()
         event.accept()
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main():
     app = QApplication(sys.argv)
