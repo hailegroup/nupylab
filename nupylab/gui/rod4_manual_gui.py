@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-rod4_manual_gui.py
 NUPyLab - Standalone ROD-4 MFC Controller GUI
 
 Connects to a Proterial ROD-4(A) over RS-485, reads live flow values from
@@ -77,7 +76,7 @@ NUM_CHANNELS = 4
 CHANNEL_COLORS = ["#ff5555", "#55aaff", "#44dd88", "#ffaa33"]
 
 LIVE_BG    = "#0a0a0a"
-LIVE_FG    = "#00e676"
+LIVE_FG    = "#00e675"
 EDIT_STYLE = "background-color: #dff0f7; color: #111111;"
 
 
