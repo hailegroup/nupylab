@@ -107,7 +107,7 @@ class Keithley705(NupylabInstrument):
         data: List[DataTuple] = []
         f: bool = True
         with self.lock:
-            for channel, (instrument, labels, pre_process) in self.channels:
+            for channel, (instrument, labels, pre_process) in self.channels.items():
                 if pre_process is not None:
                     pre_process()
                 instrument.data_label = labels
@@ -120,7 +120,7 @@ class Keithley705(NupylabInstrument):
                     data.append(d)
                 f = f and instrument.finished
             self._finished = f
-        return data if data else None
+        return data
 
     @property
     def finished(self) -> bool:
