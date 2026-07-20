@@ -19,3 +19,17 @@ started with NUPyLab.
 .. _Haile Group: https://addis.ms.northwestern.edu/
 .. _PyMeasure: https://pymeasure.readthedocs.io/en/latest/
 .. _the documentation: https://nupylab.readthedocs.io/en/latest/
+
+*****************
+Development Setup
+*****************
+
+1. Install `Git <https://git-scm.com/downloads/win>`_ and `Python <https://python.org>`_.
+2. Open ``Git Bash``.
+3. Clone this repo: ``git clone https://github.com/hailegroup/nupylab.git``.
+4. Change to the repository: ``cd nupylab``.
+5. Create a virtualenv: ``python -m venv .venv``
+6. Activate the virtualenv: ``source .venv/Scripts/activate``
+7. Update pip: ``python -m pip install -U pip``
+8. Install the packages: ``pip install -e .[develop]``
+9. Start a GUI: ``python nupylab/gui/safc_gui.py``
