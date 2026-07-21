@@ -94,7 +94,7 @@ class ROD4(NupylabInstrument):
         mfc: List[float] = []
         with self.lock:
             for channel, range_ in zip(self.rod4.channels.values(), self._ranges):
-                mfc.append(float(channel.actual_flow) * range_ / 100)
+                mfc.append(float(str(channel.actual_flow).lstrip('EN')) * range_ / 100)
         return list(DataTuple(self.data_label[i], mfc[i]) for i in range(4))
 
     def stop_measurement(self) -> None:
