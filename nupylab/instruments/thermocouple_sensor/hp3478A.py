@@ -80,7 +80,7 @@ class HP3478A(NupylabInstrument):
         if self.cj_flag:
             self.cj_temp = 30 - 1000 * voltage
             self.cj_flag = False
-            return
+            return DataTuple(self.data_label, [])
         try:
             temp: float = thermocouples.calculate_temperature(
                 voltage * 1000, self.tc_type, self.cj_temp

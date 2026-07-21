@@ -138,6 +138,8 @@ class Agilent4284A(NupylabInstrument):
     @property
     def finished(self) -> bool:
         """Get whether eis measurement is finished."""
+        if not self._eis_condition:
+            return True
         return self._finished
 
     def stop_measurement(self) -> None:
