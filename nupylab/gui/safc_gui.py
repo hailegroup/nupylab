@@ -112,12 +112,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "-Z_im (ohm)",
         "Furnace Temperature (degC)",
         "1: Temperature (degC)",
-        "2: Temperature (degC)",
-        "3: Temperature (degC)",
         "MFC 1 Flow (cc/min)",
-        "MFC 2 Flow (cc/min)",
-        "MFC 3 Flow (cc/min)",
-        "MFC 4 Flow (cc/min)",
     ]
     # Inputs must match name of selected procedure parameters
     INPUTS: List[str] = [
