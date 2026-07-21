@@ -1,11 +1,5 @@
-import pyvisa
-rm = pyvisa.ResourceManager()
-for resource in rm.list_resources():
-    try:
-        inst = rm.open_resource(resource)
-        inst.timeout = 1000
-        print(resource, inst.query("*IDN?"))
-        inst.close()
-    except Exception as e:
-        print(resource, str(e)[:60])
-    
+from pymeasure.instruments.proterial import rod4
+r = rod4.ROD4("ASRL4::INSTR")
+print(r.ch_1.mfc_range)
+r.ch_1.setpoint = 50
+print(r.ch_1.setpoint)
