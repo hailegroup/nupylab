@@ -45,8 +45,9 @@ class ROD4(NupylabInstrument):
         """Connect to ROD-4."""
         with self.lock:
             self.rod4 = rod4.ROD4(self._port)
+            channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
             self._ranges = tuple(
-                float(str(channel.mfc_range).lstrip('EN')) for channel in self.rod4.channels.values()
+                float(str(channel.mfc_range).lstrip('EN')) for channel in channels
             )
             self._connected = True
 
@@ -74,10 +75,9 @@ class ROD4(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         setpoints = self._parameters
+        channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
         with self.lock:
-            for channel, setpoint, range_ in zip(
-                self.rod4.channels.values(), setpoints, self._ranges
-            ):
+            for channel, setpoint, range_ in zip(channels, setpoints, self._ranges):
                 channel.setpoint = 100 * setpoint / range_
                 if setpoint == 0:
                     channel.valve_mode = "close"
@@ -92,8 +92,9 @@ class ROD4(NupylabInstrument):
             tuple of four DataTuples with flow for each channel.
         """
         mfc: List[float] = []
+        channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
         with self.lock:
-            for channel, range_ in zip(self.rod4.channels.values(), self._ranges):
+            for channel, range_ in zip(channels, self._ranges):
                 mfc.append(float(str(channel.actual_flow).lstrip('EN')) * range_ / 100)
         return list(DataTuple(self.data_label[i], mfc[i]) for i in range(4))
 
@@ -103,7 +104,8 @@ class ROD4(NupylabInstrument):
 
     def shutdown(self) -> None:
         """Shutdown ROD-4 gas flow and close serial connection."""
+        channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
         with self.lock:
-            for channel in self.rod4.channels.values():
+            for channel in channels:
                 channel.valve_mode = "close"
             self.rod4.adapter.close()
