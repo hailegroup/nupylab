@@ -79,10 +79,13 @@ class ROD4(NupylabInstrument):
         with self.lock:
             for channel, setpoint, range_ in zip(channels, setpoints, self._ranges):
                 channel.setpoint = 100 * setpoint / range_
-                if setpoint == 0:
-                    channel.valve_mode = "close"
-                else:
-                    channel.valve_mode = "flow"
+                try:
+                    if setpoint == 0:
+                        channel.valve_mode = "close"
+                    else:
+                        channel.valve_mode = "flow"
+                except Exception:
+                    pass
         self._parameters = None
 
     def get_data(self) -> List[DataTuple]:
@@ -107,5 +110,8 @@ class ROD4(NupylabInstrument):
         channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
         with self.lock:
             for channel in channels:
-                channel.valve_mode = "close"
+                try:
+                    channel.valve_mode = "close"
+                except Exception:
+                    pass
             self.rod4.adapter.close()
