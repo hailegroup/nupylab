@@ -80,12 +80,13 @@ class ROD4(NupylabInstrument):
             for channel, setpoint, range_ in zip(channels, setpoints, self._ranges):
                 channel.setpoint = 100 * setpoint / range_
                 try:
+                    print(f"setting valve mode")
                     if setpoint == 0:
                         channel.valve_mode = "close"
                     else:
                         channel.valve_mode = "flow"
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"valve mode error caught: {e}")
         self._parameters = None
 
     def get_data(self) -> List[DataTuple]:
