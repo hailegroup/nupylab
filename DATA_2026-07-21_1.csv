@@ -1,0 +1,126 @@
+#Procedure: <__main__.SAFCProcedure>
+#Parameters:
+#	Amplitude Voltage: 0.01 V
+#	Current Step: 1
+#	Dwell Time: 1 min
+#	EIS Sample Number: 0
+#	Run EIS: True
+#	Eurotherm Address: 1
+#	Eurotherm Port: ASRL9::INSTR
+#	Maximum Frequency: 1000 Hz
+#	MFC 1 Setpoint: 0 sccm
+#	MFC 2 Setpoint: 0 sccm
+#	MFC 3 Setpoint: 0 sccm
+#	MFC 4 Setpoint: 0 sccm
+#	ROD-4 Port: ASRL4::INSTR
+#	Minimum Frequency: 500 Hz
+#	Number of Measurement Steps: 1
+#	Points Per Decade: 10
+#	Potentiostat Port: ASRL4::INSTR
+#	Ramp Rate: 5 C/min
+#	Record Time: 2 s
+#	Scanner Port: ASRL4::INSTR
+#	Target Temperature: 60 C
+#	TC Sensor Port: ASRL4::INSTR
+#Data:
+System Time,Time (s),Furnace Temperature (degC),1: Temperature (degC),2: Temperature (degC),3: Temperature (degC),MFC 1 Flow (cc/min),MFC 2 Flow (cc/min),MFC 3 Flow (cc/min),MFC 4 Flow (cc/min),Frequency (Hz),Z_re (ohm),-Z_im (ohm)
+2026-07-21 13:00:26.896478,0.0,63.53898239135742,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:28.899593,2.0,63.52088928222656,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:30.890707,4.0,63.50664520263672,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:32.902822,6.0,63.506229400634766,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:34.899936,8.0,63.50825500488281,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:36.900050,10.0,63.54974365234375,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:38.889164,12.0,63.603240966796875,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:40.895279,14.0,63.6903190612793,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:42.890393,16.0,63.79401397705078,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:44.887507,18.0,63.912200927734375,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:46.887622,20.0,64.05076599121094,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:48.892736,22.0,64.20158386230469,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:50.899851,24.0,64.36666870117188,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:52.894965,26.0,64.51393127441406,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:54.892079,28.0,64.65923309326172,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:56.893194,30.0,64.81022644042969,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:00:58.898309,32.0,64.94356536865234,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:00.889422,34.0,65.06851959228516,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:02.901537,36.0,65.18626403808594,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:04.899652,38.0,65.29598236083984,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:06.900766,40.0,65.3857650756836,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:08.890880,42.0,65.46504211425781,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:10.897995,44.0,65.5429458618164,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:12.893109,46.0,65.60873413085938,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:14.891223,48.0,65.65789031982422,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:16.892338,50.0,65.6982650756836,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:18.898452,52.0,65.73417663574219,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:20.890566,54.0,65.75738525390625,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:22.901681,56.0,65.78225708007812,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:24.899796,58.0,65.80724334716797,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:26.901910,60.0,65.82276153564453,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:28.892024,62.0,65.8454360961914,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:30.900139,64.0,65.85613250732422,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:32.896253,66.0,65.8691635131836,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:34.896367,68.0,65.87883758544922,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:36.898482,70.0,65.8772201538086,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:38.888596,72.0,65.87073516845703,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:40.896711,74.0,65.86575317382812,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:42.892825,76.0,65.86856842041016,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:44.892939,78.0,65.87359619140625,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:46.895054,80.0,65.86919403076172,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:48.901169,82.0,65.87184143066406,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:50.895283,84.0,65.86369323730469,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:52.891397,86.0,65.85482788085938,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:54.891511,88.0,65.84014892578125,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:56.894626,90.0,65.83100128173828,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:01:58.900740,92.0,65.82440185546875,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:00.894855,94.0,65.82838439941406,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:02.891969,96.0,65.81576538085938,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:04.892083,98.0,65.79898834228516,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:06.895198,100.0,65.79122924804688,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:08.901312,102.0,65.78148651123047,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:10.896427,104.0,65.7756118774414,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:12.893541,106.0,65.76168060302734,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:14.893655,108.0,65.74603271484375,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:16.896770,110.0,65.73909759521484,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:18.887884,112.0,65.7192611694336,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:20.898999,114.0,65.70782470703125,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:22.896113,116.0,65.69453430175781,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:24.897227,118.0,65.68101501464844,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:26.902342,120.0,65.67242431640625,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:28.893456,122.0,65.65983581542969,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:30.888570,124.0,65.64754486083984,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:32.901685,126.0,65.63522338867188,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:34.886799,128.0,65.62273406982422,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:36.891913,130.0,65.60027313232422,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:38.899028,132.0,65.59091186523438,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:40.894142,134.0,65.58172607421875,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:42.892257,136.0,65.5650405883789,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:44.893371,138.0,65.54805755615234,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:46.898486,140.0,65.53460693359375,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:48.890600,142.0,65.51314544677734,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:50.901715,144.0,65.4968032836914,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:52.899829,146.0,65.47252655029297,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:54.901944,148.0,65.45429992675781,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:56.892057,150.0,65.43363952636719,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:02:58.900172,152.0,65.4202651977539,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:00.895286,154.0,65.40242004394531,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:02.895401,156.0,65.38740539550781,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:04.897515,158.0,65.37826538085938,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:06.887629,160.0,65.36820220947266,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:08.895744,162.0,65.3551254272461,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:10.891858,164.0,65.33648681640625,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:12.891973,166.0,65.3254623413086,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:14.894087,168.0,65.30333709716797,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:16.900202,170.0,65.30023956298828,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:18.894316,172.0,65.28516387939453,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:20.890430,174.0,65.26570892333984,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:22.890544,176.0,65.24449920654297,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:24.893659,178.0,65.22747802734375,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:26.899774,180.0,65.21240234375,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:28.893888,182.0,65.1968765258789,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:30.890002,184.0,65.19133758544922,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:32.890116,186.0,65.18606567382812,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:34.893231,188.0,65.16818237304688,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:36.899346,190.0,65.15518951416016,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:38.894460,192.0,65.14551544189453,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:40.891574,194.0,65.1390151977539,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:42.891688,196.0,65.1214599609375,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+2026-07-21 13:03:44.894803,198.0,65.10665893554688,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
