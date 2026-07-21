@@ -42,11 +42,15 @@ class HP3478A(NupylabInstrument):
 
     def connect(self) -> None:
         """Connect to HP 3478A."""
-        self.hp3478a = hp3478A.HP3478A(self._port)
-        self.hp3478a.reset()
-        self.hp3478a.mode = "DCV"
-        self.hp3478a.range = 0.03
-        self._connected = True
+        try:    
+            self.hp3478a = hp3478A.HP3478A(self._port)
+            self.hp3478a.reset()
+            self.hp3478a.mode = "DCV"
+            self.hp3478a.range = 0.03
+            self._connected = True
+            print(f"HP3478A connected successfully on {self._port}")
+        except Exception as e:
+            print(f"HP3478A connect FAILED: {e}")
 
     @property
     def tc_type(self) -> str:
