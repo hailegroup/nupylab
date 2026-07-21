@@ -1,12 +1,11 @@
-import minimalmodbus
-
-for addr in range(1, 32):
+import pyvisa
+rm = pyvisa.ResourceManager()
+for resource in rm.list_resources():
     try:
-        inst = minimalmodbus.Instrument("COM9", addr)
-        inst.serial.parity = "E"
-        inst.serial.baudrate = 9600
-        inst.serial.timeout = 0.5
-        val = inst.read_register(1, 1)
-        print(f"SUCCESS: addr={addr} temp={val}")
+        inst = rm.open_resource(resource)
+        inst.timeout = 1000
+        print(resource, inst.query("*IDN?"))
+        inst.close()
     except Exception as e:
-        print(f"addr={addr} -- {str(e)[:40]}")
+        print(resource, str(e)[:60])
+    
