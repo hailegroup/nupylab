@@ -123,7 +123,7 @@ class Keithley705(NupylabInstrument):
                 f = f and instrument.finished
             self._finished = f
             print(f"scanner finished: {f}")
-        return data
+        return data if data else []
 
     @property
     def finished(self) -> bool:

@@ -34,7 +34,7 @@ class HP3478A(NupylabInstrument):
             name: name of instrument.
         """
         self._port: str = port
-        self.cj_temp: float = 23
+        self.cj_temp: float = 40
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
         self._tc_type: str = "K"
@@ -81,9 +81,12 @@ class HP3478A(NupylabInstrument):
             self.cj_temp = 30 - 1000 * voltage
             self.cj_flag = False
             return
-        temp: float = thermocouples.calculate_temperature(
-            voltage * 1000, self.tc_type, self.cj_temp
-        )
+        try:
+            temp: float = thermocouples.calculate_temperature(
+                voltage * 1000, self.tc_type, self.cj_temp
+            )
+        except ValueError:
+            return DataTuple(self.data_label, [])
         return DataTuple(self.data_label, temp)
 
     def stop_measurement(self) -> None:
