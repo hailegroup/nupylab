@@ -114,7 +114,7 @@ class Agilent4284A(NupylabInstrument):
             None otherwise
         """
         if not self.eis_condition:
-            return
+            return DataTuple(self.data_label[0], [])
         with self.lock:
             results = self.agilent.sweep_measurement("frequency", self._freq_list)
         abs_z, z_phase, freq = results
