@@ -11,6 +11,13 @@ This GUI connects to and displays data from
 Run the program by changing to the directory containing this file and calling:
 
 python safc_gui.py
+
+Configs:
+Furnace: COM9
+ROD4: COM4
+Potentiostat: 20
+TC: 15
+Scanner: 17
 """
 
 import sys
@@ -173,6 +180,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         scanner.set_parameters(2, tc_sensor, "1: Temperature (degC)")
         scanner.set_parameters(3, tc_sensor, "2: Temperature (degC)")
         scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
+        tc_sensor.connect()
         potentiostat.connect()
         if self.eis_toggle:
             potentiostat.set_parameters(
@@ -189,7 +197,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 potentiostat,
                 ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
             )
-        self.active_instruments = (furnace, mfc, scanner)
+        self.active_instruments = (furnace, mfc, tc_sensor, scanner)
 
 
 def main(*args):
