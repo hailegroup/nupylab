@@ -77,6 +77,7 @@ class HP3478A(NupylabInstrument):
             DataTuple with thermocouple temperature in Celsius.
         """
         voltage: float = self.hp3478a.measure_DCV
+        print(f"HP3478A raw voltage: {voltage}, cj_flag: {self.cj_flag}, cj_temp: {self.cj_temp}")
         if self.cj_flag:
             self.cj_temp = 30 - 1000 * voltage
             self.cj_flag = False
@@ -85,9 +86,10 @@ class HP3478A(NupylabInstrument):
             temp: float = thermocouples.calculate_temperature(
                 voltage * 1000, self.tc_type, self.cj_temp
             )
+            return DataTuple(self.data_label, temp)
         except ValueError:
+            print(f"TC calc failed: voltage={voltage}, cj_temp={self.cj_temp}, error={e}")
             return DataTuple(self.data_label, [])
-        return DataTuple(self.data_label, temp)
 
     def stop_measurement(self) -> None:
         """Stop measurement on HP 3478A. Not implemented."""
