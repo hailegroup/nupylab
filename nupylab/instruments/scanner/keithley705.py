@@ -108,7 +108,7 @@ class Keithley705(NupylabInstrument):
         f: bool = True
         with self.lock:
             for channel, (instrument, labels, pre_process) in self.channels.items():
-                #print(f"scanning channel {channel}")
+                print(f"scanning channel {channel}")
                 if pre_process is not None:
                     pre_process()
                 instrument.data_label = labels
@@ -117,12 +117,12 @@ class Keithley705(NupylabInstrument):
                 self.keithley705.close_channel(channel)
                 self._closed_channel = channel
                 d = instrument.get_data()
-                #print(f"channel {channel} data: {d}")
+                print(f"channel {channel} data: {d}")
                 if d is not None:
                     data.append(d)
                 f = f and instrument.finished
             self._finished = f
-            #print(f"scanner finished: {f}")
+            print(f"scanner finished: {f}")
         return data if data else []
 
     @property
