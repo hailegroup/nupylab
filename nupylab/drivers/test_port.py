@@ -4,13 +4,20 @@ import time
 rm = pyvisa.ResourceManager()
 scanner = rm.open_resource("GPIB0::17::INSTR")
 hp = rm.open_resource("GPIB0::15::INSTR")
-scanner.timeout = 2000
-hp.timeout = 2000
+scanner.timeout = 3000
+hp.timeout = 3000
 
-for ch in range(1, 11):
-    scanner.write(f"C{ch:02d}X")  # close channel
-    time.sleep(2)
-    voltage = hp.read()  # read voltage
-    print(f"channel {ch}: {repr(voltage)}")
-    scanner.write("N0X")  # open all channels
-    time.sleep(0.3)
+# Reset all channels open
+scanner.write("RX")
+time.sleep(1)
+
+for ch in [1, 2, 3, 4, 5]:
+    scanner.write(f"C{ch}X")  # no zero padding
+    time.sleep(1.0)
+    try:
+        voltage = hp.read()
+        print(f"channel {ch}: {repr(voltage)}")
+    except Exception as e:
+        print(f"channel {ch}: error {e}")
+    scanner.write("RX")  # reset/open all
+    time.sleep(0.5)
