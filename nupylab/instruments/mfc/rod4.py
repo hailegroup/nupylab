@@ -115,9 +115,11 @@ class ROD4(NupylabInstrument):
         for i, range_ in enumerate(self._ranges):
             ch = f"{i+1:02d}"
             resp = self._send(f"\x02{ch}RFX\r".encode())
+            print(f"ch{i+1} RFX response: {repr(resp)}")
             try:
                 flows.append(float(resp) * range_ / 100.0)
-            except Exception:
+            except Exception as e:
+                print(f"ch{i+1} parse error: {e}")
                 flows.append(0.0)
         return [DataTuple(self.data_label[i], flows[i]) for i in range(4)]
     
