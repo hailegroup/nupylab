@@ -63,8 +63,9 @@ class ROD4(NupylabInstrument):
             self._connected = True
 
     def _send(self, cmd: bytes) -> str:
+        self._serial.read_all()
         self._serial.write(cmd)
-        time.sleep(0.15)
+        time.sleep(0.2)
         return self._serial.read_all().decode(errors="ignore").strip()
         
 
@@ -116,9 +117,9 @@ class ROD4(NupylabInstrument):
             flows = []
             for i, range_ in enumerate(self._ranges):
                 ch = f"{i+1:02d}"
-                resp = self._send(f"\x02{ch}RFX\r".encode())
                 #print(f"ch{i+1} RFX response: {repr(resp)}")
                 try:
+                    resp = self._send(f"\x02{ch}RFX\r".encode())
                     flows.append(float(resp) * range_ / 100.0)
                 except Exception as e:
                     #print(f"ch{i+1} parse error: {e}")
