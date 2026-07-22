@@ -3,7 +3,6 @@
 from typing import List, Sequence
 
 from nupylab.utilities import DataTuple, NupylabError
-from pymeasure.instruments.proterial import rod4
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
 import time
 import serial
