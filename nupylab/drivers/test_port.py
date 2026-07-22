@@ -1,9 +1,16 @@
-import serial, time
-s = serial.Serial("COM3", 9600, bytesize=8, stopbits=1, parity='N', timeout=1)
-s.write(b"\x0201SVM1\r")  # CLOSE channel 1
-time.sleep(0.3)
-print(repr(s.read_all()))
-s.write(b"\x0201SFD0.0\r")  # zero setpoint
-time.sleep(0.3)
-print(repr(s.read_all()))
-s.close()
+import pyvisa
+import time
+
+rm = pyvisa.ResourceManager()
+scanner = rm.open_resource("GPIB0::17::INSTR")
+hp = rm.open_resource("GPIB0::15::INSTR")
+scanner.timeout = 2000
+hp.timeout = 2000
+
+for ch in range(1, 11):
+    scanner.write(f"C{ch:02d}X")  # close channel
+    time.sleep(2)
+    voltage = hp.read()  # read voltage
+    print(f"channel {ch}: {repr(voltage)}")
+    scanner.write("N0X")  # open all channels
+    time.sleep(0.3)
