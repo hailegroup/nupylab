@@ -3,8 +3,9 @@
 from typing import List, Sequence
 
 from nupylab.utilities import DataTuple, NupylabError
-from pymeasure.instruments.proterial import rod4
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
+import time
+import serial
 
 
 class ROD4(NupylabInstrument):
@@ -37,19 +38,37 @@ class ROD4(NupylabInstrument):
         """
         if len(data_label) != 4:
             raise ValueError("ROD-4 data_label must be sequence of length 4.")
+        if "COM" not in port:
+            port = port.replace("ASRL", "COM").replace("::INSTR", "")
         self._port = port
-        self.rod4 = None
+        self._serial = None
+        self._ranges = [1000.0] * 4
         super().__init__(data_label, name)
 
     def connect(self) -> None:
         """Connect to ROD-4."""
         with self.lock:
-            self.rod4 = rod4.ROD4(self._port)
-            channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
-            self._ranges = tuple(
-                float(str(channel.mfc_range).lstrip('EN')) for channel in channels
+            self._serial = serial.Serial(
+                self._port, 9600, bytesize=8, stopbits=2,
+                parity='N', timeout=1, xonxoff=False, rtscts=False
             )
+            time.sleep(0.5)
+            for i in range(1, 5):
+                resp = self._send(f"FF {i}")
+                try:
+                    parts = resp.split()
+                    slpm = float(parts[2])
+                    self._ranges[i-1] = slpm * 1000
+                except Exception:
+                    self._ranges[i-1] = 1000.0
             self._connected = True
+
+    def _send(self, cmd: str) -> str:
+        """Send ASCII command and return response."""
+        self._serial.write((cmd + "\r").encode())
+        time.sleep(0.15)
+        return self._serial.read_all().decode(errors="ignore").strip()
+        
 
     def set_parameters(self, setpoints: Sequence[float]) -> None:
         """Set ROD-4 flow setpoints.
@@ -75,18 +94,15 @@ class ROD4(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         setpoints = self._parameters
-        channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
         with self.lock:
-            for channel, setpoint, range_ in zip(channels, setpoints, self._ranges):
-                channel.setpoint = 100 * setpoint / range_
-                try:
-                    print(f"setting valve mode")
-                    if setpoint == 0:
-                        channel.valve_mode = "close"
-                    else:
-                        channel.valve_mode = "flow"
-                except Exception as e:
-                    print(f"valve mode error caught: {e}")
+            for i, (setpoint, range_) in enumerate(zip(setpoints, self._ranges), 1):
+                pct = 100.0 * setpoint / range_ if range_ > 0 else 0.0
+                self._send(f"RF {i} 0")
+                if setpoint == 0:
+                    self._send(f"VM {i} 0")
+                else:
+                    self._send(f"VM {i} 1")
+                self._send(f"SP {i} {pct:.2f}")
         self._parameters = None
 
     def get_data(self) -> List[DataTuple]:
@@ -95,24 +111,27 @@ class ROD4(NupylabInstrument):
         Returns:
             tuple of four DataTuples with flow for each channel.
         """
-        mfc: List[float] = []
-        channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
         with self.lock:
-            for channel, range_ in zip(channels, self._ranges):
-                mfc.append(float(str(channel.actual_flow).lstrip('EN')) * range_ / 100)
-        return list(DataTuple(self.data_label[i], mfc[i]) for i in range(4))
-
+            resp = self._send("SD")
+        flows = []
+        for i, range_ in enumerate(self._ranges):
+            try:
+                tag = f"#{i+1}:"
+                idx = resp.index(tag) + len(tag)
+                end = resp.index("%", idx)
+                pct = float(resp[idx:end].strip())
+                flows.append(pct * range_ / 100.0)
+            except Exception:
+                flows.append(0.0)
+        return [DataTuple(self.data_label[i], flows[i]) for i in range(4)]
+    
     def stop_measurement(self) -> None:
         """Stop ROD-4 measurement. Not implemented."""
         pass
 
     def shutdown(self) -> None:
         """Shutdown ROD-4 gas flow and close serial connection."""
-        channels = [self.rod4.ch_1, self.rod4.ch_2, self.rod4.ch_3, self.rod4.ch_4]
         with self.lock:
-            for channel in channels:
-                try:
-                    channel.valve_mode = "close"
-                except Exception:
-                    pass
-            self.rod4.adapter.close()
+            for i in range(1, 5):
+                self._send(f"VM {i} 0")
+            self._serial.close()
