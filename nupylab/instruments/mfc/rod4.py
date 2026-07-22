@@ -54,18 +54,16 @@ class ROD4(NupylabInstrument):
             )
             time.sleep(0.5)
             for i in range(1, 5):
-                resp = self._send(f"FF {i}")
+                ch = f"{i:02d}"
+                resp = self._send(f"\x02{ch}RFK\r".encode())
                 try:
-                    parts = resp.split()
-                    slpm = float(parts[2])
-                    self._ranges[i-1] = slpm * 1000
+                    self._ranges[i-1] = float(resp)
                 except Exception:
                     self._ranges[i-1] = 1000.0
             self._connected = True
 
-    def _send(self, cmd: str) -> str:
-        """Send ASCII command and return response."""
-        self._serial.write((cmd + "\r").encode())
+    def _send(self, cmd: bytes) -> str:
+        self._serial.write(cmd)
         time.sleep(0.15)
         return self._serial.read_all().decode(errors="ignore").strip()
         
@@ -96,13 +94,13 @@ class ROD4(NupylabInstrument):
         setpoints = self._parameters
         with self.lock:
             for i, (setpoint, range_) in enumerate(zip(setpoints, self._ranges), 1):
+                ch = f"{i:02d}"
                 pct = 100.0 * setpoint / range_ if range_ > 0 else 0.0
-                self._send(f"RF {i} 0")
                 if setpoint == 0:
-                    self._send(f"VM {i} 0")
+                    self._send(f"\x02{ch}SVM1\r".encode())  # CLOSE
                 else:
-                    self._send(f"VM {i} 1")
-                self._send(f"SP {i} {pct:.2f}")
+                    self._send(f"\x02{ch}SVM0\r".encode())  # FLOW CTRL
+                self._send(f"\x02{ch}SFD{pct:.1f}\r".encode())
         self._parameters = None
 
     def get_data(self) -> List[DataTuple]:
@@ -115,12 +113,10 @@ class ROD4(NupylabInstrument):
             resp = self._send("SD")
         flows = []
         for i, range_ in enumerate(self._ranges):
+            ch = f"{i+1:02d}"
+            resp = self._send(f"\x02{ch}RFX\r".encode())
             try:
-                tag = f"#{i+1}:"
-                idx = resp.index(tag) + len(tag)
-                end = resp.index("%", idx)
-                pct = float(resp[idx:end].strip())
-                flows.append(pct * range_ / 100.0)
+                flows.append(float(resp) * range_ / 100.0)
             except Exception:
                 flows.append(0.0)
         return [DataTuple(self.data_label[i], flows[i]) for i in range(4)]
@@ -133,5 +129,6 @@ class ROD4(NupylabInstrument):
         """Shutdown ROD-4 gas flow and close serial connection."""
         with self.lock:
             for i in range(1, 5):
-                self._send(f"VM {i} 0")
+                ch = f"{i:02d}"
+                self._send(f"\x02{ch}SVM1\r".encode())  # CLOSE all
             self._serial.close()
