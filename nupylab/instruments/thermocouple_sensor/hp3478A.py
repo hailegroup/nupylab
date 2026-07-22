@@ -80,11 +80,11 @@ class HP3478A(NupylabInstrument):
         """
         voltage: float = self.hp3478a.measure_DCV
         print(f"HP3478A raw voltage: {voltage}, cj_flag: {self.cj_flag}, cj_temp: {self.cj_temp}")
-        if self.cj_flag:
-            if abs(voltage) < 1.0:
-                self.cj_temp = 30 - 1000 * voltage
-            self.cj_flag = False
-            return DataTuple(self.data_label, [])
+        # if self.cj_flag:
+        #     if abs(voltage) < 1.0:
+        #         self.cj_temp = 30 - 1000 * voltage
+        #     self.cj_flag = False
+        #     return DataTuple(self.data_label, [])
         try:
             temp: float = thermocouples.calculate_temperature(
                 voltage * 1000, self.tc_type, self.cj_temp
