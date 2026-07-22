@@ -49,7 +49,7 @@ class ROD4(NupylabInstrument):
         """Connect to ROD-4."""
         with self.lock:
             self._serial = serial.Serial(
-                self._port, 9600, bytesize=8, stopbits=2,
+                self._port, 9600, bytesize=8, stopbits=1,
                 parity='N', timeout=1, xonxoff=False, rtscts=False
             )
             time.sleep(0.5)
