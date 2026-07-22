@@ -96,9 +96,9 @@ class ROD4(NupylabInstrument):
             for i, (setpoint, range_) in enumerate(zip(setpoints, self._ranges), 1):
                 ch = f"{i:02d}"
                 pct = 100.0 * setpoint / range_ if range_ > 0 else 0.0
-                resp1 = self._send(f"\x02{ch}SVM0\r".encode())
-                resp2 = self._send(f"\x02{ch}SFD{pct:.1f}\r".encode())
-                print(f"ch{i} SVM: {repr(resp1)}, SFD {pct:.1f}%: {repr(resp2)}")
+                # resp1 = self._send(f"\x02{ch}SVM0\r".encode())
+                # resp2 = self._send(f"\x02{ch}SFD{pct:.1f}\r".encode())
+                # print(f"ch{i} SVM: {repr(resp1)}, SFD {pct:.1f}%: {repr(resp2)}")
                 if setpoint == 0:
                     self._send(f"\x02{ch}SVM1\r".encode())  # CLOSE
                 else:
@@ -117,11 +117,11 @@ class ROD4(NupylabInstrument):
             for i, range_ in enumerate(self._ranges):
                 ch = f"{i+1:02d}"
                 resp = self._send(f"\x02{ch}RFX\r".encode())
-                print(f"ch{i+1} RFX response: {repr(resp)}")
+                #print(f"ch{i+1} RFX response: {repr(resp)}")
                 try:
                     flows.append(float(resp) * range_ / 100.0)
                 except Exception as e:
-                    print(f"ch{i+1} parse error: {e}")
+                    #print(f"ch{i+1} parse error: {e}")
                     flows.append(0.0)
         return [DataTuple(self.data_label[i], flows[i]) for i in range(4)]
     
