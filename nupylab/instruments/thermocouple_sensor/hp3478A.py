@@ -70,6 +70,7 @@ class HP3478A(NupylabInstrument):
 
     def start(self) -> None:
         """Start multimeter measurement. Not implemented."""
+        self.cj_flag = True
 
     def get_data(self) -> Optional[DataTuple]:
         """Read thermocouple temperature.
