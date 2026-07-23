@@ -202,7 +202,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 def main(*args):
     """Run SAFC procedure."""
     app = QtWidgets.QApplication(*args)
-    window = nupylab_window.NupylabWindow(SAFCProcedure)
+    window = nupylab_window.NupylabWindow(SAFCProcedure, directory="C:/Users/SAFC1/.nupylab/data")
     window.show()
     sys.exit(app.exec())
 
