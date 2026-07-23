@@ -38,7 +38,7 @@ class HP3478A(NupylabInstrument):
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
         self._tc_type: str = "K"
-        self._last_read: DataTuple = None
+        self._last_read: float = 40
         super().__init__(data_label, name)
 
     def connect(self) -> None:
