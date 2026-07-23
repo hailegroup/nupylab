@@ -65,7 +65,7 @@ class NupylabWindow(ManagedDockWindow):
         for i, param_name in enumerate(procedure_class.TABLE_PARAMETERS.values()):
             for name, value in inspect.getmembers(procedure_class):
                 if name == param_name and isinstance(value, ListParameter):
-                    combo_col_dict[i] = list(value.choices.keys())
+                    combo_col_dict[i] = list(value.choices)
         super().__init__(
             procedure_class,
             inputs_in_scrollarea=True,
