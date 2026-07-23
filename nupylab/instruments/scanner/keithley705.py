@@ -128,7 +128,7 @@ class Keithley705(NupylabInstrument):
                 # self.keithley705.close_channel(channel)
                 # self._closed_channel = channel
                 print (f"getting channel {channel} data")
-                d = instrument.get_data()
+                d = instrument.get_data(channel)
                 print(f"channel {channel} data: {d}")
                 if d is not None:
                     data.append(d)
