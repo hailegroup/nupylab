@@ -44,6 +44,7 @@ class NupylabWindow(ManagedDockWindow):
         self,
         procedure_class: Type[NupylabProcedure],
         directory: str,
+        extra_tabs = None,
         **kwargs,
     ) -> None:
         """Initialize main window GUI.
