@@ -182,7 +182,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
         tc_sensor.connect()
         potentiostat.connect()
-        if self.eis_toggle:
+        if self.eis_toggle == True:
             potentiostat.set_parameters(
                 self.maximum_frequency,
                 self.minimum_frequency,

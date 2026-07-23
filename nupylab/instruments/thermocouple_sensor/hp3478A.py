@@ -95,7 +95,7 @@ class HP3478A(NupylabInstrument):
         #     return DataTuple(self.data_label, [])
         try:
             temp: float = thermocouples.calculate_temperature(
-                (-1 * voltage) * 1000, self.tc_type, self.cj_temp
+                (voltage) * 1000, self.tc_type, self.cj_temp
             )
             self._last_temp = temp
             return DataTuple(self.data_label, temp)
