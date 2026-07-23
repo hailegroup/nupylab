@@ -229,7 +229,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         log_group = QtWidgets.QGroupBox("Instrument Control Log")
         log_layout = QtWidgets.QVBoxLayout()
         self.log_area = QtWidgets.QTextEdit()
-        self.log_area.setMinimumWidth(450)
+        self.log_area.setMinimumWidth(30)
         self.log_area.setReadOnly(True)
         self.log_area.setPlaceholderText("Control actions will appear here...")
         log_layout.addWidget(self.log_area)
