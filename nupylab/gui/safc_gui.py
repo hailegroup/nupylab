@@ -77,7 +77,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "Potentiostat Port", choices=resources, default="GPIB0::20::INSTR", ui_class=None
     )
     tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default="GPIB0::15::INSTR", ui_class=None)
-    tc_sensor_digits = IntegerParameter("Voltage Resolution", units="V", default=5)
+    tc_sensor_digits = IntegerParameter("Voltage Resolution", units="V", minimum=3, maximum=5, step=1, default=5)
     scanner_port = ListParameter("Scanner Port", choices=resources, default="GPIB0::17::INSTR", ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
