@@ -24,6 +24,7 @@ class HP3478A(NupylabInstrument):
         port: str,
         data_label: str,
         name: str = "HP 3478A",
+        resolution: int = 5,
     ) -> None:
         """Initialize HP 3478A data labels, name, and connection parameters.
 
@@ -39,6 +40,7 @@ class HP3478A(NupylabInstrument):
         self.hp3478a: Optional[hp3478A.HP3478A] = None
         self._tc_type: str = "K"
         self._last_temp: float = 40
+        self._resolution: int = resolution
         super().__init__(data_label, name)
 
     def connect(self) -> None:
@@ -48,7 +50,7 @@ class HP3478A(NupylabInstrument):
             self.hp3478a.reset()
             self.hp3478a.mode = "DCV"
             self.hp3478a.range = 0.03
-            self.hp3478a.resolution = 4
+            self.hp3478a.resolution = self._resolution
             #self.hp3478a.write("T3")
             self._connected = True
             print(f"HP3478A connected successfully on {self._port}")
