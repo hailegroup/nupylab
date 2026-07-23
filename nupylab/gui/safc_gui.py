@@ -89,7 +89,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     mfc_3_setpoint = FloatParameter("MFC 3 Setpoint", units="sccm")
     mfc_4_setpoint = FloatParameter("MFC 4 Setpoint", units="sccm")
 
-    eis_toggle = BooleanParameter("Run EIS")
+    eis_toggle = ListParameter("Run EIS", choices=["True", "False"], ui_class=None)
     eis_sample = IntegerParameter("EIS Sample Number")
     maximum_frequency = FloatParameter("Maximum Frequency", units="Hz")
     minimum_frequency = FloatParameter("Minimum Frequency", units="Hz")
