@@ -13,6 +13,7 @@ from pymeasure.experiment import (
     BooleanParameter,
     FloatParameter,
     IntegerParameter,
+    ListParameter,
     Results,
     unique_filename,
 )
@@ -36,6 +37,7 @@ class NupylabWindow(ManagedDockWindow):
         BooleanParameter: bool,
         FloatParameter: float,
         IntegerParameter: int,
+        ListParameter: str,
     }
 
     def __init__(
