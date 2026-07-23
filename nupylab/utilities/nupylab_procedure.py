@@ -236,7 +236,6 @@ class NupylabProcedure(Procedure):
             try:
                 results = q.get_nowait()
                 filled_queues += 1
-                print(f"queue result: {results}")
             except Empty:
                 continue
             self._parse_results(results)
