@@ -117,12 +117,12 @@ class Keithley705(NupylabInstrument):
                     print("previous read:")
                 instrument.data_label = labels
                 if channel != self._closed_channel:
-                    print("opening closed channel:")
-                    d = self.keithley705.open_channel(self._closed_channel)
-                    print(d)
+                    #print("opening closed channel:")
+                    #d = self.keithley705.open_channel(self._closed_channel)
+                    #print(d)
                     print("closing channel:")
-                    f = self.keithley705.close_channel(channel)
-                    print(f)
+                    fx = self.keithley705.close_channel(channel)
+                    print(fx)
                     self._closed_channel = channel
                     time.sleep(0.1)
                 # self.keithley705.close_channel(channel)
