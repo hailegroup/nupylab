@@ -37,7 +37,7 @@ class HP3478A(NupylabInstrument):
         self.cj_temp: float = 40
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
-        self._tc_type: str = "T"
+        self._tc_type: str = "K"
         self._last_temp: float = 40
         super().__init__(data_label, name)
 
@@ -94,7 +94,7 @@ class HP3478A(NupylabInstrument):
         #     return DataTuple(self.data_label, [])
         try:
             temp: float = thermocouples.calculate_temperature(
-                voltage * 1000, self.tc_type, self.cj_temp
+                (-1 * voltage) * 1000, self.tc_type, self.cj_temp
             )
             self._last_temp = temp
             return DataTuple(self.data_label, temp)
