@@ -22,7 +22,7 @@ class FileLineEdit(QtWidgets.QLineEdit):
             QtWidgets.QCompleter.CompletionMode.PopupCompletion)
 
         model = QtGui.QFileSystemModel(completer)
-        model.setRootPath("C:/Users/SAFC1/.nupylab/parameters")
+        model.setRootPath(model.myComputer())
         model.setFilter(QtCore.QDir.Filter.Files |
                         QtCore.QDir.Filter.Dirs |
                         QtCore.QDir.Filter.Drives |
@@ -48,7 +48,7 @@ class FileLineEdit(QtWidgets.QLineEdit):
         if current_text != '' and QtCore.QDir(current_text).exists():
             return current_text
         else:
-            return '/'
+            return 'C:/Users/SAFC1/.nupylab/parameters'
 
     def browse_triggered(self):
         """Open dialog for file selection."""
