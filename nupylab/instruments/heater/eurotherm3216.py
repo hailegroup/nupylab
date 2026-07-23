@@ -1,7 +1,6 @@
 """Adapts Eurotherm3216 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
 import logging
-import time
 from nupylab.drivers import eurotherm3216
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
