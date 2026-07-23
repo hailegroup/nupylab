@@ -201,23 +201,24 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 def main(*args):
     """Run SAFC procedure."""
     app = QtWidgets.QApplication(*args)
-    # Create instrument instances for control panel
-    furnace = Heater("COM9", 1, "Furnace Temperature (degC)")
+
+    # Create instrument instances for control panel — not connected until user clicks Connect
+    furnace = Heater("ASRL9::INSTR", "Furnace Temperature (degC)")
     mfc = MFC(
-        "COM3",
-        ("MFC 1 Flow (cc/min)", "MFC 2 Flow (cc/min)",
-         "MFC 3 Flow (cc/min)", "MFC 4 Flow (cc/min)")
+        "ASRL3::INSTR",
+        (
+            "MFC 1 Flow (cc/min)",
+            "MFC 2 Flow (cc/min)",
+            "MFC 3 Flow (cc/min)",
+            "MFC 4 Flow (cc/min)",
+        )
     )
     potentiostat = Potentiostat(
         "GPIB0::20::INSTR",
         ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)")
     )
 
-    control = InstrumentControlWidget([
-        ("eurotherm", "COM9", 1),
-        ("rod4", "COM3"),  
-        ("agilent", "GPIB0::20::INSTR"),
-    ])
+    control = InstrumentControlWidget([furnace, mfc, potentiostat])
 
     window = nupylab_window.NupylabWindow(
         SAFCProcedure,
@@ -225,14 +226,12 @@ def main(*args):
         extra_tabs=[("Instrument Control", control)]
     )
 
-    if hasattr(window.manager, 'running'):
-        window.manager.running.connect(
-            lambda: control.set_enabled_for_experiment(True)
-        )
-    if hasattr(window.manager, 'finished'):
-        window.manager.finished.connect(
-            lambda: control.set_enabled_for_experiment(False)
-        )
+    window.manager.running.connect(
+        lambda: control.set_enabled_for_experiment(True)
+    )
+    window.manager.finished.connect(
+        lambda: control.set_enabled_for_experiment(False)
+    )
 
     window.show()
     sys.exit(app.exec())

@@ -1,5 +1,6 @@
 """Adapts Agilent 4284A driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
+import logging
 from typing import Sequence, List, Optional, Callable
 
 import numpy as np
@@ -7,16 +8,12 @@ from pymeasure.instruments.agilent import agilent4284A
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
+log = logging.getLogger(__name__)
+log.addHandler(logging.NullHandler())
+
 
 class Agilent4284A(NupylabInstrument):
-    """Agilent 4284A instrument class. Abstracts driver for NUPyLab procedures.
-
-    Attributes:
-        data_label: labels for DataTuples.
-        name: name of instrument.
-        lock: thread lock for preventing simultaneous calls to instrument.
-        agilent: Agilent 4284A driver class.
-    """
+    """Agilent 4284A instrument class. Abstracts driver for NUPyLab procedures."""
 
     def __init__(
         self,
@@ -24,18 +21,6 @@ class Agilent4284A(NupylabInstrument):
         data_label: Sequence[str],
         name: str = "Agilent 4284A",
     ) -> None:
-        """Initialize Agilent data labels, name, and connection parameters.
-
-        Args:
-            port: string name of port, e.g. `GPIB::1::INSTR`.
-            data_label: labels for DataTuples. :meth:`get_data` returns frequency,
-                Z_re, and -Z_im, and corresponding labels should match entries in
-                DATA_COLUMNS.
-            name: name of instrument.
-
-        Raises:
-            ValueError: if `data_label` does not contain 3 entries.
-        """
         if len(data_label) != 3:
             raise ValueError("Agilent 4284A data_label must be sequence of length 3.")
         self.agilent = None
@@ -51,6 +36,17 @@ class Agilent4284A(NupylabInstrument):
             self.agilent = agilent4284A.Agilent4284A(self._port)
             self._connected = True
 
+    def disconnect(self) -> None:
+        """Disconnect from Agilent 4284A."""
+        with self.lock:
+            if self.agilent is not None:
+                try:
+                    self.agilent.adapter.close()
+                except Exception:
+                    pass
+                self.agilent = None
+            self._connected = False
+
     def set_parameters(
         self,
         maximum_frequency: float,
@@ -60,20 +56,6 @@ class Agilent4284A(NupylabInstrument):
         technique: str,
         eis_condition: Callable[[], bool],
     ) -> None:
-        """Set eis measurement parameters.
-
-        Args:
-            maximum_frequency: maximum eis frequency in Hz.
-            minimum_frequency: minimum eis frequency in Hz.
-            amplitude: eis amplitude in Volt or Amp, depending on whether technique is
-                PEIS or GEIS.
-            points_per_decade: eis frequency points per decade.
-            technique: eis technique to run, must be `PEIS` or `GEIS`.
-            eis_condition: function indicating whether to begin eis measurement.
-
-        Raises:
-            KeyError: if `technique` is not supported.
-        """
         technique = technique.upper()
         if technique not in ("PEIS", "GEIS"):
             raise KeyError(f"Technique {technique} must be `PEIS` or `GEIS`.")
@@ -91,14 +73,9 @@ class Agilent4284A(NupylabInstrument):
         freq_steps: int = round((max_f_log - min_f_log) * points_per_decade) + 1
         self._freq_list = np.logspace(max_f_log, min_f_log, num=freq_steps)
         self._eis_condition = eis_condition
-        self._parameters = True  # Placeholder just to indicate parameters are set.
+        self._parameters = True
 
     def start(self) -> None:
-        """Prepare eis measurement. Verifies eis parameters were set.
-
-        Raises:
-            NupylabError: if `start` method is called before `set_parameters`.
-        """
         if self._parameters is None:
             raise NupylabError(
                 f"`{self.__class__.__name__}` method `set_parameters` "
@@ -107,12 +84,6 @@ class Agilent4284A(NupylabInstrument):
         self._parameters = None
 
     def get_data(self) -> Optional[List[DataTuple]]:
-        """Get eis data.
-
-        Returns:
-            DataTuples in the order of frequency, Z_re, and -Z_im if measuring eis,
-            None otherwise
-        """
         if not self.eis_condition:
             return DataTuple(self.data_label[0], [])
         with self.lock:
@@ -130,23 +101,20 @@ class Agilent4284A(NupylabInstrument):
 
     @property
     def eis_condition(self) -> bool:
-        """Get whether to begin eis measurement."""
-        if self.finished:  # Prevents unnecessary function calls
+        if self.finished:
             return False
         return self._eis_condition()
 
     @property
     def finished(self) -> bool:
-        """Get whether eis measurement is finished."""
         if self._eis_condition is None:
             return True
         return self._finished
 
     def stop_measurement(self) -> None:
-        """Stop eis measurement. Not implemented."""
+        pass
 
     def shutdown(self) -> None:
-        """Disconnect from Agilent 4284A."""
         with self.lock:
             self.agilent.adapter.close()
 
@@ -156,9 +124,21 @@ class Agilent4284A(NupylabInstrument):
 
         instrument = self
 
+        class SweepWorker(QtCore.QThread):
+            finished = QtCore.Signal()
+            error = QtCore.Signal(str)
+
+            def run(self):
+                try:
+                    instrument.get_data()
+                    self.finished.emit()
+                except Exception as e:
+                    self.error.emit(str(e))
+
         class AgilentPanel(QtWidgets.QGroupBox):
             def __init__(self):
                 super().__init__("Agilent 4284A — LCR Meter")
+                self._worker = None
                 self._setup_ui()
 
             def _setup_ui(self):
@@ -192,13 +172,38 @@ class Agilent4284A(NupylabInstrument):
                 self.technique.addItems(["PEIS", "GEIS"])
                 layout.addRow("Technique:", self.technique)
 
-                self.run_btn = QtWidgets.QPushButton("Run Single EIS Sweep")
+                btn_layout = QtWidgets.QHBoxLayout()
+                self.connect_btn = QtWidgets.QPushButton("Connect")
+                self.run_btn = QtWidgets.QPushButton("Run EIS Sweep")
+                self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
+                self.connect_btn.clicked.connect(self.connect_instrument)
                 self.run_btn.clicked.connect(self.run_sweep)
-                layout.addRow(self.run_btn)
+                self.disconnect_btn.clicked.connect(self.disconnect_instrument)
+                btn_layout.addWidget(self.connect_btn)
+                btn_layout.addWidget(self.run_btn)
+                btn_layout.addWidget(self.disconnect_btn)
+                layout.addRow(btn_layout)
 
-                self.status_label = QtWidgets.QLabel("Status: —")
+                self.status_label = QtWidgets.QLabel("Status: Not connected")
                 layout.addRow(self.status_label)
                 self.setLayout(layout)
+
+            def connect_instrument(self):
+                try:
+                    instrument.connect()
+                    self.status_label.setText("Status: Connected")
+                    log.info("Agilent 4284A connected on %s", instrument._port)
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+                    log.error("Agilent connect failed: %s", e)
+
+            def disconnect_instrument(self):
+                try:
+                    instrument.disconnect()
+                    self.status_label.setText("Status: Disconnected")
+                    log.info("Agilent 4284A disconnected")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
 
             def run_sweep(self):
                 try:
@@ -214,20 +219,27 @@ class Agilent4284A(NupylabInstrument):
                     )
                     instrument.start()
                     self.status_label.setText("Status: Sweep running...")
-                    self._poll_timer = QtCore.QTimer()
-                    self._poll_timer.timeout.connect(self._check_done)
-                    self._poll_timer.start(500)
+                    self.run_btn.setEnabled(False)
+                    log.info(
+                        "Agilent EIS sweep started: %.1f–%.1f Hz, %.3fV",
+                        self.max_freq.value(), self.min_freq.value(), self.amplitude.value()
+                    )
+                    self._worker = SweepWorker()
+                    self._worker.finished.connect(self._on_sweep_done)
+                    self._worker.error.connect(self._on_sweep_error)
+                    self._worker.start()
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
+                    log.error("Agilent sweep error: %s", e)
 
-            def _check_done(self):
-                try:
-                    instrument.get_data()
-                    if instrument.finished:
-                        self._poll_timer.stop()
-                        self.status_label.setText("Status: Sweep complete")
-                except Exception as e:
-                    self._poll_timer.stop()
-                    self.status_label.setText(f"Status: Error — {e}")
+            def _on_sweep_done(self):
+                self.status_label.setText("Status: Sweep complete")
+                self.run_btn.setEnabled(True)
+                log.info("Agilent EIS sweep complete")
+
+            def _on_sweep_error(self, e):
+                self.status_label.setText(f"Status: Error — {e}")
+                self.run_btn.setEnabled(True)
+                log.error("Agilent sweep error: %s", e)
 
         return AgilentPanel()
