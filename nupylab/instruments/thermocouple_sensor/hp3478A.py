@@ -49,6 +49,7 @@ class HP3478A(NupylabInstrument):
             self.hp3478a.mode = "DCV"
             self.hp3478a.range = 0.03
             #self.hp3478a.write("T3")
+            self.hp3478a.trigger = "external"
             self._connected = True
             print(f"HP3478A connected successfully on {self._port}")
         except Exception as e:
