@@ -69,7 +69,9 @@ class Eurotherm3216(NupylabInstrument):
             )
         with self.lock:
             target_temperature, ramp_rate, dwell_time = self._parameters
+            print(f"About to write program_status=reset, eurotherm={self.eurotherm}, port={self._port}")
             self.eurotherm.program_status = "reset"
+            print("reset succeeded")
             self.eurotherm.end_type = "dwell"
             for segment in self.eurotherm.segments:
                 segment.clear()
