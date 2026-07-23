@@ -108,6 +108,7 @@ class NupylabWindow(ManagedDockWindow):
 
     def finished(self, experiment):
         """Show Resume if more steps queued, else re-enable clear button."""
+        print("NupylabWindow.finished called")
         self.browser_widget.clear_button.setEnabled(True)
         if self.manager.experiments.has_next():
             self.abort_button.setText("Resume")
