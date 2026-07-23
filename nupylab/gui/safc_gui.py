@@ -192,6 +192,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 lambda: furnace.finished,
             )
             # EIS channels are 10 + TC channels, and channel 1 is internal cj voltage
+            print("setting channel 11")
             scanner.set_parameters(
                 self.eis_sample + 11,
                 potentiostat,
