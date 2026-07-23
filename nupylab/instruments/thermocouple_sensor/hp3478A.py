@@ -82,6 +82,7 @@ class HP3478A(NupylabInstrument):
         """
         try:
             with self.lock:
+                self.hp3478a.adapter.flush_read_buffer()
                 voltage: float = self.hp3478a.measure_DCV
         except Exception as e:
             print(f"HP3478A read error: {e}")
