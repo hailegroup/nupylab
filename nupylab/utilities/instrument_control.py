@@ -213,7 +213,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
             plot_layout = QtWidgets.QVBoxLayout()
             self._plot_tabs = QtWidgets.QTabWidget()
             self._plot_tabs.setMinimumHeight(100)
-            self._plot_tabs.setMaximumHeight(100)
+            self._plot_tabs.setMaximumHeight(150)
             for panel in self._panels:
                 if hasattr(panel, 'live_plot'):
                     self._plot_tabs.addTab(
