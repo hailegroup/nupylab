@@ -202,7 +202,9 @@ def main(*args):
     """Run SAFC procedure."""
     app = QtWidgets.QApplication(*args)
 
-    # Create instrument instances for control panel — not connected until user clicks Connect
+    # Create instrument instances for control panel.
+    # These are NOT connected at startup — user clicks Connect in the panel.
+    # They use separate instances from the experiment so ports aren't shared.
     furnace = Heater("ASRL9::INSTR", "Furnace Temperature (degC)")
     mfc = MFC(
         "ASRL3::INSTR",
@@ -218,18 +220,58 @@ def main(*args):
         ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)")
     )
 
-    control = InstrumentControlWidget([furnace, mfc, potentiostat])
-
+    # Window must be created before control so abort_callback can reference manager
     window = nupylab_window.NupylabWindow(
         SAFCProcedure,
         directory="C:/Users/SAFC1/.nupylab/data",
-        extra_tabs=[("Instrument Control", control)]
     )
 
+    def abort_experiment():
+        """Abort any running experiment and disconnect control instruments."""
+        try:
+            window.manager.abort()
+        except Exception:
+            pass
+        # Also disconnect control instruments to free ports for experiment
+        for inst in [furnace, mfc, potentiostat]:
+            if inst.connected:
+                try:
+                    inst.disconnect()
+                except Exception:
+                    pass
+
+    control = InstrumentControlWidget(
+        [furnace, mfc, potentiostat],
+        abort_callback=abort_experiment
+    )
+
+    # Add control tab after window is created
+    window.tabs.addTab(control, "Instrument Control")
+
+    def disconnect_control_instruments():
+        """Disconnect control panel instruments before experiment starts."""
+        for inst in [furnace, mfc, potentiostat]:
+            if inst.connected:
+                try:
+                    inst.disconnect()
+                except Exception:
+                    pass
+
+    # Disconnect control instruments when experiment is queued/started
+    window.manager.queued.connect(disconnect_control_instruments)
+    window.manager.running.connect(disconnect_control_instruments)
+
+    # Track experiment state for abort logic
     window.manager.running.connect(
         lambda: control.set_enabled_for_experiment(True)
     )
     window.manager.finished.connect(
+        lambda: control.set_enabled_for_experiment(False)
+    )
+    window.manager.aborted.connect(
+        lambda: control.set_enabled_for_experiment(False)
+    )
+    window.manager.failed.connect(
         lambda: control.set_enabled_for_experiment(False)
     )
 

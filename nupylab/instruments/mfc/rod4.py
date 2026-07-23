@@ -12,6 +12,8 @@ from nupylab.utilities.nupylab_instrument import NupylabInstrument
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
+_control_log = logging.getLogger('nupylab.instrument_control')
+
 
 class ROD4(NupylabInstrument):
     """ROD-4(A) instrument class. Abstracts ROD-4 driver for NUPyLab procedures."""
@@ -32,7 +34,6 @@ class ROD4(NupylabInstrument):
         super().__init__(data_label, name)
 
     def connect(self) -> None:
-        """Connect to ROD-4."""
         with self.lock:
             self._serial = serial.Serial(
                 self._port, 9600, bytesize=8, stopbits=1,
@@ -49,7 +50,6 @@ class ROD4(NupylabInstrument):
             self._connected = True
 
     def disconnect(self) -> None:
-        """Disconnect from ROD-4."""
         with self.lock:
             if self._serial is not None:
                 try:
@@ -110,9 +110,10 @@ class ROD4(NupylabInstrument):
                 self._send(f"\x02{ch}SVM1\r".encode())
             self._serial.close()
 
-    def control_widget(self):
+    def control_widget(self, abort_callback=None):
         """Return a Qt control panel for this instrument."""
         from pymeasure.display.Qt import QtWidgets, QtCore
+        from nupylab.utilities.instrument_control import LivePlotWidget
 
         instrument = self
 
@@ -127,9 +128,17 @@ class ROD4(NupylabInstrument):
                     pass
 
         class ROD4Panel(QtWidgets.QGroupBox):
+            plot_title = "MFC Flows"
+
             def __init__(self):
                 super().__init__("ROD-4A — Mass Flow Controllers")
                 self._worker = None
+                self._abort_callback = abort_callback
+                self.live_plot = LivePlotWidget(
+                    "MFC Flows", "Flow (sccm)",
+                    n_traces=4,
+                    trace_labels=["MFC 1", "MFC 2", "MFC 3", "MFC 4"]
+                )
                 self._setup_ui()
                 self.timer = QtCore.QTimer()
                 self.timer.timeout.connect(self.update_flows)
@@ -178,45 +187,56 @@ class ROD4(NupylabInstrument):
                 layout.addWidget(self.status_label)
                 self.setLayout(layout)
 
+            def _abort_if_needed(self):
+                if self._abort_callback:
+                    self._abort_callback()
+
             def connect_instrument(self):
+                self._abort_if_needed()
                 try:
                     instrument.connect()
                     self.status_label.setText("Status: Connected")
-                    log.info("ROD-4 connected on %s", instrument._port)
+                    _control_log.info("ROD-4 connected on %s", instrument._port)
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
-                    log.error("ROD-4 connect failed: %s", e)
+                    _control_log.error("ROD-4 connect failed: %s", e)
 
             def disconnect_instrument(self):
+                self._abort_if_needed()
                 try:
                     self.timer.stop()
                     instrument.disconnect()
                     self.status_label.setText("Status: Disconnected")
                     for lbl in self.flow_labels:
                         lbl.setText("— sccm")
-                    log.info("ROD-4 disconnected")
+                    _control_log.info("ROD-4 disconnected")
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
 
             def apply_setpoints(self):
+                self._abort_if_needed()
                 try:
                     if not instrument.connected:
                         instrument.connect()
                     setpoints = [sp.value() for sp in self.setpoint_spins]
                     instrument.set_parameters(setpoints)
                     instrument.start()
+                    self.live_plot.clear()
+                    if not self.timer.isActive():
+                        self.timer.start(2000)
                     self.status_label.setText("Status: Setpoints applied")
-                    log.info("ROD-4 setpoints applied: %s sccm", setpoints)
+                    _control_log.info("ROD-4 setpoints applied: %s sccm", setpoints)
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
-                    log.error("ROD-4 setpoint error: %s", e)
+                    _control_log.error("ROD-4 setpoint error: %s", e)
 
             def close_all(self):
+                self._abort_if_needed()
                 try:
                     instrument.set_parameters([0.0, 0.0, 0.0, 0.0])
                     instrument.start()
                     self.status_label.setText("Status: All valves closed")
-                    log.info("ROD-4 all valves closed")
+                    _control_log.info("ROD-4 all valves closed")
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
 
@@ -226,12 +246,12 @@ class ROD4(NupylabInstrument):
                 if self._worker and self._worker.isRunning():
                     return
                 self._worker = Worker()
-                self._worker.result.connect(self._on_flows)
+                def on_flows(flows):
+                    for i, v in enumerate(flows):
+                        if i < 4:
+                            self.flow_labels[i].setText(f"{v:.2f} sccm")
+                    self.live_plot.add_points(flows)
+                self._worker.result.connect(on_flows)
                 self._worker.start()
-
-            def _on_flows(self, flows):
-                for i, v in enumerate(flows):
-                    if i < 4:
-                        self.flow_labels[i].setText(f"{v:.2f} sccm")
 
         return ROD4Panel()

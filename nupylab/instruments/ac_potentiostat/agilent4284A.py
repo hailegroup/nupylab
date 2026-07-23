@@ -11,6 +11,8 @@ from nupylab.utilities.nupylab_instrument import NupylabInstrument
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
+_control_log = logging.getLogger('nupylab.instrument_control')
+
 
 class Agilent4284A(NupylabInstrument):
     """Agilent 4284A instrument class. Abstracts driver for NUPyLab procedures."""
@@ -31,13 +33,11 @@ class Agilent4284A(NupylabInstrument):
         super().__init__(data_label, name)
 
     def connect(self) -> None:
-        """Connect to Agilent 4284A."""
         with self.lock:
             self.agilent = agilent4284A.Agilent4284A(self._port)
             self._connected = True
 
     def disconnect(self) -> None:
-        """Disconnect from Agilent 4284A."""
         with self.lock:
             if self.agilent is not None:
                 try:
@@ -118,27 +118,41 @@ class Agilent4284A(NupylabInstrument):
         with self.lock:
             self.agilent.adapter.close()
 
-    def control_widget(self):
+    def control_widget(self, abort_callback=None):
         """Return a Qt control panel for this instrument."""
         from pymeasure.display.Qt import QtWidgets, QtCore
+        from nupylab.utilities.instrument_control import LivePlotWidget
 
         instrument = self
 
         class SweepWorker(QtCore.QThread):
-            finished = QtCore.Signal()
+            finished_sig = QtCore.Signal(list, list, list)  # freq, z_re, z_im
             error = QtCore.Signal(str)
 
             def run(self):
                 try:
-                    instrument.get_data()
-                    self.finished.emit()
+                    with instrument.lock:
+                        results = instrument.agilent.sweep_measurement(
+                            "frequency", instrument._freq_list
+                        )
+                    abs_z, z_phase, freq = results
+                    z_re = (abs_z * np.cos(z_phase)).tolist()
+                    z_im = (-abs_z * np.sin(z_phase)).tolist()
+                    instrument._finished = True
+                    self.finished_sig.emit(freq.tolist(), z_re, z_im)
                 except Exception as e:
                     self.error.emit(str(e))
 
         class AgilentPanel(QtWidgets.QGroupBox):
+            plot_title = "EIS — Nyquist"
+
             def __init__(self):
                 super().__init__("Agilent 4284A — LCR Meter")
                 self._worker = None
+                self._abort_callback = abort_callback
+                self.live_plot = LivePlotWidget(
+                    "Nyquist Plot", "-Z_im (Ω)", n_traces=1
+                )
                 self._setup_ui()
 
             def _setup_ui(self):
@@ -188,24 +202,31 @@ class Agilent4284A(NupylabInstrument):
                 layout.addRow(self.status_label)
                 self.setLayout(layout)
 
+            def _abort_if_needed(self):
+                if self._abort_callback:
+                    self._abort_callback()
+
             def connect_instrument(self):
+                self._abort_if_needed()
                 try:
                     instrument.connect()
                     self.status_label.setText("Status: Connected")
-                    log.info("Agilent 4284A connected on %s", instrument._port)
+                    _control_log.info("Agilent 4284A connected on %s", instrument._port)
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
-                    log.error("Agilent connect failed: %s", e)
+                    _control_log.error("Agilent connect failed: %s", e)
 
             def disconnect_instrument(self):
+                self._abort_if_needed()
                 try:
                     instrument.disconnect()
                     self.status_label.setText("Status: Disconnected")
-                    log.info("Agilent 4284A disconnected")
+                    _control_log.info("Agilent 4284A disconnected")
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
 
             def run_sweep(self):
+                self._abort_if_needed()
                 try:
                     if not instrument.connected:
                         instrument.connect()
@@ -220,26 +241,40 @@ class Agilent4284A(NupylabInstrument):
                     instrument.start()
                     self.status_label.setText("Status: Sweep running...")
                     self.run_btn.setEnabled(False)
-                    log.info(
+                    self.live_plot.clear()
+                    _control_log.info(
                         "Agilent EIS sweep started: %.1f–%.1f Hz, %.3fV",
-                        self.max_freq.value(), self.min_freq.value(), self.amplitude.value()
+                        self.max_freq.value(), self.min_freq.value(),
+                        self.amplitude.value()
                     )
                     self._worker = SweepWorker()
-                    self._worker.finished.connect(self._on_sweep_done)
+                    self._worker.finished_sig.connect(self._on_sweep_done)
                     self._worker.error.connect(self._on_sweep_error)
                     self._worker.start()
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
-                    log.error("Agilent sweep error: %s", e)
+                    _control_log.error("Agilent sweep error: %s", e)
 
-            def _on_sweep_done(self):
+            def _on_sweep_done(self, freq, z_re, z_im):
                 self.status_label.setText("Status: Sweep complete")
                 self.run_btn.setEnabled(True)
-                log.info("Agilent EIS sweep complete")
+                # Plot -Z_im vs Z_re (Nyquist) — add each point
+                try:
+                    import pyqtgraph as pg
+                    self.live_plot._plot_widget.clear()
+                    self.live_plot._plot_widget.plot(z_re, z_im, pen='r',
+                                                     symbol='o', symbolSize=5)
+                    self.live_plot._plot_widget.setLabel('bottom', 'Z_re (Ω)')
+                except Exception:
+                    if z_im:
+                        self.live_plot._value_label.setText(
+                            f"max -Z_im: {max(z_im):.2e} Ω"
+                        )
+                _control_log.info("Agilent EIS sweep complete")
 
             def _on_sweep_error(self, e):
                 self.status_label.setText(f"Status: Error — {e}")
                 self.run_btn.setEnabled(True)
-                log.error("Agilent sweep error: %s", e)
+                _control_log.error("Agilent sweep error: %s", e)
 
         return AgilentPanel()

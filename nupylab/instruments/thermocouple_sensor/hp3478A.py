@@ -38,7 +38,7 @@ class HP3478A(NupylabInstrument):
         self.cj_temp: float = 40
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
-        self._tc_type: str = "K"
+        self._tc_type: str = "T"
         self._last_temp: float = 40
         self._resolution: int = resolution
         super().__init__(data_label, name)
