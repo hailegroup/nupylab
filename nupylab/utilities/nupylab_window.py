@@ -43,6 +43,7 @@ class NupylabWindow(ManagedDockWindow):
     def __init__(
         self,
         procedure_class: Type[NupylabProcedure],
+        directory: str,
         **kwargs,
     ) -> None:
         """Initialize main window GUI.
@@ -60,6 +61,7 @@ class NupylabWindow(ManagedDockWindow):
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
+        self.directory = directory
         super().__init__(
             procedure_class,
             inputs_in_scrollarea=True,
