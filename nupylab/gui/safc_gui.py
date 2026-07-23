@@ -21,6 +21,7 @@ Scanner: 17
 """
 
 import sys
+import time
 from typing import Dict, List
 
 # Instrument Imports #
@@ -180,7 +181,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
         tc_sensor.connect()
         potentiostat.connect()
-        if self.eis_toggle == "True":
+        if str(self.eis_toggle).lower() == "true":
             potentiostat.set_parameters(
                 self.maximum_frequency,
                 self.minimum_frequency,
@@ -256,10 +257,10 @@ def main(*args):
                     inst.disconnect()
                 except Exception:
                     pass
+        time.sleep(0.5)
 
     # Disconnect control instruments when experiment is queued/started
     window.manager.queued.connect(disconnect_control_instruments)
-    window.manager.running.connect(disconnect_control_instruments)
 
     # Track experiment state for abort logic
     window.manager.running.connect(

@@ -1,7 +1,7 @@
 """Adapts Eurotherm3216 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
 import logging
-
+import time
 from nupylab.drivers import eurotherm3216
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
@@ -31,6 +31,7 @@ class Eurotherm3216(NupylabInstrument):
         """Connect to Eurotherm."""
         with self.lock:
             self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
+            time.sleep(0.5)
             self._connected = True
 
     def disconnect(self) -> None:
@@ -52,6 +53,7 @@ class Eurotherm3216(NupylabInstrument):
                     pass
                 self.eurotherm = None
             self._connected = False
+        time.sleep(0.3)
 
     def set_parameters(
         self, target_temperature: float, ramp_rate: float, dwell_time: float

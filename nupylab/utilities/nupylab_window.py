@@ -92,6 +92,23 @@ class NupylabWindow(ManagedDockWindow):
 
         self.setWindowTitle(f"{procedure_class.__name__}")
 
+    def abort_returned(self, experiment):
+        """Remove aborted experiment and re-enable clear button."""
+        try:
+            self.browser.takeTopLevelItem(
+                self.browser.indexOfTopLevelItem(experiment.browser_item)
+            )
+        except Exception:
+            pass
+        self.browser_widget.clear_button.setEnabled(True)
+        self.abort_button.setText("Abort")
+        self.abort_button.clicked.disconnect()
+        self.abort_button.clicked.connect(self.abort)
+        if self.manager.experiments.has_next():
+            self.abort_button.setEnabled(True)
+        else:
+            self.abort_button.setEnabled(False)
+
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
         return super().new_curve(wdg, results, color=None, **kwargs)
