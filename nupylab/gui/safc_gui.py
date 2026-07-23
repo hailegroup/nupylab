@@ -199,7 +199,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 potentiostat,
                 ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
             )
-        self.active_instruments = (furnace, mfc, tc_sensor, scanner)
+        self.active_instruments = (furnace, mfc, scanner)
 
 
 def main(*args):
