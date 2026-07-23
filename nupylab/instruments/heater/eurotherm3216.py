@@ -31,20 +31,10 @@ class Eurotherm3216(NupylabInstrument):
         """Connect to Eurotherm."""
         with self.lock:
             self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
-            time.sleep(0.5)
             self._connected = True
 
     def disconnect(self) -> None:
-        """Disconnect from Eurotherm and stop panel polling."""
-        # Stop panel timer first to prevent concurrent access
-        if self._panel is not None:
-            try:
-                self._panel.timer.stop()
-                # Wait for any running worker to finish
-                if self._panel._worker and self._panel._worker.isRunning():
-                    self._panel._worker.wait(100)
-            except Exception:
-                pass
+        """Disconnect from Eurotherm."""
         with self.lock:
             if self.eurotherm is not None:
                 try:
@@ -53,7 +43,6 @@ class Eurotherm3216(NupylabInstrument):
                     pass
                 self.eurotherm = None
             self._connected = False
-        time.sleep(0.3)
 
     def set_parameters(
         self, target_temperature: float, ramp_rate: float, dwell_time: float
