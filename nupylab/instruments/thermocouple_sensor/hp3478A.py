@@ -74,7 +74,7 @@ class HP3478A(NupylabInstrument):
         """Start multimeter measurement. Not implemented."""
         self.cj_flag = True
 
-    def get_data(self, channel) -> Optional[DataTuple]:
+    def get_data(self) -> Optional[DataTuple]:
         """Read thermocouple temperature.
 
         Returns:
@@ -91,7 +91,7 @@ class HP3478A(NupylabInstrument):
         except Exception as e:
             print(f"HP3478A read error: {e}")
             return DataTuple(self.data_label, self._last_temp)
-        print(f"HP3478A raw voltage for channel {channel}: {voltage}, cj_flag: {self.cj_flag}, cj_temp: {self.cj_temp}")
+        print(f"HP3478A raw voltage: {voltage}, cj_flag: {self.cj_flag}, cj_temp: {self.cj_temp}")
         try:
             temp: float = thermocouples.calculate_temperature(
                 (voltage) * 1000, self.tc_type, self.cj_temp
