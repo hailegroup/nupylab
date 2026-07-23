@@ -118,6 +118,8 @@ class NupylabWindow(ManagedDockWindow):
                         converted_df[column] = (
                             converted_df[column].str.casefold().map(bool_map)
                         )
+                    elif param_cast is str:
+                        converted_df[column] = converted_df[column].astype(str).str.strip()
                     cast_dict.update({column: param_cast})
         converted_df = converted_df.astype(cast_dict)
         return converted_df
