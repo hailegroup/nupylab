@@ -37,7 +37,7 @@ class HP3478A(NupylabInstrument):
         self.cj_temp: float = 40
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
-        self._tc_type: str = "K"
+        self._tc_type: str = "T"
         self._last_temp: float = 40
         super().__init__(data_label, name)
 
@@ -48,7 +48,7 @@ class HP3478A(NupylabInstrument):
             self.hp3478a.reset()
             self.hp3478a.mode = "DCV"
             self.hp3478a.range = 0.03
-            self.hp3478a.write("N4T3")
+            #self.hp3478a.write("N4T3")
             self._connected = True
             print(f"HP3478A connected successfully on {self._port}")
         except Exception as e:
