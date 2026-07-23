@@ -16,7 +16,7 @@ class Eurotherm3216(NupylabInstrument):
     """
 
     def __init__(
-        self, port: str, address: int, data_label: str, name: str = "Eurotherm3216"
+        self, port: str, data_label: str, name: str = "Eurotherm3216"
     ) -> None:
         """Initialize Eurotherm data label, name, and connection parameters.
 
@@ -35,7 +35,7 @@ class Eurotherm3216(NupylabInstrument):
         if "COM" not in port:
             port = port.replace("ASRL", "COM").replace("::INSTR", "")
         self._port = port
-        self._address = address
+        self._address = 1
         super().__init__(data_label, name)
 
     def connect(self) -> None:
