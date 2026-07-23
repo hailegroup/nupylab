@@ -93,19 +93,16 @@ class NupylabWindow(ManagedDockWindow):
         self.setWindowTitle(f"{procedure_class.__name__}")
 
     def abort_returned(self, experiment):
-        """Remove aborted experiment and re-enable clear button."""
-        try:
-            self.browser.takeTopLevelItem(
-                self.browser.indexOfTopLevelItem(experiment.browser_item)
-            )
-        except Exception:
-            pass
+        """After abort, automatically start next queued experiment if available."""
         self.browser_widget.clear_button.setEnabled(True)
         self.abort_button.setText("Abort")
         self.abort_button.clicked.disconnect()
         self.abort_button.clicked.connect(self.abort)
+        
         if self.manager.experiments.has_next():
+            # Auto-start next experiment instead of showing Resume
             self.abort_button.setEnabled(True)
+            self.manager.next()
         else:
             self.abort_button.setEnabled(False)
 
