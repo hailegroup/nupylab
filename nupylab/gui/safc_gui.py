@@ -68,17 +68,17 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     ]
 
     resources = list_resources()
-
-    furnace_port = ListParameter("Eurotherm Port", choices=resources, ui_class=None)
+    record_time = FloatParameter("Record Time", units="s", default=3.0)
+    furnace_port = ListParameter("Eurotherm Port", choices=resources, default="ASRL9::INSTR", ui_class=None, )
     furnace_address = IntegerParameter(
         "Eurotherm Address", minimum=1, maximum=254, step=1, default=1
     )
-    mfc_port = ListParameter("ROD-4 Port", choices=resources, ui_class=None)
+    mfc_port = ListParameter("ROD-4 Port", choices=resources, default="ASRL3::INSTR", ui_class=None)
     potentiostat_port = ListParameter(
-        "Potentiostat Port", choices=resources, ui_class=None
+        "Potentiostat Port", choices=resources, default="GPIB0::20::INSTR", ui_class=None
     )
-    tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, ui_class=None)
-    scanner_port = ListParameter("Scanner Port", choices=resources, ui_class=None)
+    tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default="GPIB0::15::INSTR", ui_class=None)
+    scanner_port = ListParameter("Scanner Port", choices=resources, default="GPIB0::17::INSTR", ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
     ramp_rate = FloatParameter("Ramp Rate", units="C/min")
