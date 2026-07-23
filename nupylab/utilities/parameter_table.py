@@ -170,8 +170,8 @@ class ComboBoxDelegate(QtWidgets.QStyledItemDelegate):
             editor.setCurrentText(value)
 
     def setModelData(self, editor, model, index):
+        from pymeasure.display.Qt import QtCore
         model.setData(index, editor.currentText(), QtCore.Qt.EditRole)
-
 
 class ParameterTable(QtWidgets.QTableView):
     """Table format view of experiment parameters."""
