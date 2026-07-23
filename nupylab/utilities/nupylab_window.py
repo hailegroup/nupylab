@@ -126,6 +126,25 @@ class NupylabWindow(ManagedDockWindow):
                 pass
             self.abort_button.clicked.connect(self.abort)
 
+    def _on_failed(self, experiment):
+        """Handle failed experiment — re-enable controls and show Resume if more steps queued."""
+        self.browser_widget.clear_button.setEnabled(True)
+        if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
+        else:
+            self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
+
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
         return super().new_curve(wdg, results, color=None, **kwargs)
