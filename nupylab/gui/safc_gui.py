@@ -213,7 +213,11 @@ def main(*args):
         ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)")
     )
 
-    control = InstrumentControlWidget([furnace, mfc, potentiostat])
+    control = InstrumentControlWidget([
+        ("eurotherm", "COM9", 1),
+        ("rod4", "COM3"),  
+        ("agilent", "GPIB0::20::INSTR"),
+    ])
 
     window = nupylab_window.NupylabWindow(
         SAFCProcedure,

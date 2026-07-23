@@ -157,6 +157,10 @@ class Eurotherm3216(NupylabInstrument):
                 layout.addRow(self.status_label)
                 self.setLayout(layout)
 
+                self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
+                self.disconnect_btn.clicked.connect(self.disconnect)
+                btn_layout.addWidget(self.disconnect_btn)
+
             def start_program(self):
                 try:
                     if not instrument.connected:
@@ -186,6 +190,17 @@ class Eurotherm3216(NupylabInstrument):
                     self.temp_label.setText(f"Current Temp: {data.value:.1f} °C")
                 except Exception:
                     pass
+
+            def disconnect(self):
+                try:
+                    if instrument.connected:
+                        instrument.shutdown()
+                        instrument._connected = False
+                        instrument.eurotherm = None
+                    self.status_label.setText("Status: Disconnected")
+                    self.timer.stop()
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
 
         return EurothermPanel()
 
