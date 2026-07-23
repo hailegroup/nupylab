@@ -51,11 +51,8 @@ class HP3478A(NupylabInstrument):
             self.hp3478a.mode = "DCV"
             self.hp3478a.range = 0.03
             self.hp3478a.resolution = self._resolution
-            #self.hp3478a.write("T3")
             self._connected = True
-            print(f"HP3478A connected successfully on {self._port}")
         except Exception as e:
-            print(f"HP3478A connect FAILED: {e}")
             pass
 
     @property
@@ -83,18 +80,11 @@ class HP3478A(NupylabInstrument):
         Returns:
             DataTuple with thermocouple temperature in Celsius.
         """
-        print("get data called")
         try:
             with self.lock:
-                #self.hp3478a.adapter.flush_read_buffer()
-                #_ = self.hp3478a.measure_DCV
-                print("measurement ran")
-                #self.hp3478a.adapter.connection.clear()
                 voltage: float = self.hp3478a.measure_DCV
         except Exception as e:
-            print(f"HP3478A read error: {e}")
             return DataTuple(self.data_label, self._last_temp)
-        print(f"HP3478A raw voltage: {voltage}, cj_flag: {self.cj_flag}, cj_temp: {self.cj_temp}")
         try:
             temp: float = thermocouples.calculate_temperature(
                 (voltage) * 1000, self.tc_type, self.cj_temp
@@ -102,7 +92,6 @@ class HP3478A(NupylabInstrument):
             self._last_temp = temp
             return DataTuple(self.data_label, temp)
         except ValueError as e:
-            print(f"TC calc failed: voltage={voltage}, cj_temp={self.cj_temp}, error={e}")
             return DataTuple(self.data_label, self._last_temp)
 
     def stop_measurement(self) -> None:

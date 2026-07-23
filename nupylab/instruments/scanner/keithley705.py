@@ -108,34 +108,21 @@ class Keithley705(NupylabInstrument):
         data: List[DataTuple] = []
         f: bool = True
         with self.lock:
-            print(f"scanner started at {time.time()}")
             for channel, (instrument, labels, pre_process) in self.channels.items():
-                print(f"scanning channel {channel}")
                 if hasattr(instrument, 'eis_condition') and not instrument.eis_condition:
                     continue
                 if pre_process is not None:
                     pre_process()
-                    print("previous read:")
                 instrument.data_label = labels
                 if channel != self._closed_channel:
-                    #print("opening closed channel:")
-                    #d = self.keithley705.open_channel(self._closed_channel)
-                    #print(d)
-                    print("closing channel:")
-                    fx = self.keithley705.close_channel(channel)
-                    print(fx)
+                    self.keithley705.close_channel(channel)
                     self._closed_channel = channel
-                    time.sleep(0.1)
-                # self.keithley705.close_channel(channel)
-                # self._closed_channel = channel
-                print (f"getting channel {channel} data")
+                    #time.sleep(0.1)
                 d = instrument.get_data()
-                print(f"channel {channel} data: {d}")
                 if d is not None:
                     data.append(d)
                 f = f and instrument.finished
             self._finished = f
-            print(f"scanner finished: {f} at {time.time()}")
         return data if data else []
 
     @property

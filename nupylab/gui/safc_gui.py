@@ -180,7 +180,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         tc_sensor.connect()
         potentiostat.connect()
         if self.eis_toggle == True:
-            print(self.eis_toggle)
             potentiostat.set_parameters(
                 self.maximum_frequency,
                 self.minimum_frequency,
@@ -190,7 +189,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 lambda: furnace.finished,
             )
             # EIS channels are 10 + TC channels, and channel 1 is internal cj voltage
-            print("setting channel 11")
             scanner.set_parameters(
                 self.eis_sample + 11,
                 potentiostat,
