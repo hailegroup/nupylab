@@ -63,7 +63,6 @@ class NupylabWindow(ManagedDockWindow):
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
         super().__init__(
             procedure_class,
-            directory,
             inputs_in_scrollarea=True,
             widget_list=(
                 ParameterTableWidget("Experiment Parameters", table_column_labels),
