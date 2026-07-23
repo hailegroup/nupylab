@@ -108,6 +108,7 @@ class Keithley705(NupylabInstrument):
         data: List[DataTuple] = []
         f: bool = True
         with self.lock:
+            print(f"scanner started at {time.time()}")
             for channel, (instrument, labels, pre_process) in self.channels.items():
                 print(f"scanning channel {channel}")
                 if hasattr(instrument, 'eis_condition') and not instrument.eis_condition:
@@ -134,7 +135,7 @@ class Keithley705(NupylabInstrument):
                     data.append(d)
                 f = f and instrument.finished
             self._finished = f
-            print(f"scanner finished: {f}")
+            print(f"scanner finished: {f} at {time.time()}")
         return data if data else []
 
     @property
