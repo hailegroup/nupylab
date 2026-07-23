@@ -227,19 +227,19 @@ def main(*args):
         directory="C:/Users/SAFC1/.nupylab/data",
     )
 
-    def abort_experiment():
-        """Abort any running experiment and disconnect control instruments."""
-        try:
-            window.manager.abort()
-        except Exception:
-            pass
-        # Also disconnect control instruments to free ports for experiment
-        for inst in [furnace, mfc, potentiostat]:
-            if inst.connected:
-                try:
-                    inst.disconnect()
-                except Exception:
-                    pass
+    # def abort_experiment():
+    #     """Abort any running experiment and disconnect control instruments."""
+    #     try:
+    #         window.manager.abort()
+    #     except Exception:
+    #         pass
+    #     # Also disconnect control instruments to free ports for experiment
+    #     for inst in [furnace, mfc, potentiostat]:
+    #         if inst.connected:
+    #             try:
+    #                 inst.disconnect()
+    #             except Exception:
+    #                 pass
 
     # control = InstrumentControlWidget(
     #     [furnace, mfc, potentiostat],
@@ -249,15 +249,15 @@ def main(*args):
     # Add control tab after window is created
     #window.tabs.addTab(control, "Instrument Control")
 
-    def disconnect_control_instruments():
-        """Disconnect control panel instruments before experiment starts."""
-        for inst in [furnace, mfc, potentiostat]:
-            if inst.connected:
-                try:
-                    inst.disconnect()
-                except Exception:
-                    pass
-        time.sleep(0.5)
+    # def disconnect_control_instruments():
+    #     """Disconnect control panel instruments before experiment starts."""
+    #     for inst in [furnace, mfc, potentiostat]:
+    #         if inst.connected:
+    #             try:
+    #                 inst.disconnect()
+    #             except Exception:
+    #                 pass
+    #     time.sleep(0.5)
 
     # Disconnect control instruments when experiment is queued/started
     #window.manager.queued.connect(disconnect_control_instruments)
@@ -266,15 +266,15 @@ def main(*args):
     # window.manager.running.connect(
     #     lambda: control.set_enabled_for_experiment(True)
     # )
-    window.manager.finished.connect(
-        lambda: control.set_enabled_for_experiment(False)
-    )
-    window.manager.aborted.connect(
-        lambda: control.set_enabled_for_experiment(False)
-    )
-    window.manager.failed.connect(
-        lambda: control.set_enabled_for_experiment(False)
-    )
+    # window.manager.finished.connect(
+    #     lambda: control.set_enabled_for_experiment(False)
+    # )
+    # window.manager.aborted.connect(
+    #     lambda: control.set_enabled_for_experiment(False)
+    # )
+    # window.manager.failed.connect(
+    #     lambda: control.set_enabled_for_experiment(False)
+    # )
 
     window.show()
     sys.exit(app.exec())
