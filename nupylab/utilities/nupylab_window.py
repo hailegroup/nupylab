@@ -77,6 +77,12 @@ class NupylabWindow(ManagedDockWindow):
         self.setWindowTitle(f"{procedure_class.__name__}")
         self.directory = directory
 
+        if extra_tabs:
+            for tab_name, tab_widget in extra_tabs:
+                self.tabs.addTab(tab_widget, tab_name)
+
+        self.setWindowTitle(f"{procedure_class.__name__}")
+
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
         return super().new_curve(wdg, results, color=None, **kwargs)

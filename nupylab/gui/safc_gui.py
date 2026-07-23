@@ -27,6 +27,7 @@ from typing import Dict, List
 from nupylab.instruments.ac_potentiostat.agilent4284A import (
     Agilent4284A as Potentiostat,
 )
+from nupylab.utilities.instrument_control import InstrumentControlWidget
 from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216 as Heater
 from nupylab.instruments.mfc.rod4 import ROD4 as MFC
 from nupylab.instruments.scanner.keithley705 import Keithley705 as Scanner
@@ -200,7 +201,33 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 def main(*args):
     """Run SAFC procedure."""
     app = QtWidgets.QApplication(*args)
-    window = nupylab_window.NupylabWindow(SAFCProcedure, directory="C:/Users/SAFC1/.nupylab/data")
+    # Create instrument instances for control panel
+    furnace = Heater("COM9", 1, "Furnace Temperature (degC)")
+    mfc = MFC(
+        "COM3",
+        ("MFC 1 Flow (cc/min)", "MFC 2 Flow (cc/min)",
+         "MFC 3 Flow (cc/min)", "MFC 4 Flow (cc/min)")
+    )
+    potentiostat = Potentiostat(
+        "GPIB0::20::INSTR",
+        ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)")
+    )
+
+    control = InstrumentControlWidget([furnace, mfc, potentiostat])
+
+    window = nupylab_window.NupylabWindow(
+        SAFCProcedure,
+        directory="C:/Users/SAFC1/.nupylab/data",
+        extra_tabs=[("Instrument Control", control)]
+    )
+
+    window.manager.running.connect(
+        lambda: control.set_enabled_for_experiment(True)
+    )
+    window.manager.finished.connect(
+        lambda: control.set_enabled_for_experiment(False)
+    )
+
     window.show()
     sys.exit(app.exec())
 

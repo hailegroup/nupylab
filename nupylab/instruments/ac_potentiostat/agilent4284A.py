@@ -149,3 +149,85 @@ class Agilent4284A(NupylabInstrument):
         """Disconnect from Agilent 4284A."""
         with self.lock:
             self.agilent.adapter.close()
+
+    def control_widget(self):
+        """Return a Qt control panel for this instrument."""
+        from pymeasure.display.Qt import QtWidgets, QtCore
+
+        instrument = self
+
+        class AgilentPanel(QtWidgets.QGroupBox):
+            def __init__(self):
+                super().__init__("Agilent 4284A — LCR Meter")
+                self._setup_ui()
+
+            def _setup_ui(self):
+                layout = QtWidgets.QFormLayout()
+
+                self.max_freq = QtWidgets.QDoubleSpinBox()
+                self.max_freq.setRange(20, 1e6)
+                self.max_freq.setSuffix(" Hz")
+                self.max_freq.setValue(1000)
+                layout.addRow("Max Frequency:", self.max_freq)
+
+                self.min_freq = QtWidgets.QDoubleSpinBox()
+                self.min_freq.setRange(20, 1e6)
+                self.min_freq.setSuffix(" Hz")
+                self.min_freq.setValue(100)
+                layout.addRow("Min Frequency:", self.min_freq)
+
+                self.amplitude = QtWidgets.QDoubleSpinBox()
+                self.amplitude.setRange(0.001, 1.0)
+                self.amplitude.setSuffix(" V")
+                self.amplitude.setValue(0.01)
+                self.amplitude.setDecimals(3)
+                layout.addRow("Amplitude:", self.amplitude)
+
+                self.ppd = QtWidgets.QSpinBox()
+                self.ppd.setRange(1, 20)
+                self.ppd.setValue(10)
+                layout.addRow("Points per Decade:", self.ppd)
+
+                self.technique = QtWidgets.QComboBox()
+                self.technique.addItems(["PEIS", "GEIS"])
+                layout.addRow("Technique:", self.technique)
+
+                self.run_btn = QtWidgets.QPushButton("Run Single EIS Sweep")
+                self.run_btn.clicked.connect(self.run_sweep)
+                layout.addRow(self.run_btn)
+
+                self.status_label = QtWidgets.QLabel("Status: —")
+                layout.addRow(self.status_label)
+                self.setLayout(layout)
+
+            def run_sweep(self):
+                try:
+                    if not instrument.connected:
+                        instrument.connect()
+                    instrument.set_parameters(
+                        self.max_freq.value(),
+                        self.min_freq.value(),
+                        self.amplitude.value(),
+                        self.ppd.value(),
+                        self.technique.currentText(),
+                        lambda: True,
+                    )
+                    instrument.start()
+                    self.status_label.setText("Status: Sweep running...")
+                    self._poll_timer = QtCore.QTimer()
+                    self._poll_timer.timeout.connect(self._check_done)
+                    self._poll_timer.start(500)
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+
+            def _check_done(self):
+                try:
+                    instrument.get_data()
+                    if instrument.finished:
+                        self._poll_timer.stop()
+                        self.status_label.setText("Status: Sweep complete")
+                except Exception as e:
+                    self._poll_timer.stop()
+                    self.status_label.setText(f"Status: Error — {e}")
+
+        return AgilentPanel()

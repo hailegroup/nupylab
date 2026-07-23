@@ -137,3 +137,88 @@ class ROD4(NupylabInstrument):
                 ch = f"{i:02d}"
                 self._send(f"\x02{ch}SVM1\r".encode())  # CLOSE all
             self._serial.close()
+
+    def control_widget(self):
+        """Return a Qt control panel for this instrument."""
+        from pymeasure.display.Qt import QtWidgets, QtCore
+
+        instrument = self
+
+        class ROD4Panel(QtWidgets.QGroupBox):
+            def __init__(self):
+                super().__init__("ROD-4A — Mass Flow Controllers")
+                self._setup_ui()
+                self.timer = QtCore.QTimer()
+                self.timer.timeout.connect(self.update_flows)
+                self.timer.start(2000)
+
+            def _setup_ui(self):
+                layout = QtWidgets.QVBoxLayout()
+                grid = QtWidgets.QGridLayout()
+
+                grid.addWidget(QtWidgets.QLabel("Channel"), 0, 0)
+                grid.addWidget(QtWidgets.QLabel("Setpoint (sccm)"), 0, 1)
+                grid.addWidget(QtWidgets.QLabel("Actual Flow"), 0, 2)
+
+                self.setpoint_spins = []
+                self.flow_labels = []
+
+                for i in range(4):
+                    grid.addWidget(QtWidgets.QLabel(f"MFC {i+1}"), i+1, 0)
+
+                    sp = QtWidgets.QDoubleSpinBox()
+                    sp.setRange(0, 2000)
+                    sp.setSuffix(" sccm")
+                    self.setpoint_spins.append(sp)
+                    grid.addWidget(sp, i+1, 1)
+
+                    flow_lbl = QtWidgets.QLabel("— sccm")
+                    self.flow_labels.append(flow_lbl)
+                    grid.addWidget(flow_lbl, i+1, 2)
+
+                layout.addLayout(grid)
+
+                btn_layout = QtWidgets.QHBoxLayout()
+                self.apply_btn = QtWidgets.QPushButton("Apply Setpoints")
+                self.close_all_btn = QtWidgets.QPushButton("Close All Valves")
+                self.apply_btn.clicked.connect(self.apply_setpoints)
+                self.close_all_btn.clicked.connect(self.close_all)
+                btn_layout.addWidget(self.apply_btn)
+                btn_layout.addWidget(self.close_all_btn)
+                layout.addLayout(btn_layout)
+
+                self.status_label = QtWidgets.QLabel("Status: —")
+                layout.addWidget(self.status_label)
+                self.setLayout(layout)
+
+            def apply_setpoints(self):
+                try:
+                    if not instrument.connected:
+                        instrument.connect()
+                    setpoints = [sp.value() for sp in self.setpoint_spins]
+                    instrument.set_parameters(setpoints)
+                    instrument.start()
+                    self.status_label.setText("Status: Setpoints applied")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+
+            def close_all(self):
+                try:
+                    instrument.set_parameters([0.0, 0.0, 0.0, 0.0])
+                    instrument.start()
+                    self.status_label.setText("Status: All valves closed")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+
+            def update_flows(self):
+                if not instrument.connected:
+                    return
+                try:
+                    data = instrument.get_data()
+                    for i, dt in enumerate(data):
+                        if i < 4:
+                            self.flow_labels[i].setText(f"{dt.value:.2f} sccm")
+                except Exception:
+                    pass
+
+        return ROD4Panel()

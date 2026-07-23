@@ -3,6 +3,7 @@
 from nupylab.drivers import eurotherm3216
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
+from nupylab.utilities.instrument_control import EurothermPanel
 
 
 class Eurotherm3216(NupylabInstrument):
@@ -106,3 +107,87 @@ class Eurotherm3216(NupylabInstrument):
         with self.lock:
             self.eurotherm.program_status = "reset"
             self.eurotherm.serial.close()
+
+    def control_widget(self):
+        """Return a Qt control panel for this instrument."""
+        from pymeasure.display.Qt import QtWidgets, QtCore
+
+        instrument = self
+
+        class EurothermPanel(QtWidgets.QGroupBox):
+            def __init__(self):
+                super().__init__("Eurotherm 3216 — Furnace")
+                self._setup_ui()
+                self.timer = QtCore.QTimer()
+                self.timer.timeout.connect(self.update_temp)
+                self.timer.start(2000)
+
+            def _setup_ui(self):
+                layout = QtWidgets.QFormLayout()
+
+                self.target_temp = QtWidgets.QDoubleSpinBox()
+                self.target_temp.setRange(0, 1200)
+                self.target_temp.setSuffix(" °C")
+                self.target_temp.setValue(25)
+                layout.addRow("Target Temperature:", self.target_temp)
+
+                self.ramp_rate = QtWidgets.QDoubleSpinBox()
+                self.ramp_rate.setRange(0.1, 100)
+                self.ramp_rate.setSuffix(" °C/min")
+                self.ramp_rate.setValue(5)
+                layout.addRow("Ramp Rate:", self.ramp_rate)
+
+                self.dwell_time = QtWidgets.QDoubleSpinBox()
+                self.dwell_time.setRange(0, 9999)
+                self.dwell_time.setSuffix(" min")
+                self.dwell_time.setValue(10)
+                layout.addRow("Dwell Time:", self.dwell_time)
+
+                btn_layout = QtWidgets.QHBoxLayout()
+                self.start_btn = QtWidgets.QPushButton("Start Program")
+                self.stop_btn = QtWidgets.QPushButton("Stop Program")
+                self.start_btn.clicked.connect(self.start_program)
+                self.stop_btn.clicked.connect(self.stop_program)
+                btn_layout.addWidget(self.start_btn)
+                btn_layout.addWidget(self.stop_btn)
+                layout.addRow(btn_layout)
+
+                self.temp_label = QtWidgets.QLabel("Current Temp: —")
+                self.status_label = QtWidgets.QLabel("Status: —")
+                layout.addRow(self.temp_label)
+                layout.addRow(self.status_label)
+                self.setLayout(layout)
+
+            def start_program(self):
+                try:
+                    if not instrument.connected:
+                        instrument.connect()
+                    instrument.set_parameters(
+                        self.target_temp.value(),
+                        self.ramp_rate.value(),
+                        self.dwell_time.value()
+                    )
+                    instrument.start()
+                    self.status_label.setText("Status: Program running")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+
+            def stop_program(self):
+                try:
+                    instrument.eurotherm.program_status = "reset"
+                    self.status_label.setText("Status: Stopped")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+
+            def update_temp(self):
+                if not instrument.connected:
+                    return
+                try:
+                    data = instrument.get_data()
+                    self.temp_label.setText(f"Current Temp: {data.value:.1f} °C")
+                except Exception:
+                    pass
+
+        return EurothermPanel()
+
+        
