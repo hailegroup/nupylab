@@ -106,6 +106,22 @@ class NupylabWindow(ManagedDockWindow):
         else:
             self.abort_button.setEnabled(False)
 
+    def finished(self, experiment):
+        """Override to always re-enable clear button."""
+        super().finished(experiment)
+        self.browser_widget.clear_button.setEnabled(True)
+
+    def failed(self, experiment):
+        """Override to re-enable clear button and abort button after failure."""
+        self.browser_widget.clear_button.setEnabled(True)
+        self.abort_button.setText("Abort")
+        self.abort_button.clicked.disconnect()
+        self.abort_button.clicked.connect(self.abort)
+        if self.manager.experiments.has_next():
+            self.abort_button.setEnabled(True)
+        else:
+            self.abort_button.setEnabled(False)
+
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
         return super().new_curve(wdg, results, color=None, **kwargs)
