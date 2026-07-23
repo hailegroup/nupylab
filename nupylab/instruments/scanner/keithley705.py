@@ -111,12 +111,13 @@ class Keithley705(NupylabInstrument):
             for channel, (instrument, labels, pre_process) in self.channels.items():
                 print(f"scanning channel {channel}")
                 if hasattr(instrument, 'eis_condition') and not instrument.eis_condition:
-                    print("skipping channel 11")
                     continue
                 if pre_process is not None:
                     pre_process()
+                    print("previous read:")
                 instrument.data_label = labels
                 if channel != self._closed_channel:
+                    print("closed channel:")
                     self.keithley705.open_channel(self._closed_channel)
                     self.keithley705.close_channel(channel)
                     self._closed_channel = channel
