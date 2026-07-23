@@ -81,7 +81,8 @@ class HP3478A(NupylabInstrument):
             DataTuple with thermocouple temperature in Celsius.
         """
         try:
-            voltage: float = self.hp3478a.measure_DCV
+            with self.lock:
+                voltage: float = self.hp3478a.measure_DCV
         except Exception as e:
             print(f"HP3478A read error: {e}")
             return DataTuple(self.data_label, self._last_temp)
