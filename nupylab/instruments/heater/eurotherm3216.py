@@ -3,7 +3,6 @@
 from nupylab.drivers import eurotherm3216
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
-from nupylab.utilities.instrument_control import EurothermPanel
 
 
 class Eurotherm3216(NupylabInstrument):
