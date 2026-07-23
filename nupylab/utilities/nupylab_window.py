@@ -107,20 +107,17 @@ class NupylabWindow(ManagedDockWindow):
             self.abort_button.setEnabled(False)
 
     def finished(self, experiment):
-        """Override to always re-enable clear button."""
-        super().finished(experiment)
-        self.browser_widget.clear_button.setEnabled(True)
-
-    def failed(self, experiment):
-        """Show Resume button after failure so user can run next queued step."""
+        """Show Resume if more steps queued, else re-enable clear button."""
         self.browser_widget.clear_button.setEnabled(True)
         if self.manager.experiments.has_next():
             self.abort_button.setText("Resume")
             self.abort_button.setEnabled(True)
-            self.abort_button.clicked.disconnect()
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
             self.abort_button.clicked.connect(self.resume)
         else:
-            self.abort_button.setText("Abort")
             self.abort_button.setEnabled(False)
             try:
                 self.abort_button.clicked.disconnect()
