@@ -23,8 +23,8 @@ class HP3478A(NupylabInstrument):
         self,
         port: str,
         data_label: str,
+        resolution: int,
         name: str = "HP 3478A",
-        resolution: int = 5,
     ) -> None:
         """Initialize HP 3478A data labels, name, and connection parameters.
 
