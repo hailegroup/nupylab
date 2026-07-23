@@ -80,6 +80,7 @@ class HP3478A(NupylabInstrument):
         Returns:
             DataTuple with thermocouple temperature in Celsius.
         """
+        print("get data called")
         try:
             with self.lock:
                 #self.hp3478a.adapter.flush_read_buffer()
