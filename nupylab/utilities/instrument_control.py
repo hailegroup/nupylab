@@ -207,13 +207,14 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         panels_scroll.setWidget(container)
         layout.addWidget(panels_scroll)
 
-        # Middle: live plots in tabs, with generous height
+        # Bottom: plots and log side by side
+        bottom_layout = QtWidgets.QHBoxLayout()
+
         if any(hasattr(p, 'live_plot') for p in self._panels):
             plot_group = QtWidgets.QGroupBox("Live Data")
             plot_layout = QtWidgets.QVBoxLayout()
             self._plot_tabs = QtWidgets.QTabWidget()
-            self._plot_tabs.setMinimumHeight(100)
-            self._plot_tabs.setFixedHeight(200)
+            self._plot_tabs.setMinimumHeight(250)
             for panel in self._panels:
                 if hasattr(panel, 'live_plot'):
                     self._plot_tabs.addTab(
@@ -222,18 +223,18 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                     )
             plot_layout.addWidget(self._plot_tabs)
             plot_group.setLayout(plot_layout)
-            layout.addWidget(plot_group)
+            bottom_layout.addWidget(plot_group, stretch=2)
 
-        # Bottom: control-only log
         log_group = QtWidgets.QGroupBox("Instrument Control Log")
         log_layout = QtWidgets.QVBoxLayout()
         self.log_area = QtWidgets.QTextEdit()
         self.log_area.setReadOnly(True)
-        self.log_area.setMaximumHeight(120)
         self.log_area.setPlaceholderText("Control actions will appear here...")
         log_layout.addWidget(self.log_area)
         log_group.setLayout(log_layout)
-        layout.addWidget(log_group)
+        bottom_layout.addWidget(log_group, stretch=1)
+
+        layout.addLayout(bottom_layout)
 
         # Only capture instrument_control logger
         handler = QtLogHandler(self.log_area)
