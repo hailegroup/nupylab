@@ -91,6 +91,7 @@ class NupylabWindow(ManagedDockWindow):
                 self.tabs.addTab(tab_widget, tab_name)
 
         self.setWindowTitle(f"{procedure_class.__name__}")
+        self.manager.failed.connect(self._on_failed)
 
     def abort_returned(self, experiment):
         """After abort, automatically start next queued experiment if available."""
