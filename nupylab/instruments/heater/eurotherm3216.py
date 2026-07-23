@@ -32,16 +32,16 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
             self._connected = True
 
-    def disconnect(self) -> None:
-        """Disconnect from Eurotherm."""
-        with self.lock:
-            if self.eurotherm is not None:
-                try:
-                    self.eurotherm.serial.close()
-                except Exception:
-                    pass
-                self.eurotherm = None
-            self._connected = False
+    # def disconnect(self) -> None:
+    #     """Disconnect from Eurotherm."""
+    #     with self.lock:
+    #         if self.eurotherm is not None:
+    #             try:
+    #                 self.eurotherm.serial.close()
+    #             except Exception:
+    #                 pass
+    #             self.eurotherm = None
+    #         self._connected = False
 
     def set_parameters(
         self, target_temperature: float, ramp_rate: float, dwell_time: float
