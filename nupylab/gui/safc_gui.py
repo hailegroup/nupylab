@@ -35,7 +35,6 @@ from nupylab.instruments.thermocouple_sensor.hp3478A import HP3478A as TC_Sensor
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
-    BooleanParameter,
     FloatParameter,
     IntegerParameter,
     ListParameter,
@@ -164,7 +163,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 self.potentiostat_port,
                 ("1: Frequency (Hz)", "1: Z_re (ohm)", "1: -Z_im (ohm)"),
             )
-            tc_sensor = TC_Sensor(self.tc_sensor_port, self.tc_sensor_digits, "1: Temperature (degC)")
+            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", self.tc_sensor_digits)
             scanner = Scanner(self.scanner_port)
         self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
