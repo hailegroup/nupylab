@@ -221,12 +221,14 @@ def main(*args):
         extra_tabs=[("Instrument Control", control)]
     )
 
-    window.manager.running.connect(
-        lambda: control.set_enabled_for_experiment(True)
-    )
-    window.manager.finished.connect(
-        lambda: control.set_enabled_for_experiment(False)
-    )
+    if hasattr(window.manager, 'running'):
+        window.manager.running.connect(
+            lambda: control.set_enabled_for_experiment(True)
+        )
+    if hasattr(window.manager, 'finished'):
+        window.manager.finished.connect(
+            lambda: control.set_enabled_for_experiment(False)
+        )
 
     window.show()
     sys.exit(app.exec())
