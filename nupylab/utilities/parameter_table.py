@@ -22,7 +22,7 @@ class FileLineEdit(QtWidgets.QLineEdit):
             QtWidgets.QCompleter.CompletionMode.PopupCompletion)
 
         model = QtGui.QFileSystemModel(completer)
-        model.setRootPath(model.myComputer())
+        model.setRootPath("C:/Users/SAFC1/.nupylab/parameters")
         model.setFilter(QtCore.QDir.Filter.Files |
                         QtCore.QDir.Filter.Dirs |
                         QtCore.QDir.Filter.Drives |
