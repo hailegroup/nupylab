@@ -183,6 +183,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         tc_sensor.connect()
         potentiostat.connect()
         if self.eis_toggle == True:
+            print(self.eis_toggle)
             potentiostat.set_parameters(
                 self.maximum_frequency,
                 self.minimum_frequency,
