@@ -61,11 +61,16 @@ class NupylabWindow(ManagedDockWindow):
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
+        combo_col_dict = {}
+        for i, param_name in enumerate(procedure_class.TABLE_PARAMETERS.values()):
+            for name, value in inspect.getmembers(procedure_class):
+                if name == param_name and isinstance(value, ListParameter):
+                    combo_col_dict[i] = list(value.choices.keys())
         super().__init__(
             procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels),
+                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict),
             ),
             **kwargs,
         )

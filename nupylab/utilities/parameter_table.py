@@ -1,6 +1,6 @@
 """Classes for adding table of parameters as a tab in station GUIs."""
 
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import pandas as pd
 
@@ -154,6 +154,24 @@ class TableModel(QtCore.QAbstractTableModel):
             self.df = self.df.drop([self.rowCount() - 1])
             self.endResetModel()
 
+class ComboBoxDelegate(QtWidgets.QStyledItemDelegate):
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self.items = items  # list of strings for this column
+
+    def createEditor(self, parent, option, index):
+        combo = QtWidgets.QComboBox(parent)
+        combo.addItems(self.items)
+        return combo
+
+    def setEditorData(self, editor, index):
+        value = index.data()
+        if value in self.items:
+            editor.setCurrentText(value)
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.currentText())
+
 
 class ParameterTable(QtWidgets.QTableView):
     """Table format view of experiment parameters."""
@@ -162,6 +180,7 @@ class ParameterTable(QtWidgets.QTableView):
         self,
         table_columns: List[str],
         float_digits: int = 1,
+        combo_columns: Dict[int, List[str]] = None,  # {col_index: [choices]}
         parent=None
     ) -> None:
         """Connect to view model and configure basic appearance.
@@ -174,6 +193,10 @@ class ParameterTable(QtWidgets.QTableView):
         df = pd.DataFrame(columns=table_columns)
         model = TableModel(df=df, float_digits=float_digits)
         self.setModel(model)
+        if combo_columns:
+            for col, items in combo_columns.items():
+                delegate = ComboBoxDelegate(items, self)
+                self.setItemDelegateForColumn(col, delegate)
         self.horizontalHeader().setStyleSheet("font: bold;")
         self.horizontalHeader().setMinimumHeight(50)
         self.horizontalHeader().setDefaultAlignment(
@@ -247,6 +270,7 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
             name: str,
             table_columns: Sequence[str],
             float_digits: int = 1,
+            combo_columns: List[int] = None,
             parent=None
     ) -> None:
         """Initialize UI and layout.
@@ -259,16 +283,17 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
         """
         super().__init__(name, parent)
         self.float_digits = float_digits
-        self._setup_ui(table_columns)
+        self._setup_ui(table_columns, combo_columns)
         self._layout()
 
-    def _setup_ui(self, table_columns):
+    def _setup_ui(self, table_columns, combo_columns):
         self.parameters_file_label = QtWidgets.QLabel(self)
         self.parameters_file_label.setText('Load Parameters:')
 
         self.table = ParameterTable(
             table_columns,
             float_digits=self.float_digits,
+            combo_columns=combo_columns,
             parent=self,
         )
 
