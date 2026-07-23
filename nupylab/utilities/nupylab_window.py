@@ -78,6 +78,14 @@ class NupylabWindow(ManagedDockWindow):
         self.setWindowTitle(f"{procedure_class.__name__}")
         self.directory = directory
 
+        # Filter instrument_control logs out of the experiment log widget
+        class ExcludeInstrumentControlFilter(logging.Filter):
+            def filter(self, record):
+                return not record.name.startswith('nupylab.instrument_control')
+
+        if hasattr(self, 'log_widget') and hasattr(self.log_widget, 'handler'):
+            self.log_widget.handler.addFilter(ExcludeInstrumentControlFilter())
+
         if extra_tabs:
             for tab_name, tab_widget in extra_tabs:
                 self.tabs.addTab(tab_widget, tab_name)

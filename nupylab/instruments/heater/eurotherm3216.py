@@ -20,6 +20,7 @@ class Eurotherm3216(NupylabInstrument):
     ) -> None:
         self.eurotherm = None
         self._finished: bool = False
+        self._panel = None  # reference to control panel for stopping timer
         if "COM" not in port:
             port = port.replace("ASRL", "COM").replace("::INSTR", "")
         self._port = port
@@ -33,7 +34,16 @@ class Eurotherm3216(NupylabInstrument):
             self._connected = True
 
     def disconnect(self) -> None:
-        """Disconnect from Eurotherm."""
+        """Disconnect from Eurotherm and stop panel polling."""
+        # Stop panel timer first to prevent concurrent access
+        if self._panel is not None:
+            try:
+                self._panel.timer.stop()
+                # Wait for any running worker to finish
+                if self._panel._worker and self._panel._worker.isRunning():
+                    self._panel._worker.wait(1000)
+            except Exception:
+                pass
         with self.lock:
             if self.eurotherm is not None:
                 try:
@@ -115,7 +125,8 @@ class Eurotherm3216(NupylabInstrument):
                 self._setup_ui()
                 self.timer = QtCore.QTimer()
                 self.timer.timeout.connect(self.update_temp)
-                self.timer.start(2000)
+                # Store panel reference on instrument for disconnect()
+                instrument._panel = self
 
             def _setup_ui(self):
                 layout = QtWidgets.QFormLayout()
@@ -168,6 +179,7 @@ class Eurotherm3216(NupylabInstrument):
                 try:
                     instrument.connect()
                     self.status_label.setText("Status: Connected")
+                    self.timer.start(2000)
                     _control_log.info("Eurotherm connected on %s", instrument._port)
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
@@ -177,6 +189,8 @@ class Eurotherm3216(NupylabInstrument):
                 self._abort_if_needed()
                 try:
                     self.timer.stop()
+                    if self._worker and self._worker.isRunning():
+                        self._worker.wait(1000)
                     instrument.disconnect()
                     self.status_label.setText("Status: Disconnected")
                     self.temp_label.setText("Current Temp: —")
@@ -201,7 +215,8 @@ class Eurotherm3216(NupylabInstrument):
                     self.status_label.setText("Status: Program running")
                     _control_log.info(
                         "Eurotherm program started: target=%.1f°C, ramp=%.1f°C/min, dwell=%.1fmin",
-                        self.target_temp.value(), self.ramp_rate.value(), self.dwell_time.value()
+                        self.target_temp.value(), self.ramp_rate.value(),
+                        self.dwell_time.value()
                     )
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
