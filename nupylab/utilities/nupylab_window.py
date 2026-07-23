@@ -112,10 +112,13 @@ class NupylabWindow(ManagedDockWindow):
         self.browser_widget.clear_button.setEnabled(True)
 
     def failed(self, experiment):
-        """Override to re-enable clear button and abort button after failure."""
+        """Re-enable clear button and allow running next step after failure."""
         self.browser_widget.clear_button.setEnabled(True)
         self.abort_button.setText("Abort")
-        self.abort_button.clicked.disconnect()
+        try:
+            self.abort_button.clicked.disconnect()
+        except Exception:
+            pass
         self.abort_button.clicked.connect(self.abort)
         if self.manager.experiments.has_next():
             self.abort_button.setEnabled(True)
