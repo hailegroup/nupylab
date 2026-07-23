@@ -117,7 +117,7 @@ class Keithley705(NupylabInstrument):
                 if channel != self._closed_channel:
                     self.keithley705.close_channel(channel)
                     self._closed_channel = channel
-                    #time.sleep(0.1)
+                    time.sleep(0.1)
                 d = instrument.get_data()
                 if d is not None:
                     data.append(d)
