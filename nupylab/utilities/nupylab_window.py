@@ -53,7 +53,6 @@ class NupylabWindow(ManagedDockWindow):
             **kwargs: optional keyword arguments that will be passed to
                 :class:`pymeasure.display.windows.managed_window.ManagedDockWindow`
         """
-        self.directory = directory
         kwargs.setdefault("linewidth", 2)
         if hasattr(procedure_class, "X_AXIS"):
             kwargs.setdefault("x_axis", procedure_class.X_AXIS)
@@ -72,6 +71,7 @@ class NupylabWindow(ManagedDockWindow):
             **kwargs,
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
+        self.directory = directory
 
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
