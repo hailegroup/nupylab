@@ -112,18 +112,21 @@ class NupylabWindow(ManagedDockWindow):
         self.browser_widget.clear_button.setEnabled(True)
 
     def failed(self, experiment):
-        """Re-enable clear button and allow running next step after failure."""
+        """Show Resume button after failure so user can run next queued step."""
         self.browser_widget.clear_button.setEnabled(True)
-        self.abort_button.setText("Abort")
-        try:
-            self.abort_button.clicked.disconnect()
-        except Exception:
-            pass
-        self.abort_button.clicked.connect(self.abort)
         if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
             self.abort_button.setEnabled(True)
+            self.abort_button.clicked.disconnect()
+            self.abort_button.clicked.connect(self.resume)
         else:
+            self.abort_button.setText("Abort")
             self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
 
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
