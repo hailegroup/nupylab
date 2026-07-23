@@ -53,6 +53,7 @@ class NupylabWindow(ManagedDockWindow):
             **kwargs: optional keyword arguments that will be passed to
                 :class:`pymeasure.display.windows.managed_window.ManagedDockWindow`
         """
+        self.directory = directory
         kwargs.setdefault("linewidth", 2)
         if hasattr(procedure_class, "X_AXIS"):
             kwargs.setdefault("x_axis", procedure_class.X_AXIS)
@@ -61,7 +62,6 @@ class NupylabWindow(ManagedDockWindow):
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
-        self.directory = directory
         super().__init__(
             procedure_class,
             directory,
