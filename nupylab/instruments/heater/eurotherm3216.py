@@ -42,7 +42,7 @@ class Eurotherm3216(NupylabInstrument):
                 self._panel.timer.stop()
                 # Wait for any running worker to finish
                 if self._panel._worker and self._panel._worker.isRunning():
-                    self._panel._worker.wait(1000)
+                    self._panel._worker.wait(100)
             except Exception:
                 pass
         with self.lock:
