@@ -124,7 +124,7 @@ class Keithley705(NupylabInstrument):
                     fx = self.keithley705.close_channel(channel)
                     print(fx)
                     self._closed_channel = channel
-                    time.sleep(0.1)
+                    time.sleep(0.15)
                 # self.keithley705.close_channel(channel)
                 # self._closed_channel = channel
                 print (f"getting channel {channel} data")
