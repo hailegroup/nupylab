@@ -114,12 +114,21 @@ class NupylabWindow(ManagedDockWindow):
                     # non-empty strings evaluate to True
                     # apply map instead for boolean columns
                     param_cast = self.parameter_types[type(value)]
+                    bool_str_map = {
+                        "true": "True", "false": "False",
+                        "t": "True", "f": "False",
+                        "1": "True", "0": "False",
+                        "yes": "True", "no": "False",
+                    }
                     if param_cast is bool:
                         converted_df[column] = (
                             converted_df[column].str.casefold().map(bool_map)
                         )
                     elif param_cast is str:
-                        converted_df[column] = converted_df[column].astype(str).str.strip()
+                        converted_df[column] = (
+                            converted_df[column].astype(str).str.strip()
+                            .str.casefold().map(lambda x: bool_str_map.get(x, x))
+                        )
                     cast_dict.update({column: param_cast})
         converted_df = converted_df.astype(cast_dict)
         return converted_df
