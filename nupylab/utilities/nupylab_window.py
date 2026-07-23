@@ -64,6 +64,7 @@ class NupylabWindow(ManagedDockWindow):
         self.directory = directory
         super().__init__(
             procedure_class,
+            directory,
             inputs_in_scrollarea=True,
             widget_list=(
                 ParameterTableWidget("Experiment Parameters", table_column_labels),
