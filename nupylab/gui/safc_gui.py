@@ -208,7 +208,7 @@ def main(*args):
     # Create instrument instances for control panel.
     # These are NOT connected at startup — user clicks Connect in the panel.
     # They use separate instances from the experiment so ports aren't shared.
-    furnace = Heater("ASRL9::INSTR", "Furnace Temperature (degC)")
+    furnace = Heater("ASRL4::INSTR", "Furnace Temperature (degC)")
     mfc = MFC(
         "ASRL3::INSTR",
         (
