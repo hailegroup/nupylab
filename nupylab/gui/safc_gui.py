@@ -70,7 +70,8 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 
     resources = list_resources()
     record_time = FloatParameter("Record Time", units="s", default=3.0)
-    furnace_port = ListParameter("Eurotherm Port", choices=resources, default="ASRL9::INSTR", ui_class=None, )
+    _default_furnace = "ASRL9::INSTR" if "ASRL9::INSTR" in resources else (resources[0] if resources else "")
+    furnace_port = ListParameter("Eurotherm Port", choices=resources, default=_default_furnace, ui_class=None)
     mfc_port = ListParameter("ROD-4 Port", choices=resources, default="ASRL3::INSTR", ui_class=None)
     potentiostat_port = ListParameter(
         "Potentiostat Port", choices=resources, default="GPIB0::20::INSTR", ui_class=None
