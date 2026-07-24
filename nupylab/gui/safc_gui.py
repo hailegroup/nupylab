@@ -70,15 +70,19 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 
     resources = list_resources()
     record_time = FloatParameter("Record Time", units="s", default=3.0)
+
     _default_furnace = "ASRL9::INSTR" if "ASRL9::INSTR" in resources else (resources[0] if resources else "")
+    _default_mfc = "ASRL3::INSTR" if "ASRL3::INSTR" in resources else (resources[0] if resources else "")
+    _default_potentiostat = "GPIB0::20::INSTR" if "GPIB0::20::INSTR" in resources else (resources[0] if resources else "")
+    _default_tc = "GPIB0::15::INSTR" if "GPIB0::15::INSTR" in resources else (resources[0] if resources else "")
+    _default_scanner = "GPIB0::17::INSTR" if "GPIB0::17::INSTR" in resources else (resources[0] if resources else "")
+
     furnace_port = ListParameter("Eurotherm Port", choices=resources, default=_default_furnace, ui_class=None)
-    mfc_port = ListParameter("ROD-4 Port", choices=resources, default="ASRL3::INSTR", ui_class=None)
-    potentiostat_port = ListParameter(
-        "Potentiostat Port", choices=resources, default="GPIB0::20::INSTR", ui_class=None
-    )
-    tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default="GPIB0::15::INSTR", ui_class=None)
+    mfc_port = ListParameter("ROD-4 Port", choices=resources, default=_default_mfc, ui_class=None)
+    potentiostat_port = ListParameter("Potentiostat Port", choices=resources, default=_default_potentiostat, ui_class=None)
+    tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default=_default_tc, ui_class=None)
     tc_sensor_digits = IntegerParameter("Voltage Resolution", units="V", minimum=3, maximum=5, step=1, default=5)
-    scanner_port = ListParameter("Scanner Port", choices=resources, default="GPIB0::17::INSTR", ui_class=None)
+    scanner_port = ListParameter("Scanner Port", choices=resources, default=_default_scanner, ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
     ramp_rate = FloatParameter("Ramp Rate", units="C/min")
