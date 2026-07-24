@@ -1,23 +1,16 @@
-import pyvisa
-import time
+import minimalmodbus, serial.tools.list_ports
 
-rm = pyvisa.ResourceManager()
-scanner = rm.open_resource("GPIB0::17::INSTR")
-hp = rm.open_resource("GPIB0::15::INSTR")
-scanner.timeout = 3000
-hp.timeout = 3000
+ports = [p.device for p in serial.tools.list_ports.comports()]
+print("Available ports:", ports)
 
-# Reset all channels open
-scanner.write("RX")
-time.sleep(1)
-
-for ch in [1, 2, 3, 4, 5]:
-    scanner.write(f"C{ch}X")  # no zero padding
-    time.sleep(1.0)
-    try:
-        voltage = hp.read()
-        print(f"channel {ch}: {repr(voltage)}")
-    except Exception as e:
-        print(f"channel {ch}: error {e}")
-    scanner.write("RX")  # reset/open all
-    time.sleep(0.5)
+for port in ports:
+    for addr in [1, 2]:
+        try:
+            inst = minimalmodbus.Instrument(port, addr)
+            inst.serial.baudrate = 9600
+            inst.serial.stopbits = 1
+            inst.serial.timeout = 1
+            val = inst.read_register(1, 1)
+            print(f"FOUND: {port} addr={addr} temp={val}")
+        except Exception:
+            print(f"{port} addr={addr}: no response")
