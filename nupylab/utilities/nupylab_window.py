@@ -72,7 +72,7 @@ class NupylabWindow(ManagedDockWindow):
             procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, ),
+                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir,),
             ),
             **kwargs,
         )
@@ -256,11 +256,11 @@ class NupylabWindow(ManagedDockWindow):
             previous_procedure = procedure
 
             # If manager stopped (after abort/fail), show Resume instead of auto-running
-            if not self.manager.is_running():
-                self.abort_button.setText("Resume")
-                self.abort_button.setEnabled(True)
-                try:
-                    self.abort_button.clicked.disconnect()
-                except Exception:
-                    pass
-                self.abort_button.clicked.connect(self.resume)
+        if not self.manager.is_running():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
