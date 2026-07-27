@@ -96,7 +96,7 @@ class ROD4(NupylabInstrument):
                 try:
                     resp = self._send(f"\x02{ch}RFX\r".encode())
                     flows.append(float(resp) * range_ / 100.0)
-                except Exception:
+                except Exception as e:
                     print(f"ch{i+1} error: {e}")
                     flows.append(0.0)
         return [DataTuple(self.data_label[i], flows[i]) for i in range(4)]
