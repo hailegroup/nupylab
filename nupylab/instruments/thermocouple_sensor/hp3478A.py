@@ -35,7 +35,7 @@ class HP3478A(NupylabInstrument):
             name: name of instrument.
         """
         self._port: str = port
-        self.cj_temp: float = 40
+        self.cj_temp: float = 23
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
         self._tc_type: str = "T"
