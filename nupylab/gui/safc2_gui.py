@@ -73,8 +73,8 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 
     _default_furnace = "ASRL4::INSTR" if "ASRL4::INSTR" in resources else (resources[0] if resources else "")
     _default_mfc = "ASRL5::INSTR" if "ASRL5::INSTR" in resources else (resources[0] if resources else "")
-    _default_potentiostat = "GPIB0::20::INSTR" if "GPIB0::20::INSTR" in resources else (resources[0] if resources else "")
-    _default_tc = "GPIB0::15::INSTR" if "GPIB0::15::INSTR" in resources else (resources[0] if resources else "")
+    _default_potentiostat = "GPIB0::18::INSTR" if "GPIB0::18::INSTR" in resources else (resources[0] if resources else "")
+    _default_tc = "GPIB0::7::INSTR" if "GPIB0::7::INSTR" in resources else (resources[0] if resources else "")
     _default_scanner = "GPIB0::17::INSTR" if "GPIB0::17::INSTR" in resources else (resources[0] if resources else "")
 
     furnace_port = ListParameter("Eurotherm Port", choices=resources, default=_default_furnace, ui_class=None)
@@ -210,7 +210,7 @@ def main(*args):
     # They use separate instances from the experiment so ports aren't shared.
     furnace = Heater("ASRL4::INSTR", "Furnace Temperature (degC)")
     mfc = MFC(
-        "ASRL3::INSTR",
+        "ASRL5::INSTR",
         (
             "MFC 1 Flow (cc/min)",
             "MFC 2 Flow (cc/min)",
@@ -219,7 +219,7 @@ def main(*args):
         )
     )
     potentiostat = Potentiostat(
-        "GPIB0::20::INSTR",
+        "GPIB0::18::INSTR",
         ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)")
     )
 
