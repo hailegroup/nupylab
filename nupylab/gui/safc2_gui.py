@@ -81,7 +81,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     mfc_port = ListParameter("ROD-4 Port", choices=resources, default=_default_mfc, ui_class=None)
     potentiostat_port = ListParameter("Potentiostat Port", choices=resources, default=_default_potentiostat, ui_class=None)
     tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default=_default_tc, ui_class=None)
-    room_temp = FloatParameter("Room Temperature", units="C°", step=1, default=23.0)
+    room_temp = FloatParameter("Room Temperature", units="C°", step=1, default=20.0)
     scanner_port = ListParameter("Scanner Port", choices=resources, default=_default_scanner, ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
