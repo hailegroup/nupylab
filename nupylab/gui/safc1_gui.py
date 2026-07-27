@@ -1,5 +1,5 @@
 """
-GUI for SAFC station.
+GUI for SAFC2 station.
 
 This GUI connects to and displays data from
     * ROD-4 MFC Controller
@@ -10,11 +10,11 @@ This GUI connects to and displays data from
 
 Run the program by changing to the directory containing this file and calling:
 
-python safc_gui.py
+python safc2_gui.py
 
 Configs:
 Furnace: COM9
-ROD4: COM4
+ROD4: COM3
 Potentiostat: 20
 TC: 15
 Scanner: 17
@@ -81,7 +81,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     mfc_port = ListParameter("ROD-4 Port", choices=resources, default=_default_mfc, ui_class=None)
     potentiostat_port = ListParameter("Potentiostat Port", choices=resources, default=_default_potentiostat, ui_class=None)
     tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default=_default_tc, ui_class=None)
-    tc_sensor_digits = IntegerParameter("Voltage Resolution", units="V", minimum=3, maximum=5, step=1, default=5)
+    room_temp = FloatParameter("Cold Junction Temperature", units="C°", step=1, default=31.0)
     scanner_port = ListParameter("Scanner Port", choices=resources, default=_default_scanner, ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
@@ -132,7 +132,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "mfc_port",
         "potentiostat_port",
         "tc_sensor_port",
-        "tc_sensor_digits",
+        "room_temp",
         "scanner_port",
     ]
 
@@ -166,7 +166,12 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 self.potentiostat_port,
                 ("1: Frequency (Hz)", "1: Z_re (ohm)", "1: -Z_im (ohm)"),
             )
-            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", self.tc_sensor_digits)
+            digits = 5
+            if self.record_time < 3:
+                digits = 4
+            elif self.record_time < 2:
+                digits = 3
+            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", digits, self.room_temp)
             scanner = Scanner(self.scanner_port)
         self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
@@ -208,7 +213,7 @@ def main(*args):
     # Create instrument instances for control panel.
     # These are NOT connected at startup — user clicks Connect in the panel.
     # They use separate instances from the experiment so ports aren't shared.
-    furnace = Heater("ASRL4::INSTR", "Furnace Temperature (degC)")
+    furnace = Heater("ASRL9::INSTR", "Furnace Temperature (degC)")
     mfc = MFC(
         "ASRL3::INSTR",
         (
@@ -226,8 +231,8 @@ def main(*args):
     # Window must be created before control so abort_callback can reference manager
     window = nupylab_window.NupylabWindow(
         SAFCProcedure,
-        directory="C:/Users/SAFC1/.nupylab/data",
-        parameters_dir="C:/Users/SAFC1/.nupylab/parameters",
+        directory="C:/Users/HaileResearch/nupylab/data",
+        parameters_dir="C:/Users/HaileResearch/nupylab/parameters",
     )
 
     def abort_experiment():

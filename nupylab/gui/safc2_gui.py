@@ -15,8 +15,8 @@ python safc2_gui.py
 Configs:
 Furnace: COM4
 ROD4: COM5
-Potentiostat: 20
-TC: 15
+Potentiostat: 18
+TC: 7
 Scanner: 17
 """
 
