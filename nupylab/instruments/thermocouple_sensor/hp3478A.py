@@ -39,7 +39,7 @@ class HP3478A(NupylabInstrument):
         self.cj_temp: float = room_temp
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
-        self._tc_type: str = "T"
+        self._tc_type: str = "K"
         self._last_temp: float = room_temp
         self._resolution: int = resolution
         super().__init__(data_label, name)
