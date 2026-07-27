@@ -133,6 +133,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "mfc_port",
         "potentiostat_port",
         "tc_sensor_port",
+        "tc_sensor_digits",
         "room_temp",
         "scanner_port",
     ]
