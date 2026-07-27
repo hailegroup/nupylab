@@ -11,10 +11,11 @@ from pymeasure.display.widgets import TabWidget
 class FileLineEdit(QtWidgets.QLineEdit):
     """Widget for browsing and selecting file of experimental parameters."""
 
-    def __init__(self, table_model, parent=None):
+    def __init__(self, table_model, parent=None, parameters_dir: str = ""):
         """Create line edit widget with completer and file browser."""
         super().__init__(parent)
 
+        self.parameters_dir = parameters_dir
         self.table_model = table_model
 
         completer = QtWidgets.QCompleter(self)
