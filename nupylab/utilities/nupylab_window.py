@@ -72,7 +72,7 @@ class NupylabWindow(ManagedDockWindow):
             procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir,),
+                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, ),
             ),
             **kwargs,
         )
@@ -95,22 +95,26 @@ class NupylabWindow(ManagedDockWindow):
         self.manager.failed.connect(self._on_failed)
 
     def abort_returned(self, experiment):
-        """After abort, automatically start next queued experiment if available."""
         self.browser_widget.clear_button.setEnabled(True)
-        self.abort_button.setText("Abort")
-        self.abort_button.clicked.disconnect()
-        self.abort_button.clicked.connect(self.abort)
-        
         if self.manager.experiments.has_next():
-            # Auto-start next experiment instead of showing Resume
+            self.abort_button.setText("Resume")
             self.abort_button.setEnabled(True)
-            self.manager.next()
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
         else:
+            self.abort_button.setText("Abort")
             self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
 
     def finished(self, experiment):
         """Show Resume if more steps queued, else re-enable clear button."""
-        print("NupylabWindow.finished called")
         self.browser_widget.clear_button.setEnabled(True)
         if self.manager.experiments.has_next():
             self.abort_button.setText("Resume")
@@ -250,3 +254,13 @@ class NupylabWindow(ManagedDockWindow):
 
             self.manager.queue(experiment)
             previous_procedure = procedure
+
+            # If manager stopped (after abort/fail), show Resume instead of auto-running
+            if not self.manager.is_running():
+                self.abort_button.setText("Resume")
+                self.abort_button.setEnabled(True)
+                try:
+                    self.abort_button.clicked.disconnect()
+                except Exception:
+                    pass
+                self.abort_button.clicked.connect(self.resume)
