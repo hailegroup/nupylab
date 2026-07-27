@@ -87,7 +87,6 @@ class HP3478A(NupylabInstrument):
         except Exception as e:
             return DataTuple(self.data_label, self._last_temp)
         try:
-            print(f"voltage: {voltage}, voltage*1000: {voltage*1000}, cj_temp: {self.cj_temp}")
             temp: float = thermocouples.calculate_temperature(
                 (voltage) * 1000, self.tc_type, self.cj_temp
             )
