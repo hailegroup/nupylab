@@ -43,12 +43,14 @@ class FileLineEdit(QtWidgets.QLineEdit):
         )
 
     def _get_starting_directory(self):
-        """Get current directory if set, otherwise set to root folder."""
+        """Get current directory if set, otherwise use parameters_dir or root."""
         current_text = self.text()
         if current_text != '' and QtCore.QDir(current_text).exists():
             return current_text
+        elif self.parameters_dir and QtCore.QDir(self.parameters_dir).exists():
+            return self.parameters_dir
         else:
-            return 'C:/Users/SAFC1/.nupylab/parameters'
+            return '/'
 
     def browse_triggered(self):
         """Open dialog for file selection."""
@@ -271,6 +273,7 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
             table_columns: Sequence[str],
             float_digits: int = 1,
             combo_columns: List[int] = None,
+            parameters_dir: str = "",
             parent=None
     ) -> None:
         """Initialize UI and layout.
@@ -283,6 +286,7 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
         """
         super().__init__(name, parent)
         self.float_digits = float_digits
+        self.parameters_dir = parameters_dir
         self._setup_ui(table_columns, combo_columns)
         self._layout()
 
@@ -297,7 +301,7 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
             parent=self,
         )
 
-        self.parameters_file = FileLineEdit(self.table.model, self)
+        self.parameters_file = FileLineEdit(self.table.model, self, parameters_dir=self.parameters_dir)
 
     def _layout(self):
         vbox = QtWidgets.QVBoxLayout(self)

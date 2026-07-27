@@ -44,6 +44,7 @@ class NupylabWindow(ManagedDockWindow):
         self,
         procedure_class: Type[NupylabProcedure],
         directory: str,
+        parameters_dir: str = "",
         extra_tabs = None,
         **kwargs,
     ) -> None:
@@ -71,7 +72,7 @@ class NupylabWindow(ManagedDockWindow):
             procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict),
+                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir,),
             ),
             **kwargs,
         )

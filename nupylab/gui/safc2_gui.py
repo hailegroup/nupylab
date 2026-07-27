@@ -227,6 +227,7 @@ def main(*args):
     window = nupylab_window.NupylabWindow(
         SAFCProcedure,
         directory="C:/Users/HaileResearch/nupylab/data",
+        parameters_dir="C:/Users/HaileResearch/nupylab/parameters",
     )
 
     def abort_experiment():
