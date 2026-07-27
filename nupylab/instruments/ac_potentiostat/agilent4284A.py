@@ -136,6 +136,9 @@ class Agilent4284A(NupylabInstrument):
                             "frequency", instrument._freq_list
                         )
                     abs_z, z_phase, freq = results
+                    abs_z = np.array(abs_z)      # ADD
+                    z_phase = np.array(z_phase)  # ADD
+                    freq = np.array(freq)        # ADD
                     z_re = (abs_z * np.cos(z_phase)).tolist()
                     z_im = (-abs_z * np.sin(z_phase)).tolist()
                     instrument._finished = True
