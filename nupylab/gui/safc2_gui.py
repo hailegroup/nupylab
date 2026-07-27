@@ -81,7 +81,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     mfc_port = ListParameter("ROD-4 Port", choices=resources, default=_default_mfc, ui_class=None)
     potentiostat_port = ListParameter("Potentiostat Port", choices=resources, default=_default_potentiostat, ui_class=None)
     tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default=_default_tc, ui_class=None)
-    tc_sensor_digits = IntegerParameter("Voltage Resolution", units="V", minimum=3, maximum=5, step=1, default=5)
     room_temp = FloatParameter("Room Temperature", units="C°", step=1, default=23.0)
     scanner_port = ListParameter("Scanner Port", choices=resources, default=_default_scanner, ui_class=None)
 
@@ -133,7 +132,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "mfc_port",
         "potentiostat_port",
         "tc_sensor_port",
-        "tc_sensor_digits",
         "room_temp",
         "scanner_port",
     ]
@@ -168,7 +166,12 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 self.potentiostat_port,
                 ("1: Frequency (Hz)", "1: Z_re (ohm)", "1: -Z_im (ohm)"),
             )
-            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", self.tc_sensor_digits, self.room_temp)
+            digits = 5
+            if self.record_time < 3:
+                digits = 4
+            elif self.record_time < 2:
+                digits = 3
+            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", digits, self.room_temp)
             scanner = Scanner(self.scanner_port)
         self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
