@@ -24,6 +24,7 @@ class HP3478A(NupylabInstrument):
         port: str,
         data_label: str,
         resolution: int,
+        room_temp: float,
         name: str = "HP 3478A",
     ) -> None:
         """Initialize HP 3478A data labels, name, and connection parameters.
@@ -35,11 +36,11 @@ class HP3478A(NupylabInstrument):
             name: name of instrument.
         """
         self._port: str = port
-        self.cj_temp: float = 23
+        self.cj_temp: float = room_temp
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
         self._tc_type: str = "T"
-        self._last_temp: float = 40
+        self._last_temp: float = room_temp
         self._resolution: int = resolution
         super().__init__(data_label, name)
 
