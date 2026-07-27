@@ -231,8 +231,8 @@ def main(*args):
     # Window must be created before control so abort_callback can reference manager
     window = nupylab_window.NupylabWindow(
         SAFCProcedure,
-        directory="C:/Users/HaileResearch/nupylab/data",
-        parameters_dir="C:/Users/HaileResearch/nupylab/parameters",
+        directory="C:/Users/SAFC1/.nupylab/data",
+        parameters_dir="C:/Users/SAFC1/.nupylab/parameters",
     )
 
     def abort_experiment():
