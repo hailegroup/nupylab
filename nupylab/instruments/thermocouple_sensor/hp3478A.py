@@ -50,7 +50,7 @@ class HP3478A(NupylabInstrument):
             self.hp3478a = hp3478A.HP3478A(self._port)
             self.hp3478a.reset()
             self.hp3478a.mode = "DCV"
-            self.hp3478a.range = 0.003
+            self.hp3478a.range = 0.03
             self.hp3478a.resolution = self._resolution
             self._connected = True
         except Exception as e:
