@@ -1,6 +1,8 @@
 """Adapts Eurotherm3216 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
 import logging
+import time
+
 from nupylab.drivers import eurotherm3216
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
@@ -19,7 +21,7 @@ class Eurotherm3216(NupylabInstrument):
     ) -> None:
         self.eurotherm = None
         self._finished: bool = False
-        self._panel = None  # reference to control panel for stopping timer
+        self._panel = None
         if "COM" not in port:
             port = port.replace("ASRL", "COM").replace("::INSTR", "")
         self._port = port
@@ -30,10 +32,18 @@ class Eurotherm3216(NupylabInstrument):
         """Connect to Eurotherm."""
         with self.lock:
             self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
+            time.sleep(0.5)
             self._connected = True
 
     def disconnect(self) -> None:
         """Disconnect from Eurotherm."""
+        if self._panel is not None and self._connected:
+            try:
+                self._panel.timer.stop()
+                if self._panel._worker and self._panel._worker.isRunning():
+                    self._panel._worker.wait(100)
+            except Exception:
+                pass
         with self.lock:
             if self.eurotherm is not None:
                 try:
@@ -42,12 +52,26 @@ class Eurotherm3216(NupylabInstrument):
                     pass
                 self.eurotherm = None
             self._connected = False
+        time.sleep(0.3)
 
     def set_parameters(
-        self, target_temperature: float, ramp_rate: float, dwell_time: float
+        self,
+        target_temperature: float,
+        ramp_rate: float,
+        dwell_time: float,
+        output_high_limit: float = 100.0,
     ) -> None:
+        """Set furnace program parameters.
+
+        Args:
+            target_temperature: target temperature in °C
+            ramp_rate: ramp rate in °C/min
+            dwell_time: dwell time in minutes
+            output_high_limit: maximum output power % (default 100).
+                Reducing this (e.g. 50) prevents overshoot on small temperature steps.
+        """
         self._finished = False
-        self._parameters = (target_temperature, ramp_rate, dwell_time)
+        self._parameters = (target_temperature, ramp_rate, dwell_time, output_high_limit)
 
     def start(self) -> None:
         if self._parameters is None:
@@ -56,7 +80,7 @@ class Eurotherm3216(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         with self.lock:
-            target_temperature, ramp_rate, dwell_time = self._parameters
+            target_temperature, ramp_rate, dwell_time, output_high_limit = self._parameters
             self.eurotherm.program_status = "reset"
             self.eurotherm.end_type = "dwell"
             for segment in self.eurotherm.segments:
@@ -64,6 +88,8 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
+            # Set output power limit to prevent overshoot on small steps
+            self.eurotherm.write_register(30, int(output_high_limit))
             self.eurotherm.program_status = "run"
             self._parameters = None
 
@@ -115,7 +141,6 @@ class Eurotherm3216(NupylabInstrument):
                 self._setup_ui()
                 self.timer = QtCore.QTimer()
                 self.timer.timeout.connect(self.update_temp)
-                # Store panel reference on instrument for disconnect()
                 instrument._panel = self
 
             def _setup_ui(self):
@@ -138,6 +163,15 @@ class Eurotherm3216(NupylabInstrument):
                 self.dwell_time.setSuffix(" min")
                 self.dwell_time.setValue(10)
                 layout.addRow("Dwell Time:", self.dwell_time)
+
+                self.output_limit = QtWidgets.QDoubleSpinBox()
+                self.output_limit.setRange(1, 100)
+                self.output_limit.setSuffix(" %")
+                self.output_limit.setValue(100)
+                self.output_limit.setToolTip(
+                    "Max output power. Reduce to 30-50% for small temperature steps to prevent overshoot."
+                )
+                layout.addRow("Max Output Power:", self.output_limit)
 
                 btn_layout = QtWidgets.QHBoxLayout()
                 self.connect_btn = QtWidgets.QPushButton("Connect")
@@ -180,7 +214,7 @@ class Eurotherm3216(NupylabInstrument):
                 try:
                     self.timer.stop()
                     if self._worker and self._worker.isRunning():
-                        self._worker.wait(1000)
+                        self._worker.wait(2000)
                     instrument.disconnect()
                     self.status_label.setText("Status: Disconnected")
                     self.temp_label.setText("Current Temp: —")
@@ -196,7 +230,8 @@ class Eurotherm3216(NupylabInstrument):
                     instrument.set_parameters(
                         self.target_temp.value(),
                         self.ramp_rate.value(),
-                        self.dwell_time.value()
+                        self.dwell_time.value(),
+                        self.output_limit.value(),
                     )
                     instrument.start()
                     self.live_plot.clear()
@@ -204,9 +239,10 @@ class Eurotherm3216(NupylabInstrument):
                         self.timer.start(2000)
                     self.status_label.setText("Status: Program running")
                     _control_log.info(
-                        "Eurotherm program started: target=%.1f°C, ramp=%.1f°C/min, dwell=%.1fmin",
+                        "Eurotherm program started: target=%.1f°C, ramp=%.1f°C/min, "
+                        "dwell=%.1fmin, max_output=%.0f%%",
                         self.target_temp.value(), self.ramp_rate.value(),
-                        self.dwell_time.value()
+                        self.dwell_time.value(), self.output_limit.value()
                     )
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")

@@ -87,6 +87,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     target_temperature = FloatParameter("Target Temperature", units="C")
     ramp_rate = FloatParameter("Ramp Rate", units="C/min")
     dwell_time = FloatParameter("Dwell Time", units="min")
+    output_high_limit = FloatParameter("Max Output Power", units="%", default=100.0)
 
     mfc_1_setpoint = FloatParameter("MFC 1 Setpoint", units="sccm")
     mfc_2_setpoint = FloatParameter("MFC 2 Setpoint", units="sccm")
@@ -104,6 +105,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "Target Temperature [C]": "target_temperature",
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
+        "Max Output Power [%]": "output_high_limit",
         "MFC 1 [sccm]": "mfc_1_setpoint",
         "MFC 2 [sccm]": "mfc_2_setpoint",
         "MFC 3 [sccm]": "mfc_3_setpoint",
@@ -174,7 +176,12 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", digits, self.room_temp)
             scanner = Scanner(self.scanner_port)
         self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
-        furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
+        furnace.set_parameters(
+            self.target_temperature,
+            self.ramp_rate,
+            self.dwell_time,
+            self.output_high_limit,
+        )
         mfc.set_parameters(
             (
                 self.mfc_1_setpoint,
@@ -210,9 +217,6 @@ def main(*args):
     """Run SAFC procedure."""
     app = QtWidgets.QApplication(*args)
 
-    # Create instrument instances for control panel.
-    # These are NOT connected at startup — user clicks Connect in the panel.
-    # They use separate instances from the experiment so ports aren't shared.
     furnace = Heater("ASRL4::INSTR", "Furnace Temperature (degC)")
     mfc = MFC(
         "ASRL5::INSTR",
@@ -227,8 +231,8 @@ def main(*args):
         "GPIB0::18::INSTR",
         ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)")
     )
+    scanner_ctrl = Scanner("GPIB0::17::INSTR")  # for EIS sample switching
 
-    # Window must be created before control so abort_callback can reference manager
     window = nupylab_window.NupylabWindow(
         SAFCProcedure,
         directory="C:/Users/HaileResearch/nupylab/data",
@@ -236,13 +240,11 @@ def main(*args):
     )
 
     def abort_experiment():
-        """Abort any running experiment and disconnect control instruments."""
         try:
             window.manager.abort()
         except Exception:
             pass
-        # Also disconnect control instruments to free ports for experiment
-        for inst in [furnace, mfc, potentiostat]:
+        for inst in [furnace, mfc, potentiostat, scanner_ctrl]:
             if inst.connected:
                 try:
                     inst.disconnect()
@@ -251,15 +253,14 @@ def main(*args):
 
     control = InstrumentControlWidget(
         [furnace, mfc, potentiostat],
-        abort_callback=abort_experiment
+        abort_callback=abort_experiment,
+        scanner=scanner_ctrl,
     )
 
-    #Add control tab after window is created
     window.tabs.addTab(control, "Instrument Control")
 
     def disconnect_control_instruments():
-        """Disconnect control panel instruments before experiment starts."""
-        for inst in [furnace, mfc, potentiostat]:
+        for inst in [furnace, mfc, potentiostat, scanner_ctrl]:
             if inst.connected:
                 try:
                     inst.disconnect()
@@ -267,10 +268,7 @@ def main(*args):
                     pass
         time.sleep(0.5)
 
-    #Disconnect control instruments when experiment is queued/started
     window.manager.queued.connect(disconnect_control_instruments)
-
-    #Track experiment state for abort logic
     window.manager.running.connect(
         lambda: control.set_enabled_for_experiment(True)
     )

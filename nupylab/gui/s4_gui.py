@@ -4,7 +4,7 @@ GUI for S4 impedance station.
 This GUI connects to and displays data from
     * ROD-4 MFC Controller
     * Eurotherm 2416 Furnace Controller
-    * Keithley 2182 Nanovoltmeter (pO2 sensor, optional)
+    * Keithley 2182 Nanovoltmeter (pO2 sensor, optional) s2 solonoid valve via labjack, eurotherm 2416, diff 2 (2182A and 182)keithleys, s5 furnace biologic, solonoid and gas flow maybe?, modilab = hard, sitich station (tc) rod4, keithley 2182A, labjack for solonoid maybe ulvac (no driver), graphtec logger, masspec, 
     * Biologic SP-200 Potentiostat (optional)
 
 Run the program by changing to the directory containing this file and calling:

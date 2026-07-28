@@ -89,6 +89,9 @@ class Agilent4284A(NupylabInstrument):
         with self.lock:
             results = self.agilent.sweep_measurement("frequency", self._freq_list)
         abs_z, z_phase, freq = results
+        abs_z = np.array(abs_z)
+        z_phase = np.array(z_phase)
+        freq = np.array(freq)
         z_re = abs_z * np.cos(z_phase)
         z_im = abs_z * np.sin(z_phase)
         data = [
@@ -118,15 +121,21 @@ class Agilent4284A(NupylabInstrument):
         with self.lock:
             self.agilent.adapter.close()
 
-    def control_widget(self, abort_callback=None):
-        """Return a Qt control panel for this instrument."""
+    def control_widget(self, abort_callback=None, scanner=None):
+        """Return a Qt control panel for this instrument.
+
+        Args:
+            abort_callback: callable to abort running experiment
+            scanner: Keithley705 instance for switching EIS sample channels.
+                     If provided, the panel shows a sample selector.
+        """
         from pymeasure.display.Qt import QtWidgets, QtCore
         from nupylab.utilities.instrument_control import LivePlotWidget
 
         instrument = self
 
         class SweepWorker(QtCore.QThread):
-            finished_sig = QtCore.Signal(list, list, list)  # freq, z_re, z_im
+            finished_sig = QtCore.Signal(list, list, list)
             error = QtCore.Signal(str)
 
             def run(self):
@@ -136,9 +145,9 @@ class Agilent4284A(NupylabInstrument):
                             "frequency", instrument._freq_list
                         )
                     abs_z, z_phase, freq = results
-                    abs_z = np.array(abs_z)      # ADD
-                    z_phase = np.array(z_phase)  # ADD
-                    freq = np.array(freq)        # ADD
+                    abs_z = np.array(abs_z)
+                    z_phase = np.array(z_phase)
+                    freq = np.array(freq)
                     z_re = (abs_z * np.cos(z_phase)).tolist()
                     z_im = (-abs_z * np.sin(z_phase)).tolist()
                     instrument._finished = True
@@ -153,6 +162,7 @@ class Agilent4284A(NupylabInstrument):
                 super().__init__("Agilent 4284A — LCR Meter")
                 self._worker = None
                 self._abort_callback = abort_callback
+                self._scanner = scanner
                 self.live_plot = LivePlotWidget(
                     "Nyquist Plot", "-Z_im (Ω)", n_traces=1
                 )
@@ -160,6 +170,16 @@ class Agilent4284A(NupylabInstrument):
 
             def _setup_ui(self):
                 layout = QtWidgets.QFormLayout()
+
+                # EIS Sample selector — only shown if scanner is provided
+                if self._scanner is not None:
+                    self.sample_spin = QtWidgets.QSpinBox()
+                    self.sample_spin.setRange(1, 8)
+                    self.sample_spin.setValue(1)
+                    self.sample_spin.setToolTip(
+                        "EIS sample number — connects scanner channel (sample + 11)"
+                    )
+                    layout.addRow("EIS Sample Number:", self.sample_spin)
 
                 self.max_freq = QtWidgets.QDoubleSpinBox()
                 self.max_freq.setRange(20, 1e6)
@@ -233,6 +253,21 @@ class Agilent4284A(NupylabInstrument):
                 try:
                     if not instrument.connected:
                         instrument.connect()
+
+                    # Switch scanner to the selected EIS sample channel
+                    if self._scanner is not None and self._scanner.connected:
+                        sample_num = self.sample_spin.value()
+                        channel = sample_num + 11  # matches experiment convention
+                        try:
+                            with self._scanner.lock:
+                                self._scanner.keithley705.close_channel(channel)
+                            _control_log.info(
+                                "Scanner switched to EIS channel %d (sample %d)",
+                                channel, sample_num
+                            )
+                        except Exception as e:
+                            _control_log.warning("Scanner channel switch failed: %s", e)
+
                     instrument.set_parameters(
                         self.max_freq.value(),
                         self.min_freq.value(),
@@ -261,18 +296,11 @@ class Agilent4284A(NupylabInstrument):
             def _on_sweep_done(self, freq, z_re, z_im):
                 self.status_label.setText("Status: Sweep complete")
                 self.run_btn.setEnabled(True)
-                # Plot -Z_im vs Z_re (Nyquist) — add each point
                 try:
-                    import pyqtgraph as pg
-                    self.live_plot._plot_widget.clear()
-                    self.live_plot._plot_widget.plot(z_re, z_im, pen='r',
-                                                     symbol='o', symbolSize=5)
-                    self.live_plot._plot_widget.setLabel('bottom', 'Z_re (Ω)')
+                    self.live_plot.set_xy(z_re, z_im)
+                    self.live_plot.set_labels("Z_re (Ω)", "-Z_im (Ω)")
                 except Exception:
-                    if z_im:
-                        self.live_plot._value_label.setText(
-                            f"max -Z_im: {max(z_im):.2e} Ω"
-                        )
+                    pass
                 _control_log.info("Agilent EIS sweep complete")
 
             def _on_sweep_error(self, e):

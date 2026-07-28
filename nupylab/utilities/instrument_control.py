@@ -178,11 +178,13 @@ class InstrumentControlWidget(QtWidgets.QWidget):
 
     def __init__(self, instruments: List = None,
                  abort_callback: Optional[Callable] = None,
+                 scanner=None,
                  parent=None):
         super().__init__(parent)
         self._panels = []
         self._abort_callback = abort_callback
         self._experiment_running = False
+        self._scanner = scanner
         self._setup_ui(instruments or [])
 
     def _setup_ui(self, instruments):
@@ -199,9 +201,12 @@ class InstrumentControlWidget(QtWidgets.QWidget):
 
         for instrument in instruments:
             if hasattr(instrument, 'control_widget'):
-                panel = instrument.control_widget(
-                    abort_callback=self._on_control_action
-                )
+                import inspect
+                cw_params = inspect.signature(instrument.control_widget).parameters
+                kwargs = {'abort_callback': self._on_control_action}
+                if 'scanner' in cw_params:
+                    kwargs['scanner'] = self._scanner
+                panel = instrument.control_widget(**kwargs)
                 panels_layout.addWidget(panel)
                 self._panels.append(panel)
 
