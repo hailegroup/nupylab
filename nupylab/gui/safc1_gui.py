@@ -88,7 +88,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     mfc_4_setpoint = FloatParameter("MFC 4 Setpoint", units="sccm")
 
     eis_toggle = ListParameter("Run EIS", choices=["True", "False"], ui_class=None)
-    eis_sample = IntegerParameter("EIS Sample Number")
+    eis_sample = IntegerParameter("EIS Sample Number", minimum=0)
     maximum_frequency = FloatParameter("Maximum Frequency", units="Hz")
     minimum_frequency = FloatParameter("Minimum Frequency", units="Hz")
     amplitude_voltage = FloatParameter("Amplitude Voltage", units="V")
@@ -164,7 +164,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         except Exception:
             current_temp = self.target_temperature
         temp_step = abs(self.target_temperature - current_temp)
-        output_limit = max(20.0, min(100.0, temp_step * 1.5))
+        output_limit = max(30.0, min(100.0, temp_step * 3.0))
         furnace.set_parameters(
             self.target_temperature,
             self.ramp_rate,
