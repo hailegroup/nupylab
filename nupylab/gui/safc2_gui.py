@@ -87,7 +87,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     target_temperature = FloatParameter("Target Temperature", units="C")
     ramp_rate = FloatParameter("Ramp Rate", units="C/min")
     dwell_time = FloatParameter("Dwell Time", units="min")
-    output_high_limit = FloatParameter("Max Output Power", units="%", default=100.0)
 
     mfc_1_setpoint = FloatParameter("MFC 1 Setpoint", units="sccm")
     mfc_2_setpoint = FloatParameter("MFC 2 Setpoint", units="sccm")
@@ -105,7 +104,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "Target Temperature [C]": "target_temperature",
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
-        "Max Output Power [%]": "output_high_limit",
         "MFC 1 [sccm]": "mfc_1_setpoint",
         "MFC 2 [sccm]": "mfc_2_setpoint",
         "MFC 3 [sccm]": "mfc_3_setpoint",
@@ -176,11 +174,19 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", digits, self.room_temp)
             scanner = Scanner(self.scanner_port)
         self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
+        # Adaptive output power limit based on temperature step size
+        # Prevents overshoot on small steps while allowing full power for large steps
+        try:
+            current_temp = furnace.eurotherm.process_value if furnace.connected else self.target_temperature
+        except Exception:
+            current_temp = self.target_temperature
+        temp_step = abs(self.target_temperature - current_temp)
+        output_limit = max(20.0, min(100.0, temp_step * 1.5))
         furnace.set_parameters(
             self.target_temperature,
             self.ramp_rate,
             self.dwell_time,
-            self.output_high_limit,
+            output_limit,
         )
         mfc.set_parameters(
             (
