@@ -169,7 +169,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             self.target_temperature,
             self.ramp_rate,
             self.dwell_time,
-            output_limit,
         )
         mfc.set_parameters(
             (

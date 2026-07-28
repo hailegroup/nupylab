@@ -59,7 +59,6 @@ class Eurotherm3216(NupylabInstrument):
         target_temperature: float,
         ramp_rate: float,
         dwell_time: float,
-        output_high_limit: float = 100.0,
     ) -> None:
         """Set furnace program parameters.
 
@@ -71,7 +70,7 @@ class Eurotherm3216(NupylabInstrument):
                 Reducing this (e.g. 50) prevents overshoot on small temperature steps.
         """
         self._finished = False
-        self._parameters = (target_temperature, ramp_rate, dwell_time, output_high_limit)
+        self._parameters = (target_temperature, ramp_rate, dwell_time)
 
     def start(self) -> None:
         if self._parameters is None:
@@ -80,7 +79,7 @@ class Eurotherm3216(NupylabInstrument):
                 "must be called before calling its `start` method."
             )
         with self.lock:
-            target_temperature, ramp_rate, dwell_time, output_high_limit = self._parameters
+            target_temperature, ramp_rate, dwell_time = self._parameters
             self.eurotherm.program_status = "reset"
             self.eurotherm.end_type = "dwell"
             for segment in self.eurotherm.segments:
@@ -88,8 +87,6 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
-            # Set output power limit to prevent overshoot on small steps
-            self.eurotherm.write_register(30, int(output_high_limit))
             self.eurotherm.program_status = "run"
             self._parameters = None
 
