@@ -38,34 +38,31 @@ class Biologic(NupylabInstrument):
             port: string name of port, e.g. `USB0` or IP address.
             model: Biologic model, e.g. `SP200` or `SP300`.
             channels: Biologic channels to measure, zero-based.
-            data_label: labels for DataTuples. :meth:`get_data` returns seven results
-                for each channel (E_we, I, frequency, Z_re, -Z_im, |Z|, and Phase), and corresponding
+            data_label: labels for DataTuples. :meth:`get_data` returns four results
+                for each channel (E_we, frequency, Z_re, -Z_im, |Z|, and Phase), and corresponding
                 labels should match entries in DATA_COLUMNS.
             name: name of instrument.
             eclib_path: path to the directory containing the EClib DLL. If None, default
                 is used.
 
         Raises:
-            ValueError: if `data_label` does not contain 7 entries per channel.
+            ValueError: if `data_label` does not contain 6 entries per channel.
         """
         if not hasattr(channels, "__len__"):
             channels = (channels,)
-        if len(channels) * 7 != len(data_label):
-            raise ValueError("data_label must contain 7 entries per channel.")
+        if len(channels) * 6 != len(data_label):
+            raise ValueError("data_label must contain 6 entries per channel.")
         model = model.replace("-", "").replace(" ", "").upper()
         self.biologic: BiologicPotentiostat = BiologicPotentiostat(
             model, port, eclib_path
         )
-        self.ocv = None
         self.channels = channels
         self._chan_bool: List[int] = [
             0,
         ] * 16  # for multi-channel operations
         for c in self.channels:
             self._chan_bool[c] = 1
-        self._measuring_ocv: bool = False
         self._finished: bool = False
-        self._eis_condition = None
         super().__init__(data_label, name)
 
     def connect(self) -> None:
@@ -92,7 +89,7 @@ class Biologic(NupylabInstrument):
         technique_dict: dict = globals()[technique + "_DICT"].copy()
         technique_dict.update(
             {
-                "duration_step": dur_0*60,
+                "duration_step": dur_0,
                 "initial_frequency": max_freq,
                 "final_frequency": min_freq,
                 "frequency_number": freq_steps,
@@ -123,7 +120,6 @@ class Biologic(NupylabInstrument):
         amplitude: float,
         points_per_decade: int,
         technique: str,
-        eis_condition: Callable[[], bool],
         **kwargs,
     ) -> None:
         """Set measurement parameters and prepare eis technique.
@@ -151,13 +147,7 @@ class Biologic(NupylabInstrument):
         eis: Type[Technique] = getattr(
             importlib.import_module("nupylab.drivers.biologic"), technique
         )
-        self.ocv: OCV = OCV(
-            duration=24 * 60 * 60,
-            record_every_de=0.1,
-            record_every_dt=record_time,
-            e_range="KBIO_ERANGE_AUTO",
-        )
-        self._eis_condition = eis_condition
+
         self._initialize_eis(
             initial_step,
             duration_step,
@@ -184,15 +174,8 @@ class Biologic(NupylabInstrument):
                 f"`{self.__class__.__name__}` method `set_parameters` "
                 "must be called before calling its `start` method."
             )
-        with self.lock:
-            for c in self.channels:
-                self.biologic.load_technique(c, self.ocv, first=True, last=True)
-            if len(self.channels) == 1:
-                self.biologic.start_channel(self.channels[0])
-            else:
-                self.biologic.start_channels(self._chan_bool)
-        self._measuring_ocv = True
-        self._parameters = None
+        self.parameters = None
+
 
     def get_data(self) -> List[DataTuple]:
         """Get OCV or eis data for each channel.
@@ -203,23 +186,20 @@ class Biologic(NupylabInstrument):
         """
         with self.lock:
             all_data = [self.biologic.get_data(c) for c in self.channels]
-            if not self._measuring_ocv:
-                self._finished = all(
-                    self.biologic.get_channel_infos(c)["State"] == 0 for c in self.channels
-                )
+            self._finished = all(
+                self.biologic.get_channel_infos(c)["State"] == 0 for c in self.channels
+            )
             # Switch from OCV to eis upon external condition, like furnace program complete
-            if self.eis_condition:
-                if len(self.channels) == 1:
-                    channel = self.channels[0]
-                    self.biologic.stop_channel(channel)
-                    self.biologic.load_technique(channel, self._eis, first=True, last=True)
-                    self.biologic.start_channel(channel)
-                else:
-                    self.biologic.stop_channels(self._chan_bool)
-                    for c in self.channels:
-                        self.biologic.load_technique(c, self._eis, first=True, last=True)
-                    self.biologic.start_channels(self._chan_bool)
-                self._measuring_ocv = False
+            if len(self.channels) == 1:
+                channel = self.channels[0]
+                self.biologic.load_technique(channel, self._eis, first=True, last=True)
+                self.biologic.start_channel(channel)
+            else:
+                for c in self.channels:
+                    self.biologic.load_technique(c, self._eis, first=True, last=True)
+                self.biologic.start_channels(self._chan_bool)
+
+
 
         data = []
         for kbio_data, c in zip(all_data, self.channels):
@@ -234,29 +214,19 @@ class Biologic(NupylabInstrument):
                 theta = np.arctan(z_im/z_re)*180/np.pi
                 data.append((
                     DataTuple(self.data_label[0], kbio_data.Ewe),
-                    DataTuple(self.data_label[1], kbio_data.I),
-                    DataTuple(self.data_label[2], kbio_data.freq),
-                    DataTuple(self.data_label[3], z_re),
-                    DataTuple(self.data_label[4], -z_im),
-                    DataTuple(self.data_label[5], np.abs(abs_z)),
-                    DataTuple(self.data_label[6], theta),)
+                    DataTuple(self.data_label[1], kbio_data.freq),
+                    DataTuple(self.data_label[2], z_re),
+                    DataTuple(self.data_label[3], -z_im),
+                    DataTuple(self.data_label[4], np.abs(abs_z)),
+                    DataTuple(self.data_label[5], theta),)
                 )
             else:
                 data.append(DataTuple(self.data_label[0], kbio_data.Ewe))
         return data
 
     @property
-    def eis_condition(self) -> bool:
-        """Get whether to begin eis measurement."""
-        if not self._measuring_ocv:  # Prevents unnecessary function calls
-            return False
-        return self._eis_condition()
-
-    @property
     def finished(self) -> bool:
         """Get whether Biologic channels are finished."""
-        if self._measuring_ocv:  # Never finished if measuring OCV
-            return False
         return self._finished
 
     def stop_measurement(self) -> None:

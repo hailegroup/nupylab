@@ -14,7 +14,7 @@ import sys
 from typing import Dict, List
 
 # Instrument Imports #
-from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
+from nupylab.instruments.dc_potentiostat.biologic import DCBiologic as DCPotentiostat
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
@@ -29,44 +29,45 @@ from pymeasure.experiment import (
 
 
 class S8Procedure(nupylab_procedure.NupylabProcedure):
-    """Procedure for running high impedance station GUI.
+    """Procedure for running chronopotentiometry or chronoamperometry station GUI.
 
     Running this procedure calls startup, execute, and shutdown methods sequentially.
     In addition to the parameters listed below, this procedure inherits `record_time`,
     `num_steps`, and `current_steps` from parent class.
     """
-
+    #Lists for references
     resources = list_resources()
-    Potentiostat_options = ["Biologic",]
-    Biologic_models = ["SP200", "SP300"]
-    EIS_techniques = ["PEIS", "SPEIS", "GEIS", "SGEIS"]
+    biologic_models = ["SP300", "SP200"]
+    method_list = ["CA", "CP"]
 
-    #Furnace parameters
+    #Furnace parameters for left bar
     furnace_port: ListParameter = ListParameter(
         "Eurotherm Port", choices=resources, ui_class=None
     )
     furnace_address: IntegerParameter = IntegerParameter(
         "Eurotherm Address", minimum=1, maximum=254, step=1, default=1
     )
+
+    #Furnace parameters for steps
     target_temperature: FloatParameter = FloatParameter("Target Temperature", units="C")
     ramp_rate: FloatParameter = FloatParameter("Ramp Rate", units="C/min")
     dwell_time: FloatParameter = FloatParameter("Dwell Time", units="min")
 
-    #Potentiostat Parameters
-    potentiostat: ListParameter = ListParameter("Brand Potentiostat", default="Biologic", choices=Potentiostat_options)
-    potentiostat_model = ListParameter("Model Potentiostat", choices=Biologic_models, default="SP200")
+    #Potentiostat parameters for left bar
     potentiostat_port: Parameter = Parameter(
-        "Biologic Port", default="USB0", ui_class=None, group_by="eis_toggle"
+        "Biologic Port", default="USB0", ui_class=None, group_by="dc_toggle"
     )
-    potentiostat_technique = ListParameter("EIS Technique", default="PEIS", choices=EIS_techniques)
+    potentiostat_model: ListParameter = ListParameter("Biologic Model", choices=biologic_models, default="SP200", ui_class=None)
 
-    eis_toggle: BooleanParameter = BooleanParameter("Run eis")
-    initial_step: FloatParameter = FloatParameter("Initial Step", units="V", default=0)
-    duration_step: FloatParameter = FloatParameter("Duration Step", units="s")
-    maximum_frequency: FloatParameter = FloatParameter("Maximum Frequency", units="Hz")
-    minimum_frequency: FloatParameter = FloatParameter("Minimum Frequency", units="Hz")
-    amplitude_voltage: FloatParameter = FloatParameter("Amplitude Voltage", units="V")
-    points_per_decade: IntegerParameter = IntegerParameter("Points Per Decade")
+    # The procedure class can not take a string as an input, so we can't make a drop down menu to select a method for
+    # each step. We can only use booleans. Maybe a feature to add in the future? Would require re-working the
+    # nupylab_window file as well as others.
+    dc_technique: ListParameter = ListParameter("Technique", choices=method_list, default="CA")
+
+    # Potentiostat parameters for steps
+    dc_toggle: BooleanParameter = BooleanParameter("Run DC")
+    applied_step: FloatParameter = FloatParameter("Applied Stimulus",units="V or A")
+    duration_step: FloatParameter = FloatParameter("Hold Time", units="s")
 
     # Units in parentheses must be valid pint units
     # First two entries must be "System Time" and "Time (s)"
@@ -76,33 +77,21 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Furnace Temperature (degC)",
         "Ewe (V)",
         "I (A)",
-        "Frequency (Hz)",
-        "Z_re (ohm)",
-        "-Z_im (ohm)",
-        "|Z| (ohm)",
-        "Phase (degrees)"
     ]
 
     TABLE_PARAMETERS: Dict[str, str] = {
         "Target Temperature [C]": "target_temperature",
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
-        "eis? [True/False]": "eis_toggle",
-        "Initial Ewe or I [V or A]": "initial_step",
-        "Hold before EIS [min]": "duration_step",
-        "Maximum Frequency [Hz]": "maximum_frequency",
-        "Minimum Frequency [Hz]": "minimum_frequency",
-        "Amplitude Voltage [V]": "amplitude_voltage",
-        "Points per Decade": "points_per_decade"
+        "DC? [True/False]": "dc_toggle",
+        "Applied Stimulus [V or A]": "applied_step",
+        "Hold time [s]": "duration_step",
     }
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.
     # Number of plots is determined by the longer of X_AXIS or Y_AXIS
-    X_AXIS: List[str] = ["Z_re (ohm)","Frequency (Hz)", "Time (s)"]
+    X_AXIS: List[str] = ["Time (s)"]
     Y_AXIS: List[str] = [
-        "-Z_im (ohm)",
-        "|Z| (ohm)",
-        "Phase (degrees)",
         "Ewe (V)",
         "I (A)",
         "Furnace Temperature (degC)",
@@ -112,10 +101,9 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "record_time",
         "furnace_port",
         "furnace_address",
-        "potentiostat",
-        "potentiostat_model",
         "potentiostat_port",
-        "potentiostat_technique",
+        "potentiostat_model",
+        "dc_technique",
     ]
 
     def set_instruments(self) -> None:
@@ -133,33 +121,24 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
             furnace = Heater(
                 self.furnace_port, self.furnace_address, "Furnace Temperature (degC)"
             )
-            potentiostat = Potentiostat(
+            potentiostat = DCPotentiostat(
                 self.potentiostat_port,
                 self.potentiostat_model,
                 0,
                 (
                     "Ewe (V)",
                     "I (A)",
-                    "Frequency (Hz)",
-                    "Z_re (ohm)",
-                    "-Z_im (ohm)",
-                    "|Z| (ohm)",
-                    "Phase (degrees)",
                 ),
             )
         self.instruments = (furnace, potentiostat)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
-        if self.eis_toggle:
+        if self.dc_toggle:
             self.active_instruments = (furnace, potentiostat)
             potentiostat.set_parameters(
                 self.record_time,
-                self.initial_step,
+                self.applied_step,
                 self.duration_step,
-                self.maximum_frequency,
-                self.minimum_frequency,
-                self.amplitude_voltage,
-                self.points_per_decade,
-                self.potentiostat_technique,
+                self.dc_technique,
                 lambda: furnace.finished,
             )
         else:

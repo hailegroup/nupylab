@@ -937,7 +937,7 @@ class KBIOData:
         if technique_id == 0:
             return
 
-        # Extract the process index, used to seperate data field classes for
+        # Extract the process index, used to separate data field classes for
         # techniques that support that
         self.process = c_data_infos.ProcessIndex
         # Init the data_fields
