@@ -20,6 +20,7 @@ TC: 15
 Scanner: 17
 """
 
+from logging import log
 import sys
 import time
 from typing import Dict, List
@@ -75,7 +76,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     mfc_port = ListParameter("ROD-4 Port", choices=resources, default=_default_mfc, ui_class=None)
     potentiostat_port = ListParameter("Potentiostat Port", choices=resources, default=_default_potentiostat, ui_class=None)
     tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default=_default_tc, ui_class=None)
-    room_temp = FloatParameter("Cold Junction Temperature", units="C°", step=1, default=31.0)
     scanner_port = ListParameter("Scanner Port", choices=resources, default=_default_scanner, ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
@@ -123,7 +123,6 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "mfc_port",
         "potentiostat_port",
         "tc_sensor_port",
-        "room_temp",
         "scanner_port",
     ]
 
@@ -154,17 +153,9 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 digits = 4
             elif self.record_time < 2:
                 digits = 3
-            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", digits, self.room_temp)
+            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", digits)
             scanner = Scanner(self.scanner_port)
         self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
-        # Adaptive output power limit based on temperature step size
-        # Prevents overshoot on small steps while allowing full power for large steps
-        try:
-            current_temp = furnace.eurotherm.process_value if furnace.connected else self.target_temperature
-        except Exception:
-            current_temp = self.target_temperature
-        temp_step = abs(self.target_temperature - current_temp)
-        output_limit = max(30.0, min(100.0, temp_step * 3.0))
         furnace.set_parameters(
             self.target_temperature,
             self.ramp_rate,
@@ -182,6 +173,24 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         scanner.set_parameters(3, tc_sensor, "2: Temperature (degC)")
         scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
         tc_sensor.connect()
+        # Automatically measure cold junction temperature from 7057A thermistor
+        try:
+            if not scanner.connected:
+                scanner.connect()
+            scanner.keithley705.close_channel(1)
+            time.sleep(0.3)
+            cj_voltage = tc_sensor.hp3478a.measure_DCV
+            scanner.keithley705.open_channel(1)
+            cj_measured = 30 - 1000 * cj_voltage
+            if 15.0 < cj_measured < 50.0:
+                tc_sensor.cj_temp = cj_measured
+                log.info("Cold junction temperature measured: %.1f C", cj_measured)
+            else:
+                tc_sensor.cj_temp = 25.0
+                log.warning("CJ measurement out of range (%.1f C), using 25C", cj_measured)
+        except Exception as e:
+            tc_sensor.cj_temp = 25.0
+            log.warning("CJ measurement failed: %s, using 25C", e)
         potentiostat.connect()
         if str(self.eis_toggle).lower() == "true":
             potentiostat.set_parameters(
