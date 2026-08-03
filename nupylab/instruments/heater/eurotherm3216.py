@@ -88,20 +88,7 @@ class Eurotherm3216(NupylabInstrument):
     def get_data(self) -> DataTuple:
         with self.lock:
             temperature: float = self.eurotherm.process_value
-            status = self.eurotherm.program_status
-            # Only mark finished when program ends AND we're near target
-            # This prevents false "finished" when program resets immediately
-            if status in ("reset", "end"):
-                if abs(temperature - self._target_temperature) < 2.0:
-                    self._finished = True
-                else:
-                    # Program ended too early — restart it
-                    log.warning(
-                        "Eurotherm program ended before reaching target "
-                        "(%.1f°C vs %.1f°C). Check PID tuning.",
-                        temperature, self._target_temperature
-                    )
-                    self._finished = True
+            self._finished = self.eurotherm.program_status in ("reset", "end")
         return DataTuple(self.data_label, temperature)
 
     @property
