@@ -82,8 +82,6 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
-            print(f"Programming segment 8: target={target_temperature}, ramp={ramp_rate}, dwell={dwell_time*60}")
-            print(f"Segment 8 values after write: target={self.eurotherm.segments[-1].target_setpoint}, ramp={self.eurotherm.segments[-1].ramp_rate}, dwell={self.eurotherm.segments[-1].dwell}")
             self.eurotherm.program_status = "run"
             self._parameters = None
 
