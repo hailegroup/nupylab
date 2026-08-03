@@ -195,7 +195,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             scanner.set_parameters(
                 self.eis_sample + 11,
                 potentiostat,
-                ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
+                ("Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
             )
         self.active_instruments = (furnace, mfc, scanner)
 
@@ -216,7 +216,7 @@ def main(*args):
     )
     potentiostat = Potentiostat(
         "GPIB0::20::INSTR",
-        ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)")
+        ("Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)")
     )
     # Scanner instance for EIS sample switching in control panel
     scanner = Scanner("GPIB0::17::INSTR")
