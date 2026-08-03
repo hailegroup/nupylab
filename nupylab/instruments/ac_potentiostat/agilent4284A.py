@@ -102,6 +102,7 @@ class Agilent4284A(NupylabInstrument):
         ]
         self._finished = True
         print(f"freq_list len: {len(self._freq_list)}, abs_z len: {len(abs_z)}, freq[:3]: {freq[:3]}")
+        print(f"data_label[0]: {self.data_label[0]}")
         return data
 
     @property
