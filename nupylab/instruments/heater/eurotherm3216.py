@@ -126,6 +126,7 @@ class Eurotherm3216(NupylabInstrument):
             def __init__(self):
                 super().__init__("Eurotherm 3216 — Furnace")
                 self._worker = None
+                self._program_started = False
                 self._abort_callback = abort_callback
                 self.live_plot = LivePlotWidget(
                     "Furnace Temperature", "Temperature (°C)", n_traces=1
@@ -153,7 +154,7 @@ class Eurotherm3216(NupylabInstrument):
                 self.dwell_time = QtWidgets.QDoubleSpinBox()
                 self.dwell_time.setRange(0, 9999)
                 self.dwell_time.setSuffix(" min")
-                self.dwell_time.setValue(10)
+                self.dwell_time.setValue(1)
                 layout.addRow("Dwell Time:", self.dwell_time)
 
                 btn_layout = QtWidgets.QHBoxLayout()
@@ -216,6 +217,7 @@ class Eurotherm3216(NupylabInstrument):
                         self.dwell_time.value(),
                     )
                     instrument.start()
+                    self._program_started = True
                     self.live_plot.clear()
                     if not self.timer.isActive():
                         self.timer.start(2000)
@@ -244,11 +246,12 @@ class Eurotherm3216(NupylabInstrument):
                 if self._worker and self._worker.isRunning():
                     return
                 self._worker = Worker()
-                def on_result(v):
-                    self.temp_label.setText(f"Current Temp: {v:.1f} °C")
-                    self.live_plot.add_point(v)
-                    if instrument.finished:
-                        self.status_label.setText("Status: Program complete")
-                        self.timer.stop()
+            def on_result(v):
+                self.temp_label.setText(f"Current Temp: {v:.1f} °C")
+                self.live_plot.add_point(v)
+                if instrument.finished and self._program_started:
+                    self.status_label.setText("Status: Program complete")
+                    self._program_started = False
+                    # Don't stop timer — keep showing temperature
 
         return EurothermPanel()
