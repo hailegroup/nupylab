@@ -23,6 +23,8 @@ class Eurotherm3216(NupylabInstrument):
         self._finished: bool = False
         self._panel = None
         self._target_temperature: float = 0.0
+        self._dwell_time: float = 0.0
+        self._dwell_start = None
         if "COM" not in port:
             port = port.replace("ASRL", "COM").replace("::INSTR", "")
         self._port = port
@@ -69,28 +71,34 @@ class Eurotherm3216(NupylabInstrument):
 
     def start(self) -> None:
         if self._parameters is None:
-            raise NupylabError(
-                f"`{self.__class__.__name__}` method `set_parameters` "
-                "must be called before calling its `start` method."
-            )
+            raise NupylabError(...)
         with self.lock:
             target_temperature, ramp_rate, dwell_time = self._parameters
-            self.eurotherm.program_status = "reset"
-            self.eurotherm.end_type = "dwell"
-            for segment in self.eurotherm.segments:
-                segment.clear()
-            self.eurotherm.segments[-1].target_setpoint = target_temperature
-            self.eurotherm.segments[-1].ramp_rate = ramp_rate
-            self.eurotherm.segments[-1].dwell = dwell_time * 60
-            self.eurotherm.program_status = "run"
+            # Set ramp rate limit — Eurotherm ramps setpoint internally at this rate
+            self.eurotherm.setpoint_rate_limit = ramp_rate  # °C/min
+            # Write target setpoint directly — Eurotherm ramps to it
+            self.eurotherm.setpoint1 = target_temperature
+            self._dwell_time = dwell_time * 60  # convert to seconds
+            self._dwell_start = None
             self._parameters = None
 
     def get_data(self) -> DataTuple:
         with self.lock:
-            temperature: float = self.eurotherm.process_value
-            self._finished = self.eurotherm.program_status in ("reset", "end")
+            temperature = self.eurotherm.process_value
+            working_sp = self.eurotherm.working_setpoint
+            # Dwell starts when working setpoint has reached target AND furnace is close
+            at_target = (
+                abs(working_sp - self._target_temperature) < 0.5 and
+                abs(temperature - self._target_temperature) < 2.0
+            )
+            if at_target:
+                if self._dwell_start is None:
+                    self._dwell_start = time.monotonic()
+                elif time.monotonic() - self._dwell_start >= self._dwell_time:
+                    self._finished = True
+            else:
+                self._dwell_start = None
         return DataTuple(self.data_label, temperature)
-
     @property
     def finished(self) -> bool:
         return self._finished
@@ -100,7 +108,7 @@ class Eurotherm3216(NupylabInstrument):
 
     def shutdown(self):
         with self.lock:
-            self.eurotherm.program_status = "reset"
+            self.eurotherm.setpoint_rate_limit = 0  # no rate limit after experiment
             self.eurotherm.serial.close()
 
     def control_widget(self, abort_callback=None):
