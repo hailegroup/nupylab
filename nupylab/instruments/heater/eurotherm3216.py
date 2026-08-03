@@ -1,10 +1,9 @@
-"""Adapts Agilent 4284A driver to NUPylab instrument class for use with NUPyLab GUIs."""
+"""Adapts Eurotherm3216 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
 import logging
-from typing import Sequence, List, Optional, Callable
+import time
 
-import numpy as np
-from pymeasure.instruments.agilent import agilent4284A
+from nupylab.drivers import eurotherm3216
 from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
@@ -14,66 +13,59 @@ log.addHandler(logging.NullHandler())
 _control_log = logging.getLogger('nupylab.instrument_control')
 
 
-class Agilent4284A(NupylabInstrument):
-    """Agilent 4284A instrument class. Abstracts driver for NUPyLab procedures."""
+class Eurotherm3216(NupylabInstrument):
+    """Eurotherm 3216 instrument class. Abstracts driver for NUPyLab procedures."""
 
     def __init__(
-        self,
-        port: str,
-        data_label: Sequence[str],
-        name: str = "Agilent 4284A",
+        self, port: str, data_label: str, name: str = "Eurotherm3216"
     ) -> None:
-        if len(data_label) != 3:
-            raise ValueError("Agilent 4284A data_label must be sequence of length 3.")
-        self.agilent = None
-        self._port = port
+        self.eurotherm = None
         self._finished: bool = False
-        self._freq_list = None
-        self._eis_condition = None
+        self._panel = None
+        self._target_temperature: float = 0.0
+        if "COM" not in port:
+            port = port.replace("ASRL", "COM").replace("::INSTR", "")
+        self._port = port
+        self._address = 1
         super().__init__(data_label, name)
 
     def connect(self) -> None:
+        """Connect to Eurotherm and verify it responds."""
         with self.lock:
-            self.agilent = agilent4284A.Agilent4284A(self._port)
+            self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
+            time.sleep(0.5)
+            # Verify instrument responds before declaring connected
+            _ = self.eurotherm.process_value
             self._connected = True
 
     def disconnect(self) -> None:
+        """Disconnect from Eurotherm."""
+        if self._panel is not None and self._connected:
+            try:
+                self._panel.timer.stop()
+                if self._panel._worker and self._panel._worker.isRunning():
+                    self._panel._worker.wait(100)
+            except Exception:
+                pass
         with self.lock:
-            if self.agilent is not None:
+            if self.eurotherm is not None:
                 try:
-                    self.agilent.adapter.close()
+                    self.eurotherm.serial.close()
                 except Exception:
                     pass
-                self.agilent = None
+                self.eurotherm = None
             self._connected = False
+        time.sleep(0.3)
 
     def set_parameters(
         self,
-        maximum_frequency: float,
-        minimum_frequency: float,
-        amplitude: float,
-        points_per_decade: int,
-        technique: str,
-        eis_condition: Callable[[], bool],
+        target_temperature: float,
+        ramp_rate: float,
+        dwell_time: float,
     ) -> None:
-        technique = technique.upper()
-        if technique not in ("PEIS", "GEIS"):
-            raise KeyError(f"Technique {technique} must be `PEIS` or `GEIS`.")
-        with self.lock:
-            self.agilent.clear()
-            self.agilent.reset()
-            if technique == "PEIS":
-                self.agilent.ac_voltage = amplitude
-            else:
-                self.agilent.ac_current = amplitude
-            self.agilent.mode = "ZTR"
         self._finished = False
-        max_f_log = np.log10(maximum_frequency)
-        min_f_log = np.log10(minimum_frequency)
-        freq_steps: int = round((max_f_log - min_f_log) * points_per_decade) + 1
-        self._freq_list = np.logspace(max_f_log, min_f_log, num=freq_steps)
-        self._eis_condition = eis_condition
-        self._parameters = True
+        self._target_temperature = target_temperature
+        self._parameters = (target_temperature, ramp_rate, dwell_time)
 
     def start(self) -> None:
         if self._parameters is None:
@@ -81,148 +73,128 @@ class Agilent4284A(NupylabInstrument):
                 f"`{self.__class__.__name__}` method `set_parameters` "
                 "must be called before calling its `start` method."
             )
-        self._parameters = None
-
-    def get_data(self) -> Optional[List[DataTuple]]:
-        if not self.eis_condition:
-            return DataTuple(self.data_label[0], [])
         with self.lock:
-            results = self.agilent.sweep_measurement("frequency", self._freq_list)
-        abs_z, z_phase, _ = results  # ignore returned freq values (unreliable)
-        abs_z = np.array(abs_z)
-        z_phase = np.array(z_phase)
-        # Use the frequencies we sent — more reliable than what instrument echoes back
-        freq = np.array(self._freq_list[:len(abs_z)])
-        z_re = abs_z * np.cos(z_phase)
-        z_im = abs_z * np.sin(z_phase)
-        data = [
-            DataTuple(self.data_label[0], freq),
-            DataTuple(self.data_label[1], z_re),
-            DataTuple(self.data_label[2], -z_im),
-        ]
-        self._finished = True
-        return data
+            target_temperature, ramp_rate, dwell_time = self._parameters
+            self.eurotherm.program_status = "reset"
+            self.eurotherm.end_type = "dwell"
+            # Clear all segments
+            for segment in self.eurotherm.segments:
+                segment.clear()
+            # Program segment 1: ramp to target and dwell
+            self.eurotherm.segments[0].target_setpoint = target_temperature
+            self.eurotherm.segments[0].ramp_rate = ramp_rate
+            self.eurotherm.segments[0].dwell = dwell_time * 60
+            # Program segments 2-8 to hold at target with 0 dwell
+            # so they don't cause premature program end
+            for segment in self.eurotherm.segments[1:]:
+                segment.target_setpoint = target_temperature
+                segment.ramp_rate = 100.0
+                segment.dwell = 0
+            self.eurotherm.program_status = "run"
+            self._parameters = None
 
-    @property
-    def eis_condition(self) -> bool:
-        if self.finished:
-            return False
-        return self._eis_condition()
+    def get_data(self) -> DataTuple:
+        with self.lock:
+            temperature: float = self.eurotherm.process_value
+            status = self.eurotherm.program_status
+            # Only mark finished when program ends AND we're near target
+            # This prevents false "finished" when program resets immediately
+            if status in ("reset", "end"):
+                if abs(temperature - self._target_temperature) < 2.0:
+                    self._finished = True
+                else:
+                    # Program ended too early — restart it
+                    log.warning(
+                        "Eurotherm program ended before reaching target "
+                        "(%.1f°C vs %.1f°C). Check PID tuning.",
+                        temperature, self._target_temperature
+                    )
+                    self._finished = True
+        return DataTuple(self.data_label, temperature)
 
     @property
     def finished(self) -> bool:
-        if self._eis_condition is None:
-            return True
         return self._finished
 
-    def stop_measurement(self) -> None:
+    def stop_measurement(self):
         pass
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         with self.lock:
-            self.agilent.adapter.close()
+            self.eurotherm.program_status = "reset"
+            self.eurotherm.serial.close()
 
-    def control_widget(self, abort_callback=None, scanner=None):
-        """Return a Qt control panel for this instrument.
-
-        Args:
-            abort_callback: callable to abort running experiment
-            scanner: Keithley705 instance for switching EIS sample channels.
-                     If provided, the panel shows a sample selector.
-        """
+    def control_widget(self, abort_callback=None):
+        """Return a Qt control panel for this instrument."""
         from pymeasure.display.Qt import QtWidgets, QtCore
         from nupylab.utilities.instrument_control import LivePlotWidget
 
         instrument = self
 
-        class SweepWorker(QtCore.QThread):
-            finished_sig = QtCore.Signal(list, list, list)
-            error = QtCore.Signal(str)
+        class Worker(QtCore.QThread):
+            result = QtCore.Signal(float)
 
             def run(self):
                 try:
-                    with instrument.lock:
-                        results = instrument.agilent.sweep_measurement(
-                            "frequency", instrument._freq_list
-                        )
-                    abs_z, z_phase, freq = results
-                    abs_z = np.array(abs_z)
-                    z_phase = np.array(z_phase)
-                    freq = np.array(freq)
-                    z_re = (abs_z * np.cos(z_phase)).tolist()
-                    z_im = (-abs_z * np.sin(z_phase)).tolist()
-                    instrument._finished = True
-                    self.finished_sig.emit(freq.tolist(), z_re, z_im)
-                except Exception as e:
-                    self.error.emit(str(e))
+                    data = instrument.get_data()
+                    self.result.emit(data.value)
+                except Exception:
+                    pass
 
-        class AgilentPanel(QtWidgets.QGroupBox):
-            plot_title = "EIS — Nyquist"
+        class EurothermPanel(QtWidgets.QGroupBox):
+            plot_title = "Furnace Temperature"
 
             def __init__(self):
-                super().__init__("Agilent 4284A — LCR Meter")
+                super().__init__("Eurotherm 3216 — Furnace")
                 self._worker = None
                 self._abort_callback = abort_callback
-                self._scanner = scanner
                 self.live_plot = LivePlotWidget(
-                    "Nyquist Plot", "-Z_im (Ω)", n_traces=1
+                    "Furnace Temperature", "Temperature (°C)", n_traces=1
                 )
                 self._setup_ui()
+                self.timer = QtCore.QTimer()
+                self.timer.timeout.connect(self.update_temp)
+                instrument._panel = self
 
             def _setup_ui(self):
                 layout = QtWidgets.QFormLayout()
 
-                # EIS Sample selector — only shown if scanner is provided
-                if self._scanner is not None:
-                    self.sample_spin = QtWidgets.QSpinBox()
-                    self.sample_spin.setRange(1, 8)
-                    self.sample_spin.setValue(1)
-                    self.sample_spin.setToolTip(
-                        "EIS sample number — connects scanner channel (sample + 11)"
-                    )
-                    layout.addRow("EIS Sample Number:", self.sample_spin)
+                self.target_temp = QtWidgets.QDoubleSpinBox()
+                self.target_temp.setRange(0, 1200)
+                self.target_temp.setSuffix(" °C")
+                self.target_temp.setValue(25)
+                layout.addRow("Target Temperature:", self.target_temp)
 
-                self.max_freq = QtWidgets.QDoubleSpinBox()
-                self.max_freq.setRange(20, 1e6)
-                self.max_freq.setSuffix(" Hz")
-                self.max_freq.setValue(1000)
-                layout.addRow("Max Frequency:", self.max_freq)
+                self.ramp_rate = QtWidgets.QDoubleSpinBox()
+                self.ramp_rate.setRange(0.1, 100)
+                self.ramp_rate.setSuffix(" °C/min")
+                self.ramp_rate.setValue(5)
+                layout.addRow("Ramp Rate:", self.ramp_rate)
 
-                self.min_freq = QtWidgets.QDoubleSpinBox()
-                self.min_freq.setRange(20, 1e6)
-                self.min_freq.setSuffix(" Hz")
-                self.min_freq.setValue(100)
-                layout.addRow("Min Frequency:", self.min_freq)
-
-                self.amplitude = QtWidgets.QDoubleSpinBox()
-                self.amplitude.setRange(0.001, 1.0)
-                self.amplitude.setSuffix(" V")
-                self.amplitude.setValue(0.01)
-                self.amplitude.setDecimals(3)
-                layout.addRow("Amplitude:", self.amplitude)
-
-                self.ppd = QtWidgets.QSpinBox()
-                self.ppd.setRange(1, 20)
-                self.ppd.setValue(10)
-                layout.addRow("Points per Decade:", self.ppd)
-
-                self.technique = QtWidgets.QComboBox()
-                self.technique.addItems(["PEIS", "GEIS"])
-                layout.addRow("Technique:", self.technique)
+                self.dwell_time = QtWidgets.QDoubleSpinBox()
+                self.dwell_time.setRange(0, 9999)
+                self.dwell_time.setSuffix(" min")
+                self.dwell_time.setValue(10)
+                layout.addRow("Dwell Time:", self.dwell_time)
 
                 btn_layout = QtWidgets.QHBoxLayout()
                 self.connect_btn = QtWidgets.QPushButton("Connect")
-                self.run_btn = QtWidgets.QPushButton("Run EIS Sweep")
+                self.start_btn = QtWidgets.QPushButton("Start Program")
+                self.stop_btn = QtWidgets.QPushButton("Stop Program")
                 self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
                 self.connect_btn.clicked.connect(self.connect_instrument)
-                self.run_btn.clicked.connect(self.run_sweep)
+                self.start_btn.clicked.connect(self.start_program)
+                self.stop_btn.clicked.connect(self.stop_program)
                 self.disconnect_btn.clicked.connect(self.disconnect_instrument)
                 btn_layout.addWidget(self.connect_btn)
-                btn_layout.addWidget(self.run_btn)
+                btn_layout.addWidget(self.start_btn)
+                btn_layout.addWidget(self.stop_btn)
                 btn_layout.addWidget(self.disconnect_btn)
                 layout.addRow(btn_layout)
 
+                self.temp_label = QtWidgets.QLabel("Current Temp: —")
                 self.status_label = QtWidgets.QLabel("Status: Not connected")
+                layout.addRow(self.temp_label)
                 layout.addRow(self.status_label)
                 self.setLayout(layout)
 
@@ -235,78 +207,68 @@ class Agilent4284A(NupylabInstrument):
                 try:
                     instrument.connect()
                     self.status_label.setText("Status: Connected")
-                    _control_log.info("Agilent 4284A connected on %s", instrument._port)
+                    self.timer.start(2000)
+                    _control_log.info("Eurotherm connected on %s", instrument._port)
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
-                    _control_log.error("Agilent connect failed: %s", e)
+                    _control_log.error("Eurotherm connect failed: %s", e)
 
             def disconnect_instrument(self):
                 self._abort_if_needed()
                 try:
+                    self.timer.stop()
+                    if self._worker and self._worker.isRunning():
+                        self._worker.wait(2000)
                     instrument.disconnect()
                     self.status_label.setText("Status: Disconnected")
-                    _control_log.info("Agilent 4284A disconnected")
+                    self.temp_label.setText("Current Temp: —")
+                    _control_log.info("Eurotherm disconnected")
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
 
-            def run_sweep(self):
+            def start_program(self):
                 self._abort_if_needed()
                 try:
                     if not instrument.connected:
                         instrument.connect()
-
-                    # Switch scanner to the selected EIS sample channel
-                    if self._scanner is not None and self._scanner.connected:
-                        sample_num = self.sample_spin.value()
-                        channel = sample_num + 11  # matches experiment convention
-                        try:
-                            with self._scanner.lock:
-                                self._scanner.keithley705.close_channel(channel)
-                            _control_log.info(
-                                "Scanner switched to EIS channel %d (sample %d)",
-                                channel, sample_num
-                            )
-                        except Exception as e:
-                            _control_log.warning("Scanner channel switch failed: %s", e)
-
                     instrument.set_parameters(
-                        self.max_freq.value(),
-                        self.min_freq.value(),
-                        self.amplitude.value(),
-                        self.ppd.value(),
-                        self.technique.currentText(),
-                        lambda: True,
+                        self.target_temp.value(),
+                        self.ramp_rate.value(),
+                        self.dwell_time.value(),
                     )
                     instrument.start()
-                    self.status_label.setText("Status: Sweep running...")
-                    self.run_btn.setEnabled(False)
                     self.live_plot.clear()
+                    if not self.timer.isActive():
+                        self.timer.start(2000)
+                    self.status_label.setText("Status: Program running")
                     _control_log.info(
-                        "Agilent EIS sweep started: %.1f–%.1f Hz, %.3fV",
-                        self.max_freq.value(), self.min_freq.value(),
-                        self.amplitude.value()
+                        "Eurotherm program started: target=%.1f°C, ramp=%.1f°C/min, dwell=%.1fmin",
+                        self.target_temp.value(), self.ramp_rate.value(),
+                        self.dwell_time.value()
                     )
-                    self._worker = SweepWorker()
-                    self._worker.finished_sig.connect(self._on_sweep_done)
-                    self._worker.error.connect(self._on_sweep_error)
-                    self._worker.start()
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
-                    _control_log.error("Agilent sweep error: %s", e)
+                    _control_log.error("Eurotherm start failed: %s", e)
 
-            def _on_sweep_done(self, freq, z_re, z_im):
-                self.status_label.setText("Status: Sweep complete")
-                self.run_btn.setEnabled(True)
+            def stop_program(self):
+                self._abort_if_needed()
                 try:
-                    self.live_plot.set_xy(z_re, z_im)
-                    self.live_plot.set_labels("Z_re (Ω)", "-Z_im (Ω)")
-                except Exception:
-                    pass
-                _control_log.info("Agilent EIS sweep complete")
+                    instrument.eurotherm.program_status = "reset"
+                    self.status_label.setText("Status: Stopped")
+                    _control_log.info("Eurotherm program stopped")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
 
-            def _on_sweep_error(self, e):
-                self.status_label.setText(f"Status: Error — {e}")
-                self.run_btn.setEnabled(True)
-                _control_log.error("Agilent sweep error: %s", e)
+            def update_temp(self):
+                if not instrument.connected:
+                    return
+                if self._worker and self._worker.isRunning():
+                    return
+                self._worker = Worker()
+                def on_result(v):
+                    self.temp_label.setText(f"Current Temp: {v:.1f} °C")
+                    self.live_plot.add_point(v)
+                self._worker.result.connect(on_result)
+                self._worker.start()
 
-        return AgilentPanel()
+        return EurothermPanel()
