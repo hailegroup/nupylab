@@ -88,10 +88,11 @@ class Agilent4284A(NupylabInstrument):
             return DataTuple(self.data_label[0], [])
         with self.lock:
             results = self.agilent.sweep_measurement("frequency", self._freq_list)
-        abs_z, z_phase, freq = results
+        abs_z, z_phase, _ = results  # ignore returned freq values (unreliable)
         abs_z = np.array(abs_z)
         z_phase = np.array(z_phase)
-        freq = np.array(freq)
+        # Use the frequencies we sent — more reliable than what instrument echoes back
+        freq = np.array(self._freq_list[:len(abs_z)])
         z_re = abs_z * np.cos(z_phase)
         z_im = abs_z * np.sin(z_phase)
         data = [
