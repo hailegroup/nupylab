@@ -247,7 +247,8 @@ class Eurotherm3216(NupylabInstrument):
                 def on_result(v):
                     self.temp_label.setText(f"Current Temp: {v:.1f} °C")
                     self.live_plot.add_point(v)
-                self._worker.result.connect(on_result)
-                self._worker.start()
+                    if instrument.finished:
+                        self.status_label.setText("Status: Program complete")
+                        self.timer.stop()
 
         return EurothermPanel()
