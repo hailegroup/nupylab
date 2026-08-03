@@ -164,7 +164,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             )
             potentiostat = Potentiostat(
                 self.potentiostat_port,
-                ("1: Frequency (Hz)", "1: Z_re (ohm)", "1: -Z_im (ohm)"),
+                ("Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
             )
             digits = 5
             if self.record_time < 3:

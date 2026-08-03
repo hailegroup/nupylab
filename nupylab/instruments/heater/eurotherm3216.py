@@ -29,10 +29,12 @@ class Eurotherm3216(NupylabInstrument):
         super().__init__(data_label, name)
 
     def connect(self) -> None:
-        """Connect to Eurotherm."""
+        """Connect to Eurotherm and verify it responds."""
         with self.lock:
             self.eurotherm = eurotherm3216.Eurotherm3216(self._port, self._address)
             time.sleep(0.5)
+            # Verify instrument actually responds before declaring connected
+            _ = self.eurotherm.process_value
             self._connected = True
 
     def disconnect(self) -> None:
@@ -60,15 +62,6 @@ class Eurotherm3216(NupylabInstrument):
         ramp_rate: float,
         dwell_time: float,
     ) -> None:
-        """Set furnace program parameters.
-
-        Args:
-            target_temperature: target temperature in °C
-            ramp_rate: ramp rate in °C/min
-            dwell_time: dwell time in minutes
-            output_high_limit: maximum output power % (default 100).
-                Reducing this (e.g. 50) prevents overshoot on small temperature steps.
-        """
         self._finished = False
         self._parameters = (target_temperature, ramp_rate, dwell_time)
 
@@ -161,15 +154,6 @@ class Eurotherm3216(NupylabInstrument):
                 self.dwell_time.setValue(10)
                 layout.addRow("Dwell Time:", self.dwell_time)
 
-                self.output_limit = QtWidgets.QDoubleSpinBox()
-                self.output_limit.setRange(1, 100)
-                self.output_limit.setSuffix(" %")
-                self.output_limit.setValue(100)
-                self.output_limit.setToolTip(
-                    "Max output power. Reduce to 30-50% for small temperature steps to prevent overshoot."
-                )
-                layout.addRow("Max Output Power:", self.output_limit)
-
                 btn_layout = QtWidgets.QHBoxLayout()
                 self.connect_btn = QtWidgets.QPushButton("Connect")
                 self.start_btn = QtWidgets.QPushButton("Start Program")
@@ -228,7 +212,6 @@ class Eurotherm3216(NupylabInstrument):
                         self.target_temp.value(),
                         self.ramp_rate.value(),
                         self.dwell_time.value(),
-                        self.output_limit.value(),
                     )
                     instrument.start()
                     self.live_plot.clear()
@@ -236,10 +219,9 @@ class Eurotherm3216(NupylabInstrument):
                         self.timer.start(2000)
                     self.status_label.setText("Status: Program running")
                     _control_log.info(
-                        "Eurotherm program started: target=%.1f°C, ramp=%.1f°C/min, "
-                        "dwell=%.1fmin, max_output=%.0f%%",
+                        "Eurotherm program started: target=%.1f°C, ramp=%.1f°C/min, dwell=%.1fmin",
                         self.target_temp.value(), self.ramp_rate.value(),
-                        self.dwell_time.value(), self.output_limit.value()
+                        self.dwell_time.value()
                     )
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
