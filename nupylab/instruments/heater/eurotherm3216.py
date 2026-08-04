@@ -89,7 +89,6 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
-            self.eurotherm.working_output = float(0.1)
             self.eurotherm.program_status = "run"
             self._parameters = None
 
