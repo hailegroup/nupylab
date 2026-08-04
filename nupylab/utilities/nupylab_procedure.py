@@ -112,7 +112,6 @@ class NupylabProcedure(Procedure):
                 instrument.connect()
                 log.info("Connection to %s successful.", instrument.name)
             instrument.start()
-            log.info("Instrument started.")
         self.previous_procedure = None  # Prevent procedure-chaining in memory
         sleep(1)  # give instruments time to start their respective programs
 
