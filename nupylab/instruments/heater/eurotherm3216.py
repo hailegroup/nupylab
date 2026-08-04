@@ -95,10 +95,8 @@ class Eurotherm3216(NupylabInstrument):
     def get_data(self) -> DataTuple:
         with self.lock:
             temperature: float = self.eurotherm.process_value
-            op_hi = self.eurotherm.read_register(30)
-            if op_hi != 100:
-                print(f"!!! reg 30 changed to {op_hi} at temp={temperature:.1f}")
             self._finished = self.eurotherm.program_status in ("reset", "end")
+            print(self.eurotherm.working_output)
         return DataTuple(self.data_label, temperature)
 
     @property
