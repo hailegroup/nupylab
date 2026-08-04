@@ -85,6 +85,9 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
             self.eurotherm.program_status = "run"
+            time.sleep(0.5)  # let program initialize
+            self.eurotherm.write_register(30, 100)  # override after program loads
+            self.eurotherm.write_register(35, 0)    # clear rate limit too
             after = self.eurotherm.read_register(30)
             print(f"reg 30 AFTER program start: {after}")
             self._parameters = None
