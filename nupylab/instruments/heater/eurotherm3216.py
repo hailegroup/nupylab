@@ -67,29 +67,29 @@ class Eurotherm3216(NupylabInstrument):
         self._target_temperature = target_temperature
         self._parameters = (target_temperature, ramp_rate, dwell_time)
 
+
     def start(self) -> None:
+        """End any active program, ramp to setpoint and dwell.
+
+        Raises:
+            NupylabError if `start` method is called before `set_parameters`.
+        """
         if self._parameters is None:
             raise NupylabError(
                 f"`{self.__class__.__name__}` method `set_parameters` "
                 "must be called before calling its `start` method."
             )
         with self.lock:
-            before = self.eurotherm.read_register(30)
-            print(f"reg 30 BEFORE program start: {before}")
             target_temperature, ramp_rate, dwell_time = self._parameters
             self.eurotherm.program_status = "reset"
             self.eurotherm.end_type = "dwell"
             for segment in self.eurotherm.segments:
                 segment.clear()
+            # Eurotherm 3216 runs all 8 segments, so only the final segment matters
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
             self.eurotherm.program_status = "run"
-            time.sleep(0.5)  # let program initialize
-            self.eurotherm.write_register(30, 100)  # override after program loads
-            self.eurotherm.write_register(35, 0)    # clear rate limit too
-            after = self.eurotherm.read_register(30)
-            print(f"reg 30 AFTER program start: {after}")
             self._parameters = None
 
     def get_data(self) -> DataTuple:
