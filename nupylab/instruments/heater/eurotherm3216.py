@@ -108,6 +108,8 @@ class Eurotherm3216(NupylabInstrument):
     def shutdown(self):
         with self.lock:
             self.eurotherm.program_status = "reset"
+            self.eurotherm.write_register(30, 100)  # ensure output limit restored
+            self.eurotherm.write_register(35, 0)    # ensure rate limit cleared
             self.eurotherm.serial.close()
 
     def control_widget(self, abort_callback=None):
