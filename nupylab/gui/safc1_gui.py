@@ -184,13 +184,13 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             cj_measured = 30 - 1000 * cj_voltage
             if 15.0 < cj_measured < 50.0:
                 tc_sensor.cj_temp = cj_measured
-                log.info("Cold junction temperature measured: %.1f C", cj_measured)
+                #log.info("Cold junction temperature measured: %.1f C", cj_measured)
             else:
                 tc_sensor.cj_temp = 25.0
-                log.warning("CJ measurement out of range (%.1f C), using 25C", cj_measured)
+                #log.warning("CJ measurement out of range (%.1f C), using 25C", cj_measured)
         except Exception as e:
             tc_sensor.cj_temp = 25.0
-            log.warning("CJ measurement failed: %s, using 25C", e)
+            #log.warning("CJ measurement failed: %s, using 25C", e)
         potentiostat.connect()
         if str(self.eis_toggle).lower() == "true":
             potentiostat.set_parameters(
