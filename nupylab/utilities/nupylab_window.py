@@ -78,9 +78,9 @@ class NupylabWindow(ManagedDockWindow):
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
         self.directory = directory
-        if hasattr(self, 'file_input') and hasattr(self.file_input, 'setText'):
-            self.file_input.setText("EXPRDATA")
-
+        if hasattr(self, 'file_input'):
+            self.file_input.filename = "EXPRDATA"
+            
         # Filter instrument_control logs out of the experiment log widget
         class ExcludeInstrumentControlFilter(logging.Filter):
             def filter(self, record):
