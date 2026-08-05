@@ -158,7 +158,7 @@ class Agilent4284A(NupylabInstrument):
 
         class AgilentPanel(QtWidgets.QGroupBox):
             plot_title = "EIS — Nyquist"
-            instrument_name = "Agilent4284A"
+            instrument_name = "Agilent DATA"
             record_columns = ["Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)"]
             data_recorded = QtCore.Signal(list)
 

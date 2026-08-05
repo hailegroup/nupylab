@@ -234,9 +234,12 @@ class NupylabWindow(ManagedDockWindow):
             procedure.refresh_parameters()
             procedure.previous_procedure = previous_procedure
             current_step += 1
+            import os as _os
+            _experiments_dir = _os.path.join(self.directory, "Experiments")
+            _os.makedirs(_experiments_dir, exist_ok=True)
             filename: str = unique_filename(
-                self.directory,
-                prefix=self.file_input.filename_base + "_",
+                _experiments_dir,
+                prefix="EXPRDATA_",
                 suffix="_{Current Step}",
                 ext="csv",
                 dated_folder=False,

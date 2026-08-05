@@ -60,8 +60,10 @@ class DataRecorder:
     def start(self) -> str:
         """Start recording — create file and write header. Returns filepath."""
         import time
+        # Resolve directory (may be callable to get current window directory)
+        base_dir = self._directory() if callable(self._directory) else self._directory
         # Create instrument subfolder
-        folder = os.path.join(self._directory, self._instrument_name)
+        folder = os.path.join(base_dir, self._instrument_name)
         os.makedirs(folder, exist_ok=True)
 
         # Generate filename: InstrumentName_YYYY-MM-DD_HHMMSS.csv
@@ -335,7 +337,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
     def __init__(self, instruments: List = None,
                  abort_callback: Optional[Callable] = None,
                  scanner=None,
-                 directory: str = "",
+                 directory = "",  # str or callable returning str
                  parent=None):
         super().__init__(parent)
         self._panels = []
@@ -461,7 +463,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
             if panel is None:
                 self._record_btn.setChecked(False)
                 return
-            instrument_name = getattr(panel, 'instrument_name', 'instrument')
+            instrument_name = getattr(panel, 'instrument_name', panel.__class__.__name__)
             columns = getattr(panel, 'record_columns', ['Value'])
             self._recorder = DataRecorder(instrument_name, columns, self._directory)
             try:
