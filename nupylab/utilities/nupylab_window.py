@@ -155,6 +155,7 @@ class NupylabWindow(ManagedDockWindow):
                 filename = f"{basename}_{index}.csv"
                 index += 1
 
+            procedure.data_filename = filename
             results = Results(procedure, filename)
             experiment = self.new_experiment(results)
 

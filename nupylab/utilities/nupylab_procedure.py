@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 from datetime import datetime
-from math import nan
+from math import isnan, nan
+from pathlib import Path
 from queue import Empty, SimpleQueue
 from threading import Thread
 from time import monotonic, sleep
 from typing import Callable, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 
 from nupylab.utilities import DataTuple, NupylabError
+from nupylab.utilities.extract_impedance import (
+    ZVIEW_HEADER,
+    impedance_columns,
+    zview_path,
+)
 from pymeasure.experiment import FloatParameter, IntegerParameter, Procedure
 
 if TYPE_CHECKING:
@@ -31,9 +38,15 @@ class NupylabProcedure(Procedure):
     Running this procedure or its subclasses calls startup, execute, and shutdown
     methods sequentially.
 
+    If `DATA_COLUMNS` contains frequency and impedance entries, a second file is
+    written alongside the main export holding only the rows that carry impedance
+    data, in the format ZView expects.
+
     Attrs:
         previous_procedure: Nupylab Procedure class from previous step. Maintains
             previous instrument connections.
+        data_filename: path of the main export for this step, set by the window
+            before the procedure runs.
     """
 
     # Parameters common to all NUPyLab procedures
@@ -55,6 +68,13 @@ class NupylabProcedure(Procedure):
         self.previous_procedure: Optional[NupylabProcedure] = None
         self.instruments: Sequence[NupylabInstrument] = ()
         self.active_instruments: Sequence[NupylabInstrument] = ()
+
+        self.data_filename: Optional[str] = None
+        self._frequency_column, self._zre_column, self._zim_column = impedance_columns(
+            self.DATA_COLUMNS
+        )
+        self._zview_file = None
+        self._zview_writer = None
 
         super().__init__()
 
@@ -99,6 +119,55 @@ class NupylabProcedure(Procedure):
             f"`{self.__class__.__name__}`."
         )
 
+    @property
+    def records_impedance(self) -> bool:
+        """Get whether this procedure has impedance columns to export."""
+        return all((self._frequency_column, self._zre_column, self._zim_column))
+
+    def _open_zview_file(self) -> None:
+        """Open the ZView export for this step.
+
+        Each step writes its own file to match the main export, which is already
+        split per step.
+        """
+        if not self.records_impedance:
+            return
+        if self.data_filename is None:
+            log.warning("No data filename set, skipping ZView export.")
+            return
+        path: Path = zview_path(self.data_filename)
+        self._zview_file = open(path, "w", newline="")
+        self._zview_writer = csv.writer(self._zview_file)
+        self._zview_writer.writerow(ZVIEW_HEADER)
+        self._zview_file.flush()
+        log.info("Writing ZView export to %s", path)
+
+    def _write_zview_row(self) -> None:
+        """Write current data to the ZView export if it holds an impedance point."""
+        if self._zview_writer is None:
+            return
+        frequency = self._data[self._frequency_column]
+        z_re = self._data[self._zre_column]
+        z_im = self._data[self._zim_column]
+        try:
+            if isnan(frequency) or isnan(z_re) or isnan(z_im):
+                return
+        except TypeError:
+            return
+        self._zview_writer.writerow((frequency, z_re, z_im))
+        self._zview_file.flush()
+
+    def _close_zview_file(self) -> None:
+        """Close the ZView export."""
+        if self._zview_file is None:
+            return
+        try:
+            self._zview_file.close()
+        except OSError as e:
+            log.warning("Error closing ZView export: %s", e)
+        self._zview_file = None
+        self._zview_writer = None
+
     def startup(self) -> None:
         """Connect and initialize instruments."""
         if self.previous_procedure is None:
@@ -107,6 +176,7 @@ class NupylabProcedure(Procedure):
         if not self.instruments or not self.active_instruments:
             raise NupylabError("Method `set_instruments` must create non-empty "
                                "`instruments` and `active_instruments` attributes.")
+        self._open_zview_file()
         for instrument in self.active_instruments:
             if not instrument.connected:
                 instrument.connect()
@@ -155,6 +225,7 @@ class NupylabProcedure(Procedure):
 
     def shutdown(self) -> None:
         """Shut down instruments if all steps have run or there was an error."""
+        self._close_zview_file()
         if (self.should_stop() or self.status == Procedure.FAILED or self.num_steps ==
                 self.current_step):
             for instrument in self.instruments:
@@ -244,6 +315,7 @@ class NupylabProcedure(Procedure):
             return filled_queues
 
         if len(self._multivalue_results) == 0:
+            self._write_zview_row()
             self.emit("results", self._data)
             self.emit("progress", self.progress)
             self._data.update(self._data_defaults)  # reset data to defaults
@@ -255,6 +327,7 @@ class NupylabProcedure(Procedure):
                 if len(result.value) < i + 1:
                     continue
                 self._data[result.label] = result.value[i]
+            self._write_zview_row()
             self.emit("results", self._data)
             self._data.update(self._data_defaults)  # reset data to defaults
         self.emit("progress", self.progress)
