@@ -90,6 +90,7 @@ class HP3478A(NupylabInstrument):
             temp: float = thermocouples.calculate_temperature(
                 (voltage) * 1000, self.tc_type, self.cj_temp
             )
+            print(f"Temperature: {temp}, Voltage: {voltage}")
             self._last_temp = temp
             return DataTuple(self.data_label, temp)
         except ValueError as e:
