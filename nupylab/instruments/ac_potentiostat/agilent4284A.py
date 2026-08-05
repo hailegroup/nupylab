@@ -158,6 +158,9 @@ class Agilent4284A(NupylabInstrument):
 
         class AgilentPanel(QtWidgets.QGroupBox):
             plot_title = "EIS — Nyquist"
+            instrument_name = "Agilent4284A"
+            record_columns = ["Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)"]
+            data_recorded = QtCore.Signal(list)
 
             def __init__(self):
                 super().__init__("Agilent 4284A — LCR Meter")

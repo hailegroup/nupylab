@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
 import logging
+import os
+from datetime import datetime
 from typing import List, Callable, Optional
 
 from pymeasure.display.Qt import QtWidgets, QtCore
@@ -24,6 +27,160 @@ class QtLogHandler(logging.Handler):
     def emit(self, record):
         msg = self.format(record)
         self.widget.append(msg)
+
+
+class DataRecorder:
+    """Records instrument data to a CSV file."""
+
+    def __init__(self, instrument_name: str, columns: List[str], directory: str):
+        """Initialize recorder.
+
+        Args:
+            instrument_name: name used for folder and filename prefix
+            columns: list of column header strings
+            directory: base data directory (same as experiment data directory)
+        """
+        self._instrument_name = instrument_name
+        self._columns = columns
+        self._directory = directory
+        self._file = None
+        self._writer = None
+        self._filepath = None
+        self._recording = False
+        self._start_time = None
+
+    @property
+    def recording(self) -> bool:
+        return self._recording
+
+    @property
+    def filepath(self) -> Optional[str]:
+        return self._filepath
+
+    def start(self) -> str:
+        """Start recording — create file and write header. Returns filepath."""
+        import time
+        # Create instrument subfolder
+        folder = os.path.join(self._directory, self._instrument_name)
+        os.makedirs(folder, exist_ok=True)
+
+        # Generate filename: InstrumentName_YYYY-MM-DD_HHMMSS.csv
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        filename = f"{self._instrument_name}_{timestamp}.csv"
+        self._filepath = os.path.join(folder, filename)
+
+        self._file = open(self._filepath, 'w', newline='')
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(["System Time", "Time (s)"] + self._columns)
+        self._file.flush()
+        self._recording = True
+        self._start_time = time.monotonic()
+        _control_log.info("Recording started: %s", self._filepath)
+        return self._filepath
+
+    def write(self, values: List):
+        """Write a row of data."""
+        if not self._recording or self._writer is None:
+            return
+        import time
+        elapsed = time.monotonic() - self._start_time
+        row = [datetime.now().isoformat(), f"{elapsed:.3f}"] + [str(v) for v in values]
+        self._writer.writerow(row)
+        self._file.flush()
+
+    def save(self):
+        """Stop recording and keep the file."""
+        if self._file:
+            self._file.close()
+            self._file = None
+            self._writer = None
+        self._recording = False
+        _control_log.info("Recording saved: %s", self._filepath)
+
+    def delete(self):
+        """Stop recording and delete the file."""
+        filepath = self._filepath
+        if self._file:
+            self._file.close()
+            self._file = None
+            self._writer = None
+        self._recording = False
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
+            _control_log.info("Recording deleted: %s", filepath)
+        self._filepath = None
+
+
+class RecordingControlWidget(QtWidgets.QGroupBox):
+    """Widget with Record/Save/Delete buttons for data recording."""
+
+    def __init__(self, recorder: DataRecorder, parent=None):
+        super().__init__("Data Recording", parent)
+        self._recorder = recorder
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QtWidgets.QHBoxLayout()
+
+        self.record_btn = QtWidgets.QPushButton("Record")
+        self.record_btn.setCheckable(True)
+        self.record_btn.setStyleSheet(
+            "QPushButton:checked { background-color: #cc0000; color: white; }"
+        )
+        self.record_btn.clicked.connect(self._on_record)
+
+        self.save_btn = QtWidgets.QPushButton("Save")
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self._on_save)
+
+        self.delete_btn = QtWidgets.QPushButton("Delete")
+        self.delete_btn.setEnabled(False)
+        self.delete_btn.clicked.connect(self._on_delete)
+
+        self.status_label = QtWidgets.QLabel("Not recording")
+        self.status_label.setStyleSheet("color: gray;")
+
+        layout.addWidget(self.record_btn)
+        layout.addWidget(self.save_btn)
+        layout.addWidget(self.delete_btn)
+        layout.addWidget(self.status_label)
+        self.setLayout(layout)
+
+    def _on_record(self, checked):
+        if checked:
+            try:
+                filepath = self._recorder.start()
+                fname = os.path.basename(filepath)
+                self.status_label.setText(f"Recording: {fname}")
+                self.status_label.setStyleSheet("color: red;")
+                self.save_btn.setEnabled(True)
+                self.delete_btn.setEnabled(True)
+                self.record_btn.setText("Recording...")
+            except Exception as e:
+                self.record_btn.setChecked(False)
+                self.status_label.setText(f"Error: {e}")
+                _control_log.error("Recording start failed: %s", e)
+        else:
+            # User unchecked — treat as save
+            self._on_save()
+
+    def _on_save(self):
+        self._recorder.save()
+        self.record_btn.setChecked(False)
+        self.record_btn.setText("Record")
+        self.save_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
+        self.status_label.setText("Saved")
+        self.status_label.setStyleSheet("color: green;")
+
+    def _on_delete(self):
+        self._recorder.delete()
+        self.record_btn.setChecked(False)
+        self.record_btn.setText("Record")
+        self.save_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
+        self.status_label.setText("Deleted")
+        self.status_label.setStyleSheet("color: gray;")
 
 
 class LivePlotWidget(QtWidgets.QWidget):
@@ -79,7 +236,6 @@ class LivePlotWidget(QtWidgets.QWidget):
             layout.addWidget(title_label)
             layout.addWidget(self._value_label)
 
-        # Trace selector for multiple traces
         if self.n_traces > 1 and not self._use_pg:
             selector_layout = QtWidgets.QHBoxLayout()
             selector_layout.addWidget(QtWidgets.QLabel("Showing:"))
@@ -179,12 +335,14 @@ class InstrumentControlWidget(QtWidgets.QWidget):
     def __init__(self, instruments: List = None,
                  abort_callback: Optional[Callable] = None,
                  scanner=None,
+                 directory: str = "",
                  parent=None):
         super().__init__(parent)
         self._panels = []
         self._abort_callback = abort_callback
         self._experiment_running = False
         self._scanner = scanner
+        self._directory = directory
         self._setup_ui(instruments or [])
 
     def _setup_ui(self, instruments):
@@ -212,6 +370,44 @@ class InstrumentControlWidget(QtWidgets.QWidget):
 
         panels_scroll.setWidget(container)
         layout.addWidget(panels_scroll)
+
+        # Recording controls — instrument selector + record/save/delete buttons
+        rec_group = QtWidgets.QGroupBox("Data Recording")
+        rec_layout = QtWidgets.QHBoxLayout()
+
+        rec_layout.addWidget(QtWidgets.QLabel("Instrument:"))
+        self._instrument_selector = QtWidgets.QComboBox()
+        for panel in self._panels:
+            name = getattr(panel, 'instrument_name', panel.__class__.__name__)
+            self._instrument_selector.addItem(name)
+        rec_layout.addWidget(self._instrument_selector)
+
+        self._record_btn = QtWidgets.QPushButton("Record")
+        self._record_btn.setCheckable(True)
+        self._record_btn.setStyleSheet(
+            "QPushButton:checked { background-color: #cc0000; color: white; }"
+        )
+        self._record_btn.clicked.connect(self._on_record)
+        rec_layout.addWidget(self._record_btn)
+
+        self._save_btn = QtWidgets.QPushButton("Save")
+        self._save_btn.setEnabled(False)
+        self._save_btn.clicked.connect(self._on_save)
+        rec_layout.addWidget(self._save_btn)
+
+        self._delete_btn = QtWidgets.QPushButton("Delete")
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.clicked.connect(self._on_delete)
+        rec_layout.addWidget(self._delete_btn)
+
+        self._rec_status = QtWidgets.QLabel("Not recording")
+        self._rec_status.setStyleSheet("color: gray;")
+        rec_layout.addWidget(self._rec_status)
+
+        rec_group.setLayout(rec_layout)
+        layout.addWidget(rec_group)
+
+        self._recorder = None
 
         # Bottom: plots and log side by side
         bottom_layout = QtWidgets.QHBoxLayout()
@@ -243,27 +439,91 @@ class InstrumentControlWidget(QtWidgets.QWidget):
 
         layout.addLayout(bottom_layout)
 
-        # Only capture instrument_control logger
         handler = QtLogHandler(self.log_area)
         handler.setFormatter(
             logging.Formatter('%(asctime)s : %(message)s', datefmt='%H:%M:%S')
         )
         _control_log.addHandler(handler)
         _control_log.setLevel(logging.DEBUG)
-        # Prevent propagation to root logger (keeps experiment log clean)
         _control_log.propagate = False
 
         self.setLayout(layout)
 
+    def _get_selected_panel(self):
+        idx = self._instrument_selector.currentIndex()
+        if 0 <= idx < len(self._panels):
+            return self._panels[idx]
+        return None
+
+    def _on_record(self, checked):
+        if checked:
+            panel = self._get_selected_panel()
+            if panel is None:
+                self._record_btn.setChecked(False)
+                return
+            instrument_name = getattr(panel, 'instrument_name', 'instrument')
+            columns = getattr(panel, 'record_columns', ['Value'])
+            self._recorder = DataRecorder(instrument_name, columns, self._directory)
+            try:
+                filepath = self._recorder.start()
+                fname = os.path.basename(filepath)
+                self._rec_status.setText(f"Recording: {fname}")
+                self._rec_status.setStyleSheet("color: red;")
+                self._record_btn.setText("Recording...")
+                self._save_btn.setEnabled(True)
+                self._delete_btn.setEnabled(True)
+                self._instrument_selector.setEnabled(False)
+                # Connect panel's data signal to recorder
+                if hasattr(panel, 'data_recorded'):
+                    panel.data_recorded.connect(self._recorder.write)
+            except Exception as e:
+                self._record_btn.setChecked(False)
+                self._rec_status.setText(f"Error: {e}")
+                _control_log.error("Recording failed: %s", e)
+        else:
+            self._on_save()
+
+    def _on_save(self):
+        panel = self._get_selected_panel()
+        if panel and hasattr(panel, 'data_recorded'):
+            try:
+                panel.data_recorded.disconnect(self._recorder.write)
+            except Exception:
+                pass
+        if self._recorder:
+            self._recorder.save()
+        self._record_btn.setChecked(False)
+        self._record_btn.setText("Record")
+        self._save_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+        self._rec_status.setText("Saved")
+        self._rec_status.setStyleSheet("color: green;")
+        self._instrument_selector.setEnabled(True)
+
+    def _on_delete(self):
+        panel = self._get_selected_panel()
+        if panel and hasattr(panel, 'data_recorded'):
+            try:
+                panel.data_recorded.disconnect(self._recorder.write)
+            except Exception:
+                pass
+        if self._recorder:
+            self._recorder.delete()
+        self._record_btn.setChecked(False)
+        self._record_btn.setText("Record")
+        self._save_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+        self._rec_status.setText("Deleted")
+        self._rec_status.setStyleSheet("color: gray;")
+        self._instrument_selector.setEnabled(True)
+
     def _on_control_action(self):
-        """Called when any control panel button is pressed."""
         if self._experiment_running and self._abort_callback:
             self._abort_callback()
             self._experiment_running = False
             _control_log.info("Experiment aborted by instrument control action")
 
     def set_enabled_for_experiment(self, running: bool):
-        """Track experiment state — don't disable, abort instead."""
         self._experiment_running = running
 
     def set_abort_callback(self, callback: Callable):

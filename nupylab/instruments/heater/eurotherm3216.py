@@ -257,6 +257,7 @@ class Eurotherm3216(NupylabInstrument):
                 def on_result(v):
                     self.temp_label.setText(f"Current Temp: {v:.1f} °C")
                     self.live_plot.add_point(v)
+                    self.data_recorded.emit([v])
                     if instrument.finished and self._program_started:
                         self.status_label.setText("Status: Program complete")
                         self._program_started = False
