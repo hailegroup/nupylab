@@ -130,7 +130,7 @@ class ROD4(NupylabInstrument):
 
         class ROD4Panel(QtWidgets.QGroupBox):
             plot_title = "MFC Flows"
-            instrument_name = "ROD4 DATA"
+            instrument_name = "ROD4"
             record_columns = ["MFC 1 Flow (cc/min)", "MFC 2 Flow (cc/min)",
                                "MFC 3 Flow (cc/min)", "MFC 4 Flow (cc/min)"]
             data_recorded = QtCore.Signal(list)

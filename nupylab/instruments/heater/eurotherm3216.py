@@ -130,6 +130,9 @@ class Eurotherm3216(NupylabInstrument):
 
         class EurothermPanel(QtWidgets.QGroupBox):
             plot_title = "Furnace Temperature"
+            instrument_name = "Eurotherm"
+            record_columns = ["Furnace Temperature (degC)"]
+            data_recorded = QtCore.Signal(list)
 
             def __init__(self):
                 super().__init__("Eurotherm 3216 — Furnace")

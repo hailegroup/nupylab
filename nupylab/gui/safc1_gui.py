@@ -253,6 +253,7 @@ def main(*args):
         [furnace, mfc, potentiostat],
         abort_callback=abort_experiment,
         scanner=scanner,
+        directory=lambda: window.directory,
     )
 
     window.tabs.addTab(control, "Instrument Control")
