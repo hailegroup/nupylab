@@ -381,7 +381,7 @@ class Eurotherm3216(NupylabInstrument):
                 self._worker = Worker()
 
                 def on_result(v):
-                    self.temp_label.setText(f"Current Temp: {v:.1f} \u00b0C")
+                    self.temp_label.setText(f"Current Temp: {v:.2f} \u00b0C")
                     self.live_plot.add_point(v)
                     self.data_recorded.emit([v])
                     if instrument.finished and self._program_started:
