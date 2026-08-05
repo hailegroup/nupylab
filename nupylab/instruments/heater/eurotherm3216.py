@@ -81,16 +81,11 @@ class Eurotherm3216(NupylabInstrument):
             )
         with self.lock:
             target_temperature, ramp_rate, dwell_time = self._parameters
-            current_temp = self.eurotherm.process_value
             self.eurotherm.program_status = "reset"
             self.eurotherm.end_type = "dwell"
-            # for segment in self.eurotherm.segments:
-            #     segment.clear()
+            for segment in self.eurotherm.segments:
+                segment.clear()
             # # Eurotherm 3216 runs all 8 segments, so only the final segment matters
-            for segment in self.eurotherm.segments[:-1]:
-                segment.target_setpoint = current_temp
-                segment.ramp_rate = 100.0
-                segment.dwell = 0
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
