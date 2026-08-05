@@ -136,14 +136,24 @@ class NupylabProcedure(Procedure):
             log.warning("No data filename set, skipping ZView export.")
             return
         path: Path = zview_path(self.data_filename)
-        self._zview_file = open(path, "w", newline="")
-        self._zview_writer = csv.writer(self._zview_file)
-        self._zview_writer.writerow(ZVIEW_HEADER)
-        self._zview_file.flush()
+        try:
+            self._zview_file = open(path, "w", newline="")
+            self._zview_writer = csv.writer(self._zview_file)
+            self._zview_writer.writerow(ZVIEW_HEADER)
+            self._zview_file.flush()
+        except OSError as e:
+            log.warning("Could not open ZView export %s: %s", path, e)
+            self._zview_file = None
+            self._zview_writer = None
+            return
         log.info("Writing ZView export to %s", path)
 
     def _write_zview_row(self) -> None:
-        """Write current data to the ZView export if it holds an impedance point."""
+        """Write current data to the ZView export if it holds an impedance point.
+
+        A write failure is logged and stops further writes rather than
+        interrupting the measurement.
+        """
         if self._zview_writer is None:
             return
         frequency = self._data[self._frequency_column]
@@ -154,8 +164,12 @@ class NupylabProcedure(Procedure):
                 return
         except TypeError:
             return
-        self._zview_writer.writerow((frequency, z_re, z_im))
-        self._zview_file.flush()
+        try:
+            self._zview_writer.writerow((frequency, z_re, z_im))
+            self._zview_file.flush()
+        except OSError as e:
+            log.warning("Error writing to ZView export, stopping: %s", e)
+            self._close_zview_file()
 
     def _close_zview_file(self) -> None:
         """Close the ZView export."""
