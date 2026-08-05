@@ -23,6 +23,7 @@ class Eurotherm3216(NupylabInstrument):
         self._finished: bool = False
         self._panel = None
         self._target_temperature: float = 0.0
+        self._autotuning: bool = False
         if "COM" not in port:
             port = port.replace("ASRL", "COM").replace("::INSTR", "")
         self._port = port
@@ -67,13 +68,18 @@ class Eurotherm3216(NupylabInstrument):
         self._target_temperature = target_temperature
         self._parameters = (target_temperature, ramp_rate, dwell_time)
 
-
     def start(self) -> None:
         """End any active program, ramp to setpoint and dwell.
 
         Raises:
-            NupylabError if `start` method is called before `set_parameters`.
+            NupylabError if `start` is called before `set_parameters`, or
+            if autotune is currently running.
         """
+        if self._autotuning:
+            raise NupylabError(
+                "Cannot start furnace program while autotune is running. "
+                "Wait for autotune to complete before queuing experiments."
+            )
         if self._parameters is None:
             raise NupylabError(
                 f"`{self.__class__.__name__}` method `set_parameters` "
@@ -85,7 +91,7 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm.end_type = "dwell"
             for segment in self.eurotherm.segments:
                 segment.clear()
-            # # Eurotherm 3216 runs all 8 segments, so only the final segment matters
+            # Eurotherm 3216 runs all 8 segments, so only the final segment matters
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
@@ -95,7 +101,10 @@ class Eurotherm3216(NupylabInstrument):
     def get_data(self) -> DataTuple:
         with self.lock:
             temperature: float = self.eurotherm.process_value
-            self._finished = self.eurotherm.program_status in ("reset", "end")
+            status = self.eurotherm.program_status
+            if status in ("reset", "end"):
+                if abs(temperature - self._target_temperature) < 2.0:
+                    self._finished = True
         return DataTuple(self.data_label, temperature)
 
     @property
@@ -139,12 +148,15 @@ class Eurotherm3216(NupylabInstrument):
                 self._worker = None
                 self._program_started = False
                 self._abort_callback = abort_callback
+                self._autotune_setpoint = 0.0
                 self.live_plot = LivePlotWidget(
                     "Furnace Temperature", "Temperature (°C)", n_traces=1
                 )
                 self._setup_ui()
                 self.timer = QtCore.QTimer()
                 self.timer.timeout.connect(self.update_temp)
+                self._autotune_timer = QtCore.QTimer()
+                self._autotune_timer.timeout.connect(self._check_autotune)
                 instrument._panel = self
 
             def _setup_ui(self):
@@ -152,13 +164,13 @@ class Eurotherm3216(NupylabInstrument):
 
                 self.target_temp = QtWidgets.QDoubleSpinBox()
                 self.target_temp.setRange(0, 1200)
-                self.target_temp.setSuffix(" °C")
+                self.target_temp.setSuffix(" \u00b0C")
                 self.target_temp.setValue(25)
                 layout.addRow("Target Temperature:", self.target_temp)
 
                 self.ramp_rate = QtWidgets.QDoubleSpinBox()
                 self.ramp_rate.setRange(0.1, 100)
-                self.ramp_rate.setSuffix(" °C/min")
+                self.ramp_rate.setSuffix(" \u00b0C/min")
                 self.ramp_rate.setValue(5)
                 layout.addRow("Ramp Rate:", self.ramp_rate)
 
@@ -183,10 +195,35 @@ class Eurotherm3216(NupylabInstrument):
                 btn_layout.addWidget(self.disconnect_btn)
                 layout.addRow(btn_layout)
 
-                self.temp_label = QtWidgets.QLabel("Current Temp: —")
+                self.temp_label = QtWidgets.QLabel("Current Temp: \u2014")
                 self.status_label = QtWidgets.QLabel("Status: Not connected")
                 layout.addRow(self.temp_label)
                 layout.addRow(self.status_label)
+
+                # Autotune section
+                autotune_layout = QtWidgets.QHBoxLayout()
+                self.autotune_temp = QtWidgets.QDoubleSpinBox()
+                self.autotune_temp.setRange(0, 1200)
+                self.autotune_temp.setSuffix(" \u00b0C")
+                self.autotune_temp.setValue(200)
+                self.autotune_temp.setToolTip(
+                    "Temperature at which to run autotune.\n"
+                    "Set close to your normal operating temperature.\n"
+                    "Autotune takes 20-30 minutes and locks all experiments."
+                )
+                self.autotune_btn = QtWidgets.QPushButton("Start Autotune")
+                self.autotune_btn.setStyleSheet(
+                    "QPushButton { background-color: #cc6600; color: white; }"
+                    "QPushButton:disabled { background-color: #888888; }"
+                )
+                self.autotune_btn.clicked.connect(self.start_autotune)
+                self.autotune_status = QtWidgets.QLabel("Autotune: Off")
+                autotune_layout.addWidget(QtWidgets.QLabel("Autotune Temp:"))
+                autotune_layout.addWidget(self.autotune_temp)
+                autotune_layout.addWidget(self.autotune_btn)
+                autotune_layout.addWidget(self.autotune_status)
+                layout.addRow(autotune_layout)
+
                 self.setLayout(layout)
 
             def _abort_if_needed(self):
@@ -201,7 +238,7 @@ class Eurotherm3216(NupylabInstrument):
                     self.timer.start(2000)
                     _control_log.info("Eurotherm connected on %s", instrument._port)
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
                     _control_log.error("Eurotherm connect failed: %s", e)
 
             def disconnect_instrument(self):
@@ -212,10 +249,10 @@ class Eurotherm3216(NupylabInstrument):
                         self._worker.wait(2000)
                     instrument.disconnect()
                     self.status_label.setText("Status: Disconnected")
-                    self.temp_label.setText("Current Temp: —")
+                    self.temp_label.setText("Current Temp: \u2014")
                     _control_log.info("Eurotherm disconnected")
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
 
             def start_program(self):
                 self._abort_if_needed()
@@ -234,12 +271,13 @@ class Eurotherm3216(NupylabInstrument):
                         self.timer.start(2000)
                     self.status_label.setText("Status: Program running")
                     _control_log.info(
-                        "Eurotherm program started: target=%.1f°C, ramp=%.1f°C/min, dwell=%.1fmin",
+                        "Eurotherm program started: target=%.1f\u00b0C, "
+                        "ramp=%.1f\u00b0C/min, dwell=%.1fmin",
                         self.target_temp.value(), self.ramp_rate.value(),
                         self.dwell_time.value()
                     )
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
                     _control_log.error("Eurotherm start failed: %s", e)
 
             def stop_program(self):
@@ -249,7 +287,91 @@ class Eurotherm3216(NupylabInstrument):
                     self.status_label.setText("Status: Stopped")
                     _control_log.info("Eurotherm program stopped")
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
+
+            def start_autotune(self):
+                """Start autotune at the specified temperature."""
+                if not instrument.connected:
+                    self.autotune_status.setText("Autotune: Connect first")
+                    return
+                try:
+                    at_temp = self.autotune_temp.value()
+                    self._autotune_setpoint = at_temp
+                    with instrument.lock:
+                        # Set SP1 to autotune temperature
+                        instrument.eurotherm.setpoint1 = at_temp
+                        # Trigger autotune — ATUNE at float parameter address 270
+                        instrument.eurotherm.write_float(2 * 270 + 32768, 1.0)
+                    instrument._autotuning = True
+                    # Lock all controls during autotune
+                    self.connect_btn.setEnabled(False)
+                    self.start_btn.setEnabled(False)
+                    self.stop_btn.setEnabled(False)
+                    self.disconnect_btn.setEnabled(False)
+                    self.autotune_btn.setEnabled(False)
+                    self.autotune_temp.setEnabled(False)
+                    self.autotune_status.setText(
+                        f"Autotuning at {at_temp:.0f}\u00b0C... DO NOT interrupt"
+                    )
+                    self.autotune_status.setStyleSheet(
+                        "color: red; font-weight: bold;"
+                    )
+                    # Poll every 10 seconds to check if autotune completed
+                    self._autotune_timer.start(10000)
+                    _control_log.info(
+                        "Autotune started at %.0f\u00b0C — experiments locked",
+                        at_temp
+                    )
+                except Exception as e:
+                    instrument._autotuning = False
+                    self.autotune_status.setText(f"Autotune failed: {e}")
+                    _control_log.error("Autotune start failed: %s", e)
+
+            def _check_autotune(self):
+                """Poll autotune status every 10s and unlock when done."""
+                if not instrument.connected:
+                    self._autotune_timer.stop()
+                    instrument._autotuning = False
+                    self._unlock_after_autotune()
+                    return
+                try:
+                    with instrument.lock:
+                        # ATUNE: 1.0 = running, 0.0 = done
+                        atune_val = instrument.eurotherm.read_float(
+                            2 * 270 + 32768
+                        )
+                        temp = instrument.eurotherm.process_value
+                    if atune_val == 0.0:
+                        self.autotune_status.setText(
+                            f"Autotune complete! Temp: {temp:.1f}\u00b0C. "
+                            "New PID values saved."
+                        )
+                        self.autotune_status.setStyleSheet(
+                            "color: green; font-weight: bold;"
+                        )
+                        self._autotune_timer.stop()
+                        instrument._autotuning = False
+                        self._unlock_after_autotune()
+                        _control_log.info(
+                            "Autotune complete at %.1f\u00b0C. "
+                            "New PID values saved to Eurotherm.", temp
+                        )
+                    else:
+                        self.autotune_status.setText(
+                            f"Autotuning... {temp:.1f}\u00b0C / "
+                            f"{self._autotune_setpoint:.0f}\u00b0C target"
+                        )
+                except Exception as e:
+                    _control_log.warning("Autotune status check failed: %s", e)
+
+            def _unlock_after_autotune(self):
+                """Re-enable all controls after autotune completes."""
+                self.connect_btn.setEnabled(True)
+                self.start_btn.setEnabled(True)
+                self.stop_btn.setEnabled(True)
+                self.disconnect_btn.setEnabled(True)
+                self.autotune_btn.setEnabled(True)
+                self.autotune_temp.setEnabled(True)
 
             def update_temp(self):
                 if not instrument.connected:
@@ -257,13 +379,15 @@ class Eurotherm3216(NupylabInstrument):
                 if self._worker and self._worker.isRunning():
                     return
                 self._worker = Worker()
+
                 def on_result(v):
-                    self.temp_label.setText(f"Current Temp: {v:.1f} °C")
+                    self.temp_label.setText(f"Current Temp: {v:.1f} \u00b0C")
                     self.live_plot.add_point(v)
                     self.data_recorded.emit([v])
                     if instrument.finished and self._program_started:
                         self.status_label.setText("Status: Program complete")
                         self._program_started = False
+
                 self._worker.result.connect(on_result)
                 self._worker.start()
 
