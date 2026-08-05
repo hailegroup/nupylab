@@ -301,7 +301,7 @@ class Eurotherm3216(NupylabInstrument):
                         # Set SP1 to autotune temperature
                         instrument.eurotherm.setpoint1 = at_temp
                         # Trigger autotune — ATUNE at float parameter address 270
-                        instrument.eurotherm.write_float(2 * 270 + 32768, 1.0)
+                        instrument.eurotherm.write_register(270, 1)  # 1 = on
                     instrument._autotuning = True
                     # Lock all controls during autotune
                     self.connect_btn.setEnabled(False)
@@ -337,13 +337,11 @@ class Eurotherm3216(NupylabInstrument):
                 try:
                     with instrument.lock:
                         # ATUNE: 1.0 = running, 0.0 = done
-                        atune_val = instrument.eurotherm.read_float(
-                            2 * 270 + 32768
-                        )
+                        atune_val = instrument.eurotherm.read_register(270)
                         temp = instrument.eurotherm.process_value
-                    if atune_val == 0.0:
+                    if atune_val == 0:
                         self.autotune_status.setText(
-                            f"Autotune complete! Temp: {temp:.1f}\u00b0C. "
+                            f"Autotune complete! Temp: {temp:.2f}\u00b0C. "
                             "New PID values saved."
                         )
                         self.autotune_status.setStyleSheet(
