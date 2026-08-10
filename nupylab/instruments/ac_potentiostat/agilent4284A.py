@@ -95,6 +95,8 @@ class Agilent4284A(NupylabInstrument):
         freq = np.array(self._freq_list[:len(abs_z)])
         z_re = abs_z * np.cos(z_phase)
         z_im = abs_z * np.sin(z_phase)
+        print(f"First point: |Z|={abs_z[0]:.3f} Ohm, phase={z_phase[0]:.4f} rad, "
+      f"Z_re={z_re[0]:.3f}, Z_im={z_im[0]:.3f}")
         data = [
             DataTuple(self.data_label[0], freq),
             DataTuple(self.data_label[1], z_re),
