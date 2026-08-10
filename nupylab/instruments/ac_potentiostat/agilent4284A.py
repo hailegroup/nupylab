@@ -153,6 +153,8 @@ class Agilent4284A(NupylabInstrument):
                     freq = np.array(freq)
                     z_re = (abs_z * np.cos(z_phase)).tolist()
                     z_im = (-abs_z * np.sin(z_phase)).tolist()
+                    print(f"First point: |Z|={abs_z[0]:.3f} Ohm, phase={z_phase[0]:.4f} rad, "
+      f"Z_re={z_re[0]:.3f}, Z_im={z_im[0]:.3f}")
                     instrument._finished = True
                     self.finished_sig.emit(freq.tolist(), z_re, z_im)
                 except Exception as e:
