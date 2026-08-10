@@ -66,7 +66,7 @@ class Agilent4284A(NupylabInstrument):
                 self.agilent.ac_voltage = amplitude
             else:
                 self.agilent.ac_current = amplitude
-            self.agilent.mode = "ZTD"
+            self.agilent.impedance_mode = "RX"
         self._finished = False
         max_f_log = np.log10(maximum_frequency)
         min_f_log = np.log10(minimum_frequency)
@@ -88,16 +88,10 @@ class Agilent4284A(NupylabInstrument):
             return DataTuple(self.data_label[0], [])
         with self.lock:
             results = self.agilent.sweep_measurement("frequency", self._freq_list)
-        abs_z, z_phase, _ = results  # ignore returned freq values (unreliable)
-        abs_z = np.array(abs_z)
-        z_phase = np.array(z_phase)
-        # Use the frequencies we sent — more reliable than what instrument echoes back
-        freq = np.array(self._freq_list[:len(abs_z)])
-        z_phase_rad = np.deg2rad(z_phase)
-        z_re = abs_z * np.cos(z_phase_rad)
-        z_im = abs_z * np.sin(z_phase_rad)
-        print(f"First point: |Z|={abs_z[0]:.3f} Ohm, phase={z_phase[0]:.4f} rad, "
-      f"Z_re={z_re[0]:.3f}, Z_im={z_im[0]:.3f}")
+        z_re, z_im, _ = results  # RX mode: first=R (Z_re), second=X (Z_im)
+        z_re = np.array(z_re)
+        z_im = np.array(z_im)
+        freq = np.array(self._freq_list[:len(z_re)])
         data = [
             DataTuple(self.data_label[0], freq),
             DataTuple(self.data_label[1], z_re),
@@ -148,25 +142,16 @@ class Agilent4284A(NupylabInstrument):
                         results = instrument.agilent.sweep_measurement(
                             "frequency", instrument._freq_list
                         )
-
-                    print(f"Raw results type: {type(results)}")
-                    print(f"abs_z raw: {results[0][:3]}")
-                    print(f"z_phase raw: {results[1][:3]}")
-                    print(f"freq raw: {results[2][:3]}")
-                    abs_z, z_phase, freq = results
-                    abs_z = np.array(abs_z)
-                    z_phase = np.array(z_phase)
-                    freq = np.array(freq)
-                    z_phase_rad = np.deg2rad(z_phase)
-                    z_re = abs_z * np.cos(z_phase_rad)
-                    z_im = abs_z * np.sin(z_phase_rad)
-                    print(f"First point: |Z|={abs_z[0]:.3f} Ohm, phase={z_phase[0]:.4f} rad, "
-      f"Z_re={z_re[0]:.3f}, Z_im={z_im[0]:.3f}")
+                    z_re, z_im, freq = results  # RX mode: first=R, second=X
+                    z_re = np.array(z_re)
+                    z_im = np.array(z_im)
+                    freq = np.array(instrument._freq_list[:len(z_re)])
+                    print(f"First point: Z_re={z_re[0]:.3f} Ohm, Z_im={z_im[0]:.3f} Ohm")
                     instrument._finished = True
                     self.finished_sig.emit(
                         freq.tolist(),
-                        z_re.tolist() if hasattr(z_re, 'tolist') else list(z_re),
-                        z_im.tolist() if hasattr(z_im, 'tolist') else list(z_im)
+                        z_re.tolist(),
+                        (-z_im).tolist()
                     )
                 except Exception as e:
                     self.error.emit(str(e))
@@ -183,17 +168,16 @@ class Agilent4284A(NupylabInstrument):
                 self._abort_callback = abort_callback
                 self._scanner = scanner
                 self.live_plot = LivePlotWidget(
-                    "Nyquist Plot", "-Z_im (Ω)", n_traces=1
+                    "Nyquist Plot", "-Z_im (\u03a9)", n_traces=1
                 )
                 self._setup_ui()
 
             def _setup_ui(self):
                 layout = QtWidgets.QFormLayout()
 
-                # EIS Sample selector — only shown if scanner is provided
                 if self._scanner is not None:
                     self.sample_spin = QtWidgets.QSpinBox()
-                    self.sample_spin.setRange(1, 8)
+                    self.sample_spin.setRange(0, 8)
                     self.sample_spin.setValue(1)
                     self.sample_spin.setToolTip(
                         "EIS sample number — connects scanner channel (sample + 11)"
@@ -203,7 +187,7 @@ class Agilent4284A(NupylabInstrument):
                 self.max_freq = QtWidgets.QDoubleSpinBox()
                 self.max_freq.setRange(20, 1e6)
                 self.max_freq.setSuffix(" Hz")
-                self.max_freq.setValue(1000)
+                self.max_freq.setValue(100000)
                 layout.addRow("Max Frequency:", self.max_freq)
 
                 self.min_freq = QtWidgets.QDoubleSpinBox()
@@ -253,9 +237,11 @@ class Agilent4284A(NupylabInstrument):
                 try:
                     instrument.connect()
                     self.status_label.setText("Status: Connected")
-                    _control_log.info("Agilent 4284A connected on %s", instrument._port)
+                    _control_log.info(
+                        "Agilent 4284A connected on %s", instrument._port
+                    )
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
                     _control_log.error("Agilent connect failed: %s", e)
 
             def disconnect_instrument(self):
@@ -265,7 +251,7 @@ class Agilent4284A(NupylabInstrument):
                     self.status_label.setText("Status: Disconnected")
                     _control_log.info("Agilent 4284A disconnected")
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
 
             def run_sweep(self):
                 self._abort_if_needed()
@@ -273,10 +259,9 @@ class Agilent4284A(NupylabInstrument):
                     if not instrument.connected:
                         instrument.connect()
 
-                    # Switch scanner to the selected EIS sample channel
                     if self._scanner is not None and self._scanner.connected:
                         sample_num = self.sample_spin.value()
-                        channel = sample_num + 11  # matches experiment convention
+                        channel = sample_num + 11
                         try:
                             with self._scanner.lock:
                                 self._scanner.keithley705.close_channel(channel)
@@ -285,7 +270,9 @@ class Agilent4284A(NupylabInstrument):
                                 channel, sample_num
                             )
                         except Exception as e:
-                            _control_log.warning("Scanner channel switch failed: %s", e)
+                            _control_log.warning(
+                                "Scanner channel switch failed: %s", e
+                            )
 
                     instrument.set_parameters(
                         self.max_freq.value(),
@@ -300,7 +287,7 @@ class Agilent4284A(NupylabInstrument):
                     self.run_btn.setEnabled(False)
                     self.live_plot.clear()
                     _control_log.info(
-                        "Agilent EIS sweep started: %.1f–%.1f Hz, %.3fV",
+                        "Agilent EIS sweep started: %.1f\u2013%.1f Hz, %.3fV",
                         self.max_freq.value(), self.min_freq.value(),
                         self.amplitude.value()
                     )
@@ -309,7 +296,7 @@ class Agilent4284A(NupylabInstrument):
                     self._worker.error.connect(self._on_sweep_error)
                     self._worker.start()
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
                     _control_log.error("Agilent sweep error: %s", e)
 
             def _on_sweep_done(self, freq, z_re, z_im):
@@ -317,13 +304,15 @@ class Agilent4284A(NupylabInstrument):
                 self.run_btn.setEnabled(True)
                 try:
                     self.live_plot.set_xy(z_re, z_im)
-                    self.live_plot.set_labels("Z_re (Ω)", "-Z_im (Ω)")
+                    self.live_plot.set_labels("Z_re (\u03a9)", "-Z_im (\u03a9)")
                 except Exception:
                     pass
+                for f, r, i in zip(freq, z_re, z_im):
+                    self.data_recorded.emit([f, r, i])
                 _control_log.info("Agilent EIS sweep complete")
 
             def _on_sweep_error(self, e):
-                self.status_label.setText(f"Status: Error — {e}")
+                self.status_label.setText(f"Status: Error \u2014 {e}")
                 self.run_btn.setEnabled(True)
                 _control_log.error("Agilent sweep error: %s", e)
 
