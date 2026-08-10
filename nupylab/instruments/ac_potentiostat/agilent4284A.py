@@ -66,7 +66,7 @@ class Agilent4284A(NupylabInstrument):
                 self.agilent.ac_voltage = amplitude
             else:
                 self.agilent.ac_current = amplitude
-            self.agilent.mode = "ZTR"
+            self.agilent.mode = "ZTD"
         self._finished = False
         max_f_log = np.log10(maximum_frequency)
         min_f_log = np.log10(minimum_frequency)
@@ -93,8 +93,9 @@ class Agilent4284A(NupylabInstrument):
         z_phase = np.array(z_phase)
         # Use the frequencies we sent — more reliable than what instrument echoes back
         freq = np.array(self._freq_list[:len(abs_z)])
-        z_re = abs_z * np.cos(z_phase)
-        z_im = abs_z * np.sin(z_phase)
+        z_phase_rad = np.deg2rad(z_phase)
+        z_re = abs_z * np.cos(z_phase_rad)
+        z_im = abs_z * np.sin(z_phase_rad)
         print(f"First point: |Z|={abs_z[0]:.3f} Ohm, phase={z_phase[0]:.4f} rad, "
       f"Z_re={z_re[0]:.3f}, Z_im={z_im[0]:.3f}")
         data = [
@@ -147,12 +148,18 @@ class Agilent4284A(NupylabInstrument):
                         results = instrument.agilent.sweep_measurement(
                             "frequency", instrument._freq_list
                         )
+
+                    print(f"Raw results type: {type(results)}")
+                    print(f"abs_z raw: {results[0][:3]}")
+                    print(f"z_phase raw: {results[1][:3]}")
+                    print(f"freq raw: {results[2][:3]}")
                     abs_z, z_phase, freq = results
                     abs_z = np.array(abs_z)
                     z_phase = np.array(z_phase)
                     freq = np.array(freq)
-                    z_re = (abs_z * np.cos(z_phase)).tolist()
-                    z_im = (-abs_z * np.sin(z_phase)).tolist()
+                    z_phase_rad = np.deg2rad(z_phase)
+                    z_re = abs_z * np.cos(z_phase_rad)
+                    z_im = abs_z * np.sin(z_phase_rad)
                     print(f"First point: |Z|={abs_z[0]:.3f} Ohm, phase={z_phase[0]:.4f} rad, "
       f"Z_re={z_re[0]:.3f}, Z_im={z_im[0]:.3f}")
                     instrument._finished = True
