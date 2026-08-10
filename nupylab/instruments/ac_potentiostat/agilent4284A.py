@@ -94,7 +94,7 @@ class Agilent4284A(NupylabInstrument):
         freq = np.array(self._freq_list[:len(z_re)])
         data = [
             DataTuple(self.data_label[0], freq),
-            DataTuple(self.data_label[1], z_re),
+            DataTuple(self.data_label[1], -z_re),
             DataTuple(self.data_label[2], -z_im),
         ]
         self._finished = True
@@ -150,7 +150,7 @@ class Agilent4284A(NupylabInstrument):
                     instrument._finished = True
                     self.finished_sig.emit(
                         freq.tolist(),
-                        z_re.tolist(),
+                        (-z_re).tolist(),
                         (-z_im).tolist()
                     )
                 except Exception as e:
