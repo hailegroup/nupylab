@@ -61,7 +61,7 @@ class Agilent4284A(NupylabInstrument):
             raise KeyError(f"Technique {technique} must be `PEIS` or `GEIS`.")
         with self.lock:
             self.agilent.clear()
-            self.agilent.reset()
+            #self.agilent.reset()
             if technique == "PEIS":
                 self.agilent.ac_voltage = amplitude
             else:
