@@ -146,7 +146,6 @@ class Agilent4284A(NupylabInstrument):
                     z_re = np.array(z_re)
                     z_im = np.array(z_im)
                     freq = np.array(instrument._freq_list[:len(z_re)])
-                    print(f"First point: Z_re={z_re[0]:.3f} Ohm, Z_im={z_im[0]:.3f} Ohm")
                     instrument._finished = True
                     self.finished_sig.emit(
                         freq.tolist(),
