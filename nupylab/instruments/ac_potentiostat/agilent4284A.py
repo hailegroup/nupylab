@@ -163,7 +163,11 @@ class Agilent4284A(NupylabInstrument):
                     print(f"First point: |Z|={abs_z[0]:.3f} Ohm, phase={z_phase[0]:.4f} rad, "
       f"Z_re={z_re[0]:.3f}, Z_im={z_im[0]:.3f}")
                     instrument._finished = True
-                    self.finished_sig.emit(freq.tolist(), z_re, z_im)
+                    self.finished_sig.emit(
+                        freq.tolist(),
+                        z_re.tolist() if hasattr(z_re, 'tolist') else list(z_re),
+                        z_im.tolist() if hasattr(z_im, 'tolist') else list(z_im)
+                    )
                 except Exception as e:
                     self.error.emit(str(e))
 
