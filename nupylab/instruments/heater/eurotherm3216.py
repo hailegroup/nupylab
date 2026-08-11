@@ -91,6 +91,7 @@ class Eurotherm3216(NupylabInstrument):
             self.eurotherm.end_type = "dwell"
             for segment in self.eurotherm.segments:
                 segment.clear()
+                #test
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
             self.eurotherm.segments[-1].dwell = dwell_time * 60
