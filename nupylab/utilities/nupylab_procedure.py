@@ -75,6 +75,7 @@ class NupylabProcedure(Procedure):
         )
         self._zview_file = None
         self._zview_writer = None
+        self._zview_rows: int = 0
 
         super().__init__()
 
@@ -171,20 +172,27 @@ class NupylabProcedure(Procedure):
         try:
             self._zview_writer.writerow((frequency, z_re, z_im))
             self._zview_file.flush()
+            self._zview_rows += 1
         except OSError as e:
             log.warning("Error writing to ZView export, stopping: %s", e)
             self._close_zview_file()
 
     def _close_zview_file(self) -> None:
-        """Close the ZView export."""
+        """Close the ZView export, discarding it if no impedance was recorded."""
         if self._zview_file is None:
             return
+        path = Path(self._zview_file.name)
         try:
             self._zview_file.close()
         except OSError as e:
             log.warning("Error closing ZView export: %s", e)
         self._zview_file = None
         self._zview_writer = None
+        if self._zview_rows == 0:
+            try:
+                path.unlink()
+            except OSError as e:
+                log.warning("Error removing empty ZView export: %s", e)
 
     def startup(self) -> None:
         """Connect and initialize instruments."""
