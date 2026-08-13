@@ -15,6 +15,7 @@ Run directly to convert an export that has already been written:
 from __future__ import annotations
 
 import argparse
+import csv
 import logging
 import sys
 from pathlib import Path
@@ -124,7 +125,10 @@ def extract_impedance(
 
     impedance = data[[frequency, z_re, z_im]].dropna()
     impedance.columns = list(ZVIEW_HEADER)
-    impedance.to_csv(output_path, index=False)
+    # Quoting the header keeps Excel from reading -Zimaginary as a formula.
+    # Numeric values are left bare, and CSV readers strip the quotes, so the
+    # header still reads as ZView expects.
+    impedance.to_csv(output_path, index=False, quoting=csv.QUOTE_NONNUMERIC)
     log.info("Wrote %d impedance rows to %s", len(impedance), output_path)
     return output_path
 

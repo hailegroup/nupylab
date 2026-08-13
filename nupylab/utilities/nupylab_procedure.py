@@ -138,7 +138,11 @@ class NupylabProcedure(Procedure):
         path: Path = zview_path(self.data_filename)
         try:
             self._zview_file = open(path, "w", newline="")
-            self._zview_writer = csv.writer(self._zview_file)
+            # Quoting the header keeps Excel from reading -Zimaginary as a
+            # formula. Numeric rows are written bare.
+            self._zview_writer = csv.writer(
+                self._zview_file, quoting=csv.QUOTE_NONNUMERIC
+            )
             self._zview_writer.writerow(ZVIEW_HEADER)
             self._zview_file.flush()
         except OSError as e:
