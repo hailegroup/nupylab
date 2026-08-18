@@ -419,15 +419,19 @@ class SimulatedProcedure(nupylab_procedure.NupylabProcedure):
             self.active_instruments = (furnace,)
 
 
-def run_headless(filename: str = "simulated_run_1.csv") -> None:
-    """Run one step without a GUI and report on the two files written.
+def run_headless(
+    filename: str = "simulated_run_1.csv", eis: bool = True
+) -> None:
+    """Run one step without a GUI and report on the files written.
 
     Useful for checking the export path on a machine with no working Qt install,
     and for confirming that the ZView file holds exactly the impedance records of
-    the main file.
+    the main file. Passing eis as False checks that a run with no impedance
+    leaves no ZView file behind.
 
     Args:
         filename: path to write the main data file to.
+        eis: whether to run the simulated potentiostat.
     """
     procedure = SimulatedProcedure()
     procedure.num_steps = 1
@@ -436,7 +440,7 @@ def run_headless(filename: str = "simulated_run_1.csv") -> None:
     procedure.target_temperature = 100.0
     procedure.ramp_rate = 900.0
     procedure.dwell_time = 0.05
-    procedure.eis_toggle = True
+    procedure.eis_toggle = eis
     procedure.maximum_frequency = 1.0e6
     procedure.minimum_frequency = 1.0
     procedure.amplitude_voltage = 0.01
@@ -466,21 +470,26 @@ def run_headless(filename: str = "simulated_run_1.csv") -> None:
         r for r in records
         if r["Frequency (Hz)"] == r["Frequency (Hz)"]  # False for NaN
     ]
-    with open(zview) as f:
-        exported = sum(1 for _ in f) - 1
 
     print()
     print(f"main file    {filename}")
     print(f"  records            {len(records)}")
     print(f"  with impedance     {len(impedance)}")
     print(f"  without impedance  {len(records) - len(impedance)}")
-    print(f"ZView file   {zview}")
-    print(f"  rows               {exported}")
-    print()
-    if exported == len(impedance):
-        print("The ZView file holds every impedance record and nothing else.")
+    if zview.exists():
+        with open(zview) as f:
+            exported = sum(1 for _ in f) - 1
+        print(f"ZView file   {zview}")
+        print(f"  rows               {exported}")
+        print()
+        if exported == len(impedance):
+            print("The ZView file holds every impedance record and nothing else.")
+        else:
+            print("Row counts do not agree, check the log above.")
     else:
-        print("Row counts do not agree, check the log above.")
+        print("ZView file   not written")
+        print()
+        print("No impedance was recorded, so no second file was left behind.")
 
 
 def main(*args):
@@ -498,6 +507,8 @@ if __name__ == "__main__":
     if "--headless" in sys.argv:
         import logging
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-        run_headless()
+        eis = "--no-eis" not in sys.argv
+        name = "simulated_run_1.csv" if eis else "simulated_no_eis_1.csv"
+        run_headless(name, eis=eis)
     else:
         main(sys.argv)

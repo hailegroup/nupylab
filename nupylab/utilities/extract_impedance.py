@@ -26,9 +26,14 @@ import pandas as pd
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
-FREQUENCY_KEYWORDS: Tuple[str, ...] = ("frequency",)
-ZRE_KEYWORDS: Tuple[str, ...] = ("z_re", "zreal", "z real")
-ZIM_KEYWORDS: Tuple[str, ...] = ("-z_im", "z_im", "zimaginary", "z imaginary")
+FREQUENCY_KEYWORDS: Tuple[str, ...] = ("frequency", "freq")
+ZRE_KEYWORDS: Tuple[str, ...] = (
+    "z_re", "zreal", "z real", "z_real", "z'", "zprime", "z prime", "z_prime"
+)
+ZIM_KEYWORDS: Tuple[str, ...] = (
+    "z_im", "zimaginary", "z imaginary", "z_imaginary",
+    "z''", "zdoubleprime", "z double prime", "z_double_prime",
+)
 
 ZVIEW_HEADER: Tuple[str, ...] = ("f", "Zreal", "-Zimaginary")
 ZVIEW_SUFFIX: str = "_ZView"
@@ -65,11 +70,13 @@ def impedance_columns(
         tuple of frequency, Z real, and negative Z imaginary column names. Entries
         are None where no match was found.
     """
-    return (
-        find_column(columns, FREQUENCY_KEYWORDS),
-        find_column(columns, ZRE_KEYWORDS),
-        find_column(columns, ZIM_KEYWORDS),
-    )
+    frequency = find_column(columns, FREQUENCY_KEYWORDS)
+    # Match the imaginary column first and take it out of the running, otherwise
+    # a real-part keyword such as z' also matches a z'' column.
+    z_im = find_column(columns, ZIM_KEYWORDS)
+    z_re = find_column([c for c in columns if c != z_im], ZRE_KEYWORDS)
+    return frequency, z_re, z_im
+
 
 
 def zview_path(data_path: Union[str, Path]) -> Path:
