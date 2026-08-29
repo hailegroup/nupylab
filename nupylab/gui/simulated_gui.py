@@ -14,6 +14,7 @@ python simulated_gui.py
 """
 
 import csv
+import logging
 import sys
 from math import log10, pi, sin
 from pathlib import Path
@@ -28,7 +29,11 @@ from pymeasure.experiment import (
     BooleanParameter,
     FloatParameter,
     IntegerParameter,
+    ListParameter,
 )
+
+log = logging.getLogger(__name__)
+log.addHandler(logging.NullHandler())
 
 # Equivalent circuit the simulated potentiostat responds with: a series
 # resistance and inductance from the leads, in series with a parallel
@@ -40,6 +45,9 @@ DOUBLE_LAYER_CAPACITANCE: float = 2.0e-9  # F
 
 NOISE_FRACTION: float = 0.002
 TEMPERATURE_NOISE: float = 0.3  # degC
+
+#: Techniques offered in the per-step technique dropdown.
+EIS_TECHNIQUES: List[str] = ["PEIS", "SPEIS", "GEIS", "SGEIS"]
 
 
 class SimulatedFurnace(NupylabInstrument):
@@ -185,6 +193,7 @@ class SimulatedPotentiostat(NupylabInstrument):
         self._index: int = 0
         self._reads: int = 0
         self._amplitude: float = 0.0
+        self._technique: str = ""
         self._finished: Optional[Callable[[], bool]] = None
         super().__init__(data_label, name)
 
@@ -199,6 +208,7 @@ class SimulatedPotentiostat(NupylabInstrument):
         minimum_frequency: float,
         amplitude_voltage: float,
         points_per_decade: int,
+        technique: str,
         finished: Callable[[], bool],
     ) -> None:
         """Set sweep parameters.
@@ -208,6 +218,7 @@ class SimulatedPotentiostat(NupylabInstrument):
             minimum_frequency: frequency to end the sweep at, in Hz.
             amplitude_voltage: amplitude of the applied signal, in V.
             points_per_decade: number of frequency points per decade.
+            technique: name of the impedance technique to run.
             finished: callable returning whether the sweep should stop repeating.
         """
         self._parameters = (
@@ -215,6 +226,7 @@ class SimulatedPotentiostat(NupylabInstrument):
             minimum_frequency,
             amplitude_voltage,
             points_per_decade,
+            technique,
             finished,
         )
 
@@ -229,7 +241,9 @@ class SimulatedPotentiostat(NupylabInstrument):
                 f"`{self.__class__.__name__}` method `set_parameters` "
                 "must be called before calling its `start` method."
             )
-        maximum, minimum, amplitude, points_per_decade, finished = self._parameters
+        maximum, minimum, amplitude, points_per_decade, technique, finished = (
+            self._parameters
+        )
         decades = log10(maximum / minimum)
         count = max(2, int(round(decades * points_per_decade)) + 1)
         step = decades / (count - 1)
@@ -237,10 +251,12 @@ class SimulatedPotentiostat(NupylabInstrument):
             10 ** (log10(maximum) - step * i) for i in range(count)
         ]
         self._amplitude = amplitude
+        self._technique = technique
         self._finished = finished
         self._index = 0
         self._reads = 0
         self._parameters = None
+        log.info("%s running %s", self.name, technique)
 
     def _impedance(self, frequency: float) -> Tuple[float, float]:
         """Get the impedance of the simulated circuit at one frequency.
@@ -335,6 +351,9 @@ class SimulatedProcedure(nupylab_procedure.NupylabProcedure):
     )
 
     eis_toggle: BooleanParameter = BooleanParameter("Run eis", default=True)
+    potentiostat_technique: ListParameter = ListParameter(
+        "EIS Technique", default="PEIS", choices=EIS_TECHNIQUES, ui_class=None
+    )
     maximum_frequency: FloatParameter = FloatParameter(
         "Maximum Frequency", units="Hz", default=1.0e6
     )
@@ -365,6 +384,7 @@ class SimulatedProcedure(nupylab_procedure.NupylabProcedure):
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
         "eis? [True/False]": "eis_toggle",
+        "EIS Technique": "potentiostat_technique",
         "Maximum Frequency [Hz]": "maximum_frequency",
         "Minimum Frequency [Hz]": "minimum_frequency",
         "Amplitude Voltage [V]": "amplitude_voltage",
@@ -413,6 +433,7 @@ class SimulatedProcedure(nupylab_procedure.NupylabProcedure):
                 self.minimum_frequency,
                 self.amplitude_voltage,
                 self.points_per_decade,
+                self.potentiostat_technique,
                 lambda: furnace.finished,
             )
         else:
@@ -441,6 +462,7 @@ def run_headless(
     procedure.ramp_rate = 900.0
     procedure.dwell_time = 0.05
     procedure.eis_toggle = eis
+    procedure.potentiostat_technique = "PEIS"
     procedure.maximum_frequency = 1.0e6
     procedure.minimum_frequency = 1.0
     procedure.amplitude_voltage = 0.01
