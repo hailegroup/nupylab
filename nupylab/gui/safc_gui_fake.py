@@ -1,25 +1,29 @@
 """
-GUI for S4 impedance station.
+GUI for SAFC station.
 
 This GUI connects to and displays data from
     * ROD-4 MFC Controller
-    * Eurotherm 2416 Furnace Controller
-    * Keithley 2182 Nanovoltmeter (pO2 sensor, optional) s2 solonoid valve via labjack, eurotherm 2416, diff 2 (2182A and 182)keithleys, s5 furnace biologic, solonoid and gas flow maybe?, modilab = hard, sitich station (tc) rod4, keithley 2182A, labjack for solonoid maybe ulvac (no driver), graphtec logger, masspec, 
-    * Biologic SP-200 Potentiostat (optional)
+    * Eurotherm 3216 Furnace Controller
+    * Keithley 705 Scanner
+    * Agilent 4284A LCR Meter
+    * HP 3478A Multimeter
 
 Run the program by changing to the directory containing this file and calling:
 
-python s4_gui.py
+python safc_gui.py
 """
 
 import sys
 from typing import Dict, List
 
 # Instrument Imports #
-from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
-from nupylab.instruments.heater.eurotherm2400 import Eurotherm2400 as Heater
-from nupylab.instruments.mfc.rod4 import ROD4 as MFC
-from nupylab.instruments.o2_sensor.keithley2182 import Keithley2182 as PO2_Sensor
+from nupylab.instruments.test_instruments import (
+    Agilent4284A as Potentiostat,
+)
+from nupylab.instruments.test_instruments import Eurotherm3216 as Heater
+from nupylab.instruments.test_instruments import ROD4 as MFC
+from nupylab.instruments.test_instruments import Keithley705 as Scanner
+from nupylab.instruments.test_instruments import HP3478A as TC_Sensor
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
@@ -28,11 +32,10 @@ from pymeasure.experiment import (
     FloatParameter,
     IntegerParameter,
     ListParameter,
-    Parameter,
 )
 
 
-class S4Procedure(nupylab_procedure.NupylabProcedure):
+class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     """Procedure for running high impedance station GUI.
 
     Running this procedure calls startup, execute, and shutdown methods sequentially.
@@ -41,19 +44,17 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
     """
 
     # Units in parentheses must be valid pint units
-    # First two entries must be "System Time" and "Time (s)"
     DATA_COLUMNS: List[str] = [
         "System Time",
         "Time (s)",
         "Furnace Temperature (degC)",
+        "1: Temperature (degC)",
+        "2: Temperature (degC)",
+        "3: Temperature (degC)",
         "MFC 1 Flow (cc/min)",
         "MFC 2 Flow (cc/min)",
         "MFC 3 Flow (cc/min)",
         "MFC 4 Flow (cc/min)",
-        "pO2 Sensor Temeprature (degC)",
-        "pO2 (atm)",
-        "pO2 Sensor Voltage (V)",
-        "Ewe (V)",
         "Frequency (Hz)",
         "Z_re (ohm)",
         "-Z_im (ohm)",
@@ -61,13 +62,16 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
 
     resources = list_resources()
 
-    furnace_port = ListParameter("Eurotherm Port", choices=resources)
+    furnace_port = ListParameter("Eurotherm Port", choices=resources, ui_class=None)
     furnace_address = IntegerParameter(
         "Eurotherm Address", minimum=1, maximum=254, step=1, default=1
     )
-    mfc_port = ListParameter("ROD-4 Port", choices=resources)
-    potentiostat_port = Parameter("Biologic Port", default="192.109.209.128")
-    po2_sensor_port = ListParameter("Keithley Port", choices=resources)
+    mfc_port = ListParameter("ROD-4 Port", choices=resources, ui_class=None)
+    potentiostat_port = ListParameter(
+        "Potentiostat Port", choices=resources, ui_class=None
+    )
+    tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, ui_class=None)
+    scanner_port = ListParameter("Scanner Port", choices=resources, ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
     ramp_rate = FloatParameter("Ramp Rate", units="C/min")
@@ -78,11 +82,8 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
     mfc_3_setpoint = FloatParameter("MFC 3 Setpoint", units="sccm")
     mfc_4_setpoint = FloatParameter("MFC 4 Setpoint", units="sccm")
 
-    po2_toggle = BooleanParameter("pO2 Sensor Connected", default=True)
-    po2_slope = FloatParameter("pO2 Sensor Cal Slope", group_by="pO2_toggle")
-    po2_intercept = FloatParameter("pO2 Sensor Cal Intercept", group_by="pO2_toggle")
-
-    eis_toggle = BooleanParameter("Run eis")
+    eis_toggle = BooleanParameter("Run EIS")
+    eis_sample = IntegerParameter("EIS Sample Number")
     maximum_frequency = FloatParameter("Maximum Frequency", units="Hz")
     minimum_frequency = FloatParameter("Minimum Frequency", units="Hz")
     amplitude_voltage = FloatParameter("Amplitude Voltage", units="V")
@@ -96,7 +97,8 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
         "MFC 2 [sccm]": "mfc_2_setpoint",
         "MFC 3 [sccm]": "mfc_3_setpoint",
         "MFC 4 [sccm]": "mfc_4_setpoint",
-        "eis? [True/False]": "eis_toggle",
+        "EIS? [True/False]": "eis_toggle",
+        "EIS Sample Number": "eis_sample",
         "Maximum Frequency [Hz]": "maximum_frequency",
         "Minimum Frequency [Hz]": "minimum_frequency",
         "Amplitude Voltage [V]": "amplitude_voltage",
@@ -109,9 +111,9 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
     Y_AXIS: List[str] = [
         "-Z_im (ohm)",
         "Furnace Temperature (degC)",
-        "pO2 Sensor Temperature (degC)",
-        "pO2 (atm)",
-        "pO2 Sensor Voltage (V)",
+        "1: Temperature (degC)",
+        "2: Temperature (degC)",
+        "3: Temperature (degC)",
         "MFC 1 Flow (cc/min)",
         "MFC 2 Flow (cc/min)",
         "MFC 3 Flow (cc/min)",
@@ -124,7 +126,8 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
         "furnace_address",
         "mfc_port",
         "potentiostat_port",
-        "po2_sensor_port",
+        "tc_sensor_port",
+        "scanner_port",
     ]
 
     def set_instruments(self) -> None:
@@ -136,8 +139,10 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
         It is required for this method to create non-empty `instruments` and
         `active_instruments` attributes.
         """
-        if self.previous_procedure is not None:
-            furnace, mfc, potentiostat, po2_sensor = self.previous_procedure.instruments
+        if self.previous_procedure:
+            furnace, mfc, potentiostat, tc_sensor, scanner = (
+                self.previous_procedure.instruments
+            )
         else:
             furnace = Heater(
                 self.furnace_port, self.furnace_address, "Furnace Temperature (degC)"
@@ -153,22 +158,11 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
             )
             potentiostat = Potentiostat(
                 self.potentiostat_port,
-                "SP200",
-                0,
-                ("Ewe (V)", "Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
+                ("1: Frequency (Hz)", "1: Z_re (ohm)", "1: -Z_im (ohm)"),
             )
-            po2_sensor = PO2_Sensor(
-                self.po2_sensor_port,
-                self.po2_intercept,
-                self.po2_slope,
-                (
-                    "pO2 Sensor Temeprature (degC)",
-                    "pO2 (atm)",
-                    "pO2 Sensor Voltage (V)",
-                ),
-            )
-        self.instruments = (furnace, mfc, potentiostat, po2_sensor)
-        self.active_instruments = [furnace, mfc]
+            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)")
+            scanner = Scanner(self.scanner_port)
+        self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
         mfc.set_parameters(
             (
@@ -178,9 +172,15 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
                 self.mfc_4_setpoint,
             )
         )
+        scanner.set_parameters(
+            1, tc_sensor, "cj_volt", lambda: setattr(tc_sensor, "cj_flag", True)
+        )
+        scanner.set_parameters(2, tc_sensor, "1: Temperature (degC)")
+        scanner.set_parameters(3, tc_sensor, "2: Temperature (degC)")
+        scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
+        potentiostat.connect()
         if self.eis_toggle:
             potentiostat.set_parameters(
-                self.record_time,
                 self.maximum_frequency,
                 self.minimum_frequency,
                 self.amplitude_voltage,
@@ -188,15 +188,19 @@ class S4Procedure(nupylab_procedure.NupylabProcedure):
                 "PEIS",
                 lambda: furnace.finished,
             )
-            self.active_instruments.append(potentiostat)
-        if self.po2_toggle:
-            self.active_instruments.append(po2_sensor)
+            # EIS channels are 10 + TC channels, and channel 1 is internal cj voltage
+            scanner.set_parameters(
+                self.eis_sample + 11,
+                potentiostat,
+                ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
+            )
+        self.active_instruments = (furnace, mfc, scanner)
 
 
 def main(*args):
-    """Run S4 procedure."""
+    """Run SAFC procedure."""
     app = QtWidgets.QApplication(*args)
-    window = nupylab_window.NupylabWindow(S4Procedure)
+    window = nupylab_window.NupylabWindow(SAFCProcedure)
     window.show()
     sys.exit(app.exec())
 

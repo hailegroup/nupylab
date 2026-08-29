@@ -498,7 +498,10 @@ def main(*args):
     from pymeasure.display.Qt import QtWidgets
 
     app = QtWidgets.QApplication(*args)
-    window = nupylab_window.NupylabWindow(SimulatedProcedure)
+    window = nupylab_window.NupylabWindow(
+        SimulatedProcedure,
+        directory=str(Path.cwd()),
+    )
     window.show()
     sys.exit(app.exec())
 

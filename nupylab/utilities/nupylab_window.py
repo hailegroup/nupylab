@@ -13,6 +13,7 @@ from pymeasure.experiment import (
     BooleanParameter,
     FloatParameter,
     IntegerParameter,
+    ListParameter,
     Results,
     unique_filename,
 )
@@ -36,11 +37,15 @@ class NupylabWindow(ManagedDockWindow):
         BooleanParameter: bool,
         FloatParameter: float,
         IntegerParameter: int,
+        ListParameter: str,
     }
 
     def __init__(
         self,
         procedure_class: Type[NupylabProcedure],
+        directory: str,
+        parameters_dir: str = "",
+        extra_tabs = None,
         **kwargs,
     ) -> None:
         """Initialize main window GUI.
@@ -58,15 +63,95 @@ class NupylabWindow(ManagedDockWindow):
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
+        combo_col_dict = {}
+        for i, param_name in enumerate(procedure_class.TABLE_PARAMETERS.values()):
+            for name, value in inspect.getmembers(procedure_class):
+                if name == param_name and isinstance(value, ListParameter):
+                    combo_col_dict[i] = list(value.choices)
         super().__init__(
             procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels),
+                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir,),
             ),
             **kwargs,
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
+        self.directory = directory
+        if hasattr(self, 'file_input'):
+            self.file_input.filename = "EXPRDATA"
+            
+        # Filter instrument_control logs out of the experiment log widget
+        class ExcludeInstrumentControlFilter(logging.Filter):
+            def filter(self, record):
+                return not record.name.startswith('nupylab.instrument_control')
+
+        if hasattr(self, 'log_widget') and hasattr(self.log_widget, 'handler'):
+            self.log_widget.handler.addFilter(ExcludeInstrumentControlFilter())
+
+        if extra_tabs:
+            for tab_name, tab_widget in extra_tabs:
+                self.tabs.addTab(tab_widget, tab_name)
+
+        self.setWindowTitle(f"{procedure_class.__name__}")
+        self.manager.failed.connect(self._on_failed)
+
+    def abort_returned(self, experiment):
+        self.browser_widget.clear_button.setEnabled(True)
+        if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
+        else:
+            self.abort_button.setText("Abort")
+            self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
+
+    def finished(self, experiment):
+        """Show Resume if more steps queued, else re-enable clear button."""
+        self.browser_widget.clear_button.setEnabled(True)
+        if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
+        else:
+            self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
+
+    def _on_failed(self, experiment):
+        """Handle failed experiment — re-enable controls and show Resume if more steps queued."""
+        self.browser_widget.clear_button.setEnabled(True)
+        if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
+        else:
+            self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
 
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
@@ -112,9 +197,20 @@ class NupylabWindow(ManagedDockWindow):
                     # non-empty strings evaluate to True
                     # apply map instead for boolean columns
                     param_cast = self.parameter_types[type(value)]
+                    bool_str_map = {
+                        "true": "True", "false": "False",
+                        "t": "True", "f": "False",
+                        "1": "True", "0": "False",
+                        "yes": "True", "no": "False",
+                    }
                     if param_cast is bool:
                         converted_df[column] = (
                             converted_df[column].str.casefold().map(bool_map)
+                        )
+                    elif param_cast is str:
+                        converted_df[column] = (
+                            converted_df[column].astype(str).str.strip()
+                            .str.casefold().map(lambda x: bool_str_map.get(x, x))
                         )
                     cast_dict.update({column: param_cast})
         converted_df = converted_df.astype(cast_dict)
@@ -140,9 +236,12 @@ class NupylabWindow(ManagedDockWindow):
             procedure.refresh_parameters()
             procedure.previous_procedure = previous_procedure
             current_step += 1
+            import os as _os
+            _experiments_dir = _os.path.join(self.directory, "Experiments")
+            _os.makedirs(_experiments_dir, exist_ok=True)
             filename: str = unique_filename(
-                self.directory,
-                prefix=self.file_input.filename_base + "_",
+                _experiments_dir,
+                prefix="EXPRDATA_",
                 suffix="_{Current Step}",
                 ext="csv",
                 dated_folder=False,
@@ -161,3 +260,13 @@ class NupylabWindow(ManagedDockWindow):
 
             self.manager.queue(experiment)
             previous_procedure = procedure
+
+            # If manager stopped (after abort/fail), show Resume instead of auto-running
+        if not self.manager.is_running():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
