@@ -114,9 +114,14 @@ class Eurotherm3216(NupylabInstrument):
         pass
 
     def shutdown(self):
-        """Reset Eurotherm program and close serial connection."""
+        """Close serial connection, leaving a completed program dwelling at setpoint.
+
+        The program is only reset if it did not finish (e.g. experiment aborted or
+        failed mid-ramp).
+        """
         with self.lock:
-            self.eurotherm.program_status = "reset"
+            if not self._finished:
+                self.eurotherm.program_status = "reset"
             self.eurotherm.serial.close()
 
     def control_widget(self, abort_callback=None):
