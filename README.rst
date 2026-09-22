@@ -29,7 +29,7 @@ Development Setup
 3. Clone this repo: ``git clone https://github.com/hailegroup/nupylab.git``.
 4. Change to the repository: ``cd nupylab``.
 5. Create a virtualenv: ``python -m venv .venv``
-6. Activate the virtualenv: ``source .venv/Scripts/activate``
+6. Activate the virtualenv: ``.venv/Scripts/activate.ps1``
 7. Update pip: ``python -m pip install -U pip``
 8. Install the packages: ``pip install -e .[develop]``
 9. Start a GUI: ``python nupylab/gui/safc_gui.py``

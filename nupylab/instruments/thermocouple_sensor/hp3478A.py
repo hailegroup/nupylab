@@ -23,6 +23,8 @@ class HP3478A(NupylabInstrument):
         self,
         port: str,
         data_label: str,
+        resolution: int,
+        room_temp: float = 25.0,
         name: str = "HP 3478A",
     ) -> None:
         """Initialize HP 3478A data labels, name, and connection parameters.
@@ -34,19 +36,25 @@ class HP3478A(NupylabInstrument):
             name: name of instrument.
         """
         self._port: str = port
-        self.cj_temp: float = 23
+        self.cj_temp: float = room_temp
         self.cj_flag: bool = False
         self.hp3478a: Optional[hp3478A.HP3478A] = None
-        self._tc_type: str = "K"
+        self._tc_type: str = "T"
+        self._last_temp: float = room_temp
+        self._resolution: int = resolution
         super().__init__(data_label, name)
 
     def connect(self) -> None:
         """Connect to HP 3478A."""
-        self.hp3478a = hp3478A.HP3478A(self._port)
-        self.hp3478a.reset()
-        self.hp3478a.mode = "DCV"
-        self.hp3478a.range = 0.03
-        self._connected = True
+        try:    
+            self.hp3478a = hp3478A.HP3478A(self._port)
+            self.hp3478a.reset()
+            self.hp3478a.mode = "DCV"
+            self.hp3478a.range = 0.03
+            self.hp3478a.resolution = self._resolution
+            self._connected = True
+        except Exception as e:
+            pass
 
     @property
     def tc_type(self) -> str:
@@ -65,6 +73,7 @@ class HP3478A(NupylabInstrument):
 
     def start(self) -> None:
         """Start multimeter measurement. Not implemented."""
+        self.cj_flag = True
 
     def get_data(self) -> Optional[DataTuple]:
         """Read thermocouple temperature.
@@ -72,15 +81,20 @@ class HP3478A(NupylabInstrument):
         Returns:
             DataTuple with thermocouple temperature in Celsius.
         """
-        voltage: float = self.hp3478a.measure_DCV
-        if self.cj_flag:
-            self.cj_temp = 30 - 1000 * voltage
-            self.cj_flag = False
-            return
-        temp: float = thermocouples.calculate_temperature(
-            voltage * 1000, self.tc_type, self.cj_temp
-        )
-        return DataTuple(self.data_label, temp)
+        try:
+            with self.lock:
+                voltage: float = self.hp3478a.measure_DCV
+        except Exception as e:
+            return DataTuple(self.data_label, self._last_temp)
+        try:
+            temp: float = thermocouples.calculate_temperature(
+                (voltage) * 1000, self.tc_type, self.cj_temp
+            )
+            print(f"Temperature: {temp}, Voltage: {voltage}")
+            self._last_temp = temp
+            return DataTuple(self.data_label, temp)
+        except ValueError as e:
+            return DataTuple(self.data_label, self._last_temp)
 
     def stop_measurement(self) -> None:
         """Stop measurement on HP 3478A. Not implemented."""
