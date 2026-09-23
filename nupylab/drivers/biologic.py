@@ -156,7 +156,8 @@ class BiologicPotentiostat:
                 etc.
             eclib_path: The path to the directory containing the EClib DLL. The default
                 directory of the DLL is
-                C:\EC-Lab Development Package\EC-Lab Development Package\.
+                C:\EC-Lab Development Package\EC-Lab Development Package\, falling
+                back to C:\EC-Lab Development Package\ if the DLL is not found there.
                 If no value is given the default location will be used. The 32/64 bit
                 status is inferred for selecting the proper DLL file.
 
@@ -171,23 +172,34 @@ class BiologicPotentiostat:
             self.series = "vmp3"
         else:
             message = "Unrecognized device type: must be in SP300 or VMP3 series."
-            raise ECLibCustomException(-8000, message)
+            raise ECLibCustomException(message, -8000)
 
         self.address = address
         self._id: Optional[c_int32] = None
         self._device_info: Optional[DeviceInfos] = None
 
-        # Load the EClib dll
-        if eclib_path is None:
-            eclib_path = "C:\\EC-Lab Development Package\\EC-Lab Development Package\\"
-
-            # Check whether this is 64-bit Windows (not whether Python is 64 bit)
+        # Check whether this is 64-bit Windows (not whether Python is 64 bit)
         if "PROGRAMFILES(X86)" in os.environ:
-            eclib_dll_path = eclib_path + "EClib64.dll"
-            blfind_dll_path = eclib_path + "blfind64.dll"
+            eclib_dll_name = "EClib64.dll"
         else:
-            eclib_dll_path = eclib_path + "EClib.dll"
-            blfind_dll_path = eclib_path + "blfind64.dll"
+            eclib_dll_name = "EClib.dll"
+
+        # Load the EClib dll, checking both default install layouts
+        if eclib_path is None:
+            default_paths = (
+                "C:\\EC-Lab Development Package\\EC-Lab Development Package\\",
+                "C:\\EC-Lab Development Package\\",
+            )
+            eclib_path = next(
+                (
+                    path for path in default_paths
+                    if os.path.isfile(path + eclib_dll_name)
+                ),
+                default_paths[0],
+            )
+
+        eclib_dll_path = eclib_path + eclib_dll_name
+        blfind_dll_path = eclib_path + "blfind64.dll"
 
         self._eclib = WinDLL(eclib_dll_path)
         self._blfind = WinDLL(blfind_dll_path)
@@ -289,7 +301,10 @@ class BiologicPotentiostat:
                 f"returned from the device on connect does not match "
                 f"the device type of the class ({self.model})."
             )
-            raise ECLibCustomException(-9000, message)
+            # Release the connection so a retry with the right model can connect
+            self._eclib.BL_Disconnect(self._id)
+            self._id = None
+            raise ECLibCustomException(message, -9000)
         self._device_info = device_info
         return self.device_info
 
@@ -823,7 +838,7 @@ class BiologicPotentiostat:
         # check instrument separator is correct
         if serialized[-1] != "%":
             message = "Device serialization does not end with `%`."
-            raise ECLibCustomException(-1000, message)
+            raise ECLibCustomException(message, -1000)
 
         instruments = serialized.split("%")
 
@@ -874,7 +889,7 @@ class BiologicPotentiostat:
         # check consistency of number of decoded instruments
         if nb_devices != len(devices):
             message = f"Expected {nb_devices} devices, but retrieved {len(devices)}."
-            raise ECLibCustomException(-1004, message)
+            raise ECLibCustomException(message, -1004)
 
         return devices
 
@@ -2786,9 +2801,12 @@ class ECLibException(Exception):
 
     def __str__(self):
         """__str__ representation of the ECLibException."""
+        message = self.message
+        if isinstance(message, bytes):
+            message = message.decode("utf-8", errors="replace")
         string = (
             f"{self.__class__.__name__} code: {self.error_code}. Message "
-            f"'{self.message.decode('utf-8')}'"
+            f"'{message}'"
         )
         return string
 

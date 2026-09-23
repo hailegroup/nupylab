@@ -1,6 +1,7 @@
 """Adapts Biologic driver to NUPylab instrument class for use with NUPyLab GUIs."""
 from __future__ import annotations
 import importlib
+import logging
 from typing import Sequence, Union, TYPE_CHECKING, Optional, List, Type, Callable
 
 import numpy as np
@@ -10,6 +11,8 @@ from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 if TYPE_CHECKING:
     from nupylab.drivers.biologic import Technique
+
+_control_log = logging.getLogger('nupylab.instrument_control')
 
 
 class Biologic(NupylabInstrument):
@@ -66,14 +69,63 @@ class Biologic(NupylabInstrument):
         self._measuring_ocv: bool = False
         self._finished: bool = False
         self._eis_condition = None
+        self._port = port
+        self._model = model
+        self._eclib_path = eclib_path
+        self._panel = None
         super().__init__(data_label, name)
+
+    def set_connection(self, port: str, model: str) -> None:
+        """Set port and model used by the next call to :meth:`connect`.
+
+        Args:
+            port: string name of port, e.g. `USB0` or IP address.
+            model: Biologic model, e.g. `SP200` or `SP300`.
+        """
+        self._port = port
+        self._model = model.replace("-", "").replace(" ", "").upper()
 
     def connect(self) -> None:
         """Connect to Biologic."""
         with self.lock:
+            # Rebuild driver if port or model changed since it was created
+            if (
+                self.biologic.address != self._port
+                or self.biologic.model != "KBIO_DEV_" + self._model
+            ):
+                self.biologic = BiologicPotentiostat(
+                    self._model, self._port, self._eclib_path
+                )
             self.biologic.connect()
             self.biologic.load_firmware(self._chan_bool)
             self._connected = True
+
+    def disconnect(self) -> None:
+        """Stop any running measurement and disconnect from Biologic."""
+        if self._panel is not None and self._connected:
+            try:
+                self._panel.timer.stop()
+                self._panel.monitor_timer.stop()
+                for worker in (self._panel._worker, self._panel._monitor_worker):
+                    if worker and worker.isRunning():
+                        worker.wait(100)
+            except Exception:
+                pass
+        with self.lock:
+            if self._connected:
+                try:
+                    if len(self.channels) == 1:
+                        self.biologic.stop_channel(self.channels[0])
+                    else:
+                        self.biologic.stop_channels(self._chan_bool)
+                except Exception:
+                    pass
+                try:
+                    self.biologic.disconnect()
+                except Exception:
+                    pass
+            self._measuring_ocv = False
+            self._connected = False
 
     def _initialize_eis(
         self,
@@ -245,6 +297,16 @@ class Biologic(NupylabInstrument):
                 data.append(DataTuple(self.data_label[0], kbio_data.Ewe))
         return data
 
+    def get_current_values(self) -> tuple:
+        """Read present Ewe and I on the first channel without loading a technique.
+
+        Returns:
+            Tuple of Ewe in V and I in A.
+        """
+        with self.lock:
+            values = self.biologic.get_current_values(self.channels[0])
+        return values["Ewe"], values["I"]
+
     @property
     def eis_condition(self) -> bool:
         """Get whether to begin eis measurement."""
@@ -271,6 +333,316 @@ class Biologic(NupylabInstrument):
         """Disconnect from Biologic."""
         with self.lock:
             self.biologic.disconnect()
+
+    def control_widget(self, abort_callback=None):
+        """Return a Qt control panel for this instrument."""
+        from pymeasure.display.Qt import QtWidgets, QtCore
+        from nupylab.utilities.instrument_control import LivePlotWidget
+
+        instrument = self
+
+        class Worker(QtCore.QThread):
+            # rows of [freq, Z_re, -Z_im, |Z|, phase, Ewe, I], latest Ewe
+            result = QtCore.Signal(list, float)
+            error = QtCore.Signal(str)
+
+            def run(self):
+                try:
+                    data = instrument.get_data()
+                    rows = []
+                    ewe = float("nan")
+                    for channel_data in data:
+                        if isinstance(channel_data, DataTuple):  # Ewe only
+                            values = np.atleast_1d(channel_data.value)
+                            if values.size:
+                                ewe = float(values[-1])
+                            continue
+                        columns = [np.atleast_1d(d.value) for d in channel_data]
+                        e_we, i, freq, z_re, z_im, abs_z, phase = columns
+                        for n in range(len(freq)):
+                            rows.append([
+                                float(freq[n]), float(z_re[n]), float(z_im[n]),
+                                float(abs_z[n]), float(phase[n]),
+                                float(e_we[n]), float(i[n]),
+                            ])
+                        if e_we.size:
+                            ewe = float(e_we[-1])
+                    self.result.emit(rows, ewe)
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        class MonitorWorker(QtCore.QThread):
+            result = QtCore.Signal(float, float)
+
+            def run(self):
+                try:
+                    ewe, i = instrument.get_current_values()
+                    self.result.emit(ewe, i)
+                except Exception:
+                    pass
+
+        class BiologicPanel(QtWidgets.QGroupBox):
+            plot_title = "EIS — Nyquist"
+            instrument_name = "Biologic"
+            record_columns = [
+                "Frequency (Hz)",
+                "Z_re (ohm)",
+                "-Z_im (ohm)",
+                "|Z| (ohm)",
+                "Phase (degrees)",
+                "Ewe (V)",
+                "I (A)",
+            ]
+            data_recorded = QtCore.Signal(list)
+
+            def __init__(self):
+                super().__init__("Biologic — Potentiostat")
+                self._worker = None
+                self._monitor_worker = None
+                self._running = False
+                self._final_poll = False
+                self._abort_callback = abort_callback
+                self._z_re: List[float] = []
+                self._z_im: List[float] = []
+                self.live_plot = LivePlotWidget(
+                    "Nyquist Plot", "-Z_im (Ω)", n_traces=1
+                )
+                self._setup_ui()
+                self.timer = QtCore.QTimer()
+                self.timer.timeout.connect(self.update_data)
+                # Ewe/I readout while connected, independent of EIS runs
+                self.monitor_timer = QtCore.QTimer()
+                self.monitor_timer.timeout.connect(self.update_monitor)
+                instrument._panel = self
+
+            def _setup_ui(self):
+                layout = QtWidgets.QFormLayout()
+
+                self.technique = QtWidgets.QComboBox()
+                self.technique.addItems(["PEIS", "GEIS", "SPEIS", "SGEIS"])
+                self.technique.currentTextChanged.connect(self._on_technique_changed)
+                layout.addRow("Technique:", self.technique)
+
+                self.initial_step = QtWidgets.QDoubleSpinBox()
+                self.initial_step.setRange(-10, 10)
+                self.initial_step.setDecimals(4)
+                self.initial_step.setSuffix(" V")
+                self.initial_step.setValue(0)
+                layout.addRow("Initial Ewe or I:", self.initial_step)
+
+                self.duration_step = QtWidgets.QDoubleSpinBox()
+                self.duration_step.setRange(0, 9999)
+                self.duration_step.setSuffix(" min")
+                self.duration_step.setValue(0)
+                layout.addRow("Hold before EIS:", self.duration_step)
+
+                self.max_freq = QtWidgets.QDoubleSpinBox()
+                self.max_freq.setRange(1e-5, 7e6)
+                self.max_freq.setDecimals(5)
+                self.max_freq.setSuffix(" Hz")
+                self.max_freq.setValue(1e6)
+                layout.addRow("Max Frequency:", self.max_freq)
+
+                self.min_freq = QtWidgets.QDoubleSpinBox()
+                self.min_freq.setRange(1e-5, 7e6)
+                self.min_freq.setDecimals(5)
+                self.min_freq.setSuffix(" Hz")
+                self.min_freq.setValue(1)
+                layout.addRow("Min Frequency:", self.min_freq)
+
+                self.amplitude = QtWidgets.QDoubleSpinBox()
+                self.amplitude.setRange(0.0001, 1.0)
+                self.amplitude.setDecimals(4)
+                self.amplitude.setSuffix(" V")
+                self.amplitude.setValue(0.01)
+                layout.addRow("Amplitude:", self.amplitude)
+
+                self.ppd = QtWidgets.QSpinBox()
+                self.ppd.setRange(1, 100)
+                self.ppd.setValue(10)
+                layout.addRow("Points per Decade:", self.ppd)
+
+                self.record_time = QtWidgets.QDoubleSpinBox()
+                self.record_time.setRange(0.01, 3600)
+                self.record_time.setSuffix(" s")
+                self.record_time.setValue(1)
+                layout.addRow("Record Time:", self.record_time)
+
+                btn_layout = QtWidgets.QHBoxLayout()
+                self.connect_btn = QtWidgets.QPushButton("Connect")
+                self.run_btn = QtWidgets.QPushButton("Run EIS")
+                self.stop_btn = QtWidgets.QPushButton("Stop")
+                self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
+                self.connect_btn.clicked.connect(self.connect_instrument)
+                self.run_btn.clicked.connect(self.run_eis)
+                self.stop_btn.clicked.connect(self.stop_eis)
+                self.disconnect_btn.clicked.connect(self.disconnect_instrument)
+                btn_layout.addWidget(self.connect_btn)
+                btn_layout.addWidget(self.run_btn)
+                btn_layout.addWidget(self.stop_btn)
+                btn_layout.addWidget(self.disconnect_btn)
+                layout.addRow(btn_layout)
+
+                self.ewe_label = QtWidgets.QLabel("Ewe: —    I: —")
+                self.status_label = QtWidgets.QLabel("Status: Not connected")
+                layout.addRow(self.ewe_label)
+                layout.addRow(self.status_label)
+                self.setLayout(layout)
+
+            def _on_technique_changed(self, technique):
+                # PEIS/SPEIS are potential controlled, GEIS/SGEIS current controlled
+                suffix = " V" if technique in ("PEIS", "SPEIS") else " A"
+                self.initial_step.setSuffix(suffix)
+                self.amplitude.setSuffix(suffix)
+
+            def _abort_if_needed(self):
+                if self._abort_callback:
+                    self._abort_callback()
+
+            def connect_instrument(self):
+                self._abort_if_needed()
+                try:
+                    instrument.connect()
+                    self.monitor_timer.start(2000)
+                    self.status_label.setText("Status: Connected")
+                    _control_log.info(
+                        "Biologic %s connected on %s",
+                        instrument._model, instrument._port
+                    )
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+                    _control_log.error("Biologic connect failed: %s", e)
+
+            def disconnect_instrument(self):
+                self._abort_if_needed()
+                try:
+                    self.timer.stop()
+                    self.monitor_timer.stop()
+                    for worker in (self._worker, self._monitor_worker):
+                        if worker and worker.isRunning():
+                            worker.wait(2000)
+                    instrument.disconnect()
+                    self._set_running(False)
+                    self.status_label.setText("Status: Disconnected")
+                    self.ewe_label.setText("Ewe: —    I: —")
+                    _control_log.info("Biologic disconnected")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+
+            def _set_running(self, running):
+                self._running = running
+                self._final_poll = False
+                self.run_btn.setEnabled(not running)
+                self.technique.setEnabled(not running)
+
+            def run_eis(self):
+                self._abort_if_needed()
+                try:
+                    if self.min_freq.value() >= self.max_freq.value():
+                        raise ValueError(
+                            "Min frequency must be less than max frequency"
+                        )
+                    if not instrument.connected:
+                        instrument.connect()
+                    if not self.monitor_timer.isActive():
+                        self.monitor_timer.start(2000)
+                    instrument.set_parameters(
+                        self.record_time.value(),
+                        self.initial_step.value(),
+                        self.duration_step.value(),
+                        self.max_freq.value(),
+                        self.min_freq.value(),
+                        self.amplitude.value(),
+                        self.ppd.value(),
+                        self.technique.currentText(),
+                        lambda: True,  # Skip OCV wait, begin EIS immediately
+                    )
+                    instrument.start()
+                    self._z_re, self._z_im = [], []
+                    self.live_plot.clear()
+                    self._set_running(True)
+                    self.timer.start(1000)
+                    self.status_label.setText("Status: EIS running...")
+                    _control_log.info(
+                        "Biologic %s started: %.4g–%.4g Hz, amplitude %.4g, "
+                        "hold %.1f min",
+                        self.technique.currentText(), self.max_freq.value(),
+                        self.min_freq.value(), self.amplitude.value(),
+                        self.duration_step.value()
+                    )
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+                    _control_log.error("Biologic EIS start failed: %s", e)
+
+            def stop_eis(self):
+                self._abort_if_needed()
+                try:
+                    self.timer.stop()
+                    if self._worker and self._worker.isRunning():
+                        self._worker.wait(2000)
+                    if instrument.connected:
+                        instrument.stop_measurement()
+                    self._set_running(False)
+                    self.status_label.setText("Status: Stopped")
+                    _control_log.info("Biologic measurement stopped")
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error — {e}")
+
+            def update_data(self):
+                if not instrument.connected or not self._running:
+                    return
+                if self._worker and self._worker.isRunning():
+                    return
+                self._worker = Worker()
+                self._worker.result.connect(self._on_result)
+                self._worker.error.connect(self._on_error)
+                self._worker.start()
+
+            def update_monitor(self):
+                if not instrument.connected:
+                    return
+                if self._monitor_worker and self._monitor_worker.isRunning():
+                    return
+                self._monitor_worker = MonitorWorker()
+                self._monitor_worker.result.connect(self._on_monitor)
+                self._monitor_worker.start()
+
+            def _on_monitor(self, ewe, i):
+                self.ewe_label.setText(f"Ewe: {ewe:.4f} V    I: {i:.4e} A")
+
+            def _on_result(self, rows, ewe):
+                if rows:
+                    for row in rows:
+                        self._z_re.append(row[1])
+                        self._z_im.append(row[2])
+                        self.data_recorded.emit(row)
+                    try:
+                        self.live_plot.set_xy(self._z_re, self._z_im)
+                        self.live_plot.set_labels("Z_re (Ω)", "-Z_im (Ω)")
+                    except Exception:
+                        pass
+                    self.status_label.setText(
+                        f"Status: EIS running... {len(self._z_re)} points"
+                    )
+                if instrument.finished:
+                    # Poll once more after channel stops to collect buffered data
+                    if self._final_poll:
+                        self.timer.stop()
+                        self._set_running(False)
+                        self.status_label.setText(
+                            f"Status: EIS complete ({len(self._z_re)} points)"
+                        )
+                        _control_log.info("Biologic EIS complete")
+                    else:
+                        self._final_poll = True
+
+            def _on_error(self, e):
+                self.timer.stop()
+                self._set_running(False)
+                self.status_label.setText(f"Status: Error — {e}")
+                _control_log.error("Biologic data error: %s", e)
+
+        return BiologicPanel()
 
 
 PEIS_DICT = {
