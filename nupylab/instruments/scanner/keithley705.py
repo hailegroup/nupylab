@@ -1,5 +1,6 @@
 """Adapts Keithley 705 driver to NUPylab instrument class for use with NUPyLab GUIs."""
 
+import time
 from typing import Union, Sequence, Dict, Tuple, List, Optional, Callable
 from nupylab.drivers import keithley705
 from nupylab.utilities import DataTuple, NupylabError
@@ -107,20 +108,22 @@ class Keithley705(NupylabInstrument):
         data: List[DataTuple] = []
         f: bool = True
         with self.lock:
-            for channel, (instrument, labels, pre_process) in self.channels:
+            for channel, (instrument, labels, pre_process) in self.channels.items():
+                if hasattr(instrument, 'eis_condition') and not instrument.eis_condition:
+                    continue
                 if pre_process is not None:
                     pre_process()
                 instrument.data_label = labels
                 if channel != self._closed_channel:
-                    self.keithley705.open_channel(channel)
-                self.keithley705.close_channel(channel)
-                self._closed_channel = channel
+                    self.keithley705.close_channel(channel)
+                    self._closed_channel = channel
+                    time.sleep(0.1)
                 d = instrument.get_data()
                 if d is not None:
                     data.append(d)
                 f = f and instrument.finished
             self._finished = f
-        return data if data else None
+        return data if data else []
 
     @property
     def finished(self) -> bool:

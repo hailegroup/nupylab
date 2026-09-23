@@ -5,14 +5,17 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import tempfile
 from typing import Dict, TYPE_CHECKING, Type
 
 from nupylab.utilities.parameter_table import ParameterTableWidget
+from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows.managed_dock_window import ManagedDockWindow
 from pymeasure.experiment import (
     BooleanParameter,
     FloatParameter,
     IntegerParameter,
+    ListParameter,
     Results,
     unique_filename,
 )
@@ -36,17 +39,23 @@ class NupylabWindow(ManagedDockWindow):
         BooleanParameter: bool,
         FloatParameter: float,
         IntegerParameter: int,
+        ListParameter: str,
     }
 
     def __init__(
         self,
         procedure_class: Type[NupylabProcedure],
+        directory: str = "",
+        parameters_dir: str = "",
+        extra_tabs = None,
         **kwargs,
     ) -> None:
         """Initialize main window GUI.
 
         Args:
             procedure_class: NUPyLab procedure class to run.
+            directory: base data directory. Defaults to the user's Documents folder.
+            parameters_dir: directory for saved parameter tables.
             **kwargs: optional keyword arguments that will be passed to
                 :class:`pymeasure.display.windows.managed_window.ManagedDockWindow`
         """
@@ -58,15 +67,111 @@ class NupylabWindow(ManagedDockWindow):
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
+        combo_col_dict = {}
+        for i, param_name in enumerate(procedure_class.TABLE_PARAMETERS.values()):
+            for name, value in inspect.getmembers(procedure_class):
+                if name == param_name and isinstance(value, ListParameter):
+                    combo_col_dict[i] = list(value.choices)
+        # Procedures may define `table_row_errors` to flag invalid table cells
+        row_validator = None
+        if hasattr(procedure_class, "table_row_errors"):
+            label_to_name = dict(procedure_class.TABLE_PARAMETERS)
+            name_to_label = {v: k for k, v in label_to_name.items()}
+
+            def row_validator(row: Dict[str, str]) -> Dict[str, str]:
+                errors = procedure_class.table_row_errors(
+                    {label_to_name[label]: text for label, text in row.items()
+                     if label in label_to_name}
+                )
+                return {name_to_label[name]: message for name, message in errors.items()
+                        if name in name_to_label}
+
         super().__init__(
             procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels),
+                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir, row_validator=row_validator,),
             ),
             **kwargs,
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
+        self.directory = directory or os.path.join(
+            os.path.expanduser("~"), "Documents"
+        )
+        if hasattr(self, 'file_input'):
+            self.file_input.filename = "EXPRDATA"
+            
+        # Filter instrument_control logs out of the experiment log widget
+        class ExcludeInstrumentControlFilter(logging.Filter):
+            def filter(self, record):
+                return not record.name.startswith('nupylab.instrument_control')
+
+        if hasattr(self, 'log_widget') and hasattr(self.log_widget, 'handler'):
+            self.log_widget.handler.addFilter(ExcludeInstrumentControlFilter())
+
+        if extra_tabs:
+            for tab_name, tab_widget in extra_tabs:
+                self.tabs.addTab(tab_widget, tab_name)
+
+        self.setWindowTitle(f"{procedure_class.__name__}")
+        self.manager.failed.connect(self._on_failed)
+
+    def abort_returned(self, experiment):
+        self.browser_widget.clear_button.setEnabled(True)
+        if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
+        else:
+            self.abort_button.setText("Abort")
+            self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
+
+    def finished(self, experiment):
+        """Show Resume if more steps queued, else re-enable clear button."""
+        self.browser_widget.clear_button.setEnabled(True)
+        if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
+        else:
+            self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
+
+    def _on_failed(self, experiment):
+        """Handle failed experiment — re-enable controls and show Resume if more steps queued."""
+        self.browser_widget.clear_button.setEnabled(True)
+        if self.manager.experiments.has_next():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)
+        else:
+            self.abort_button.setEnabled(False)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.abort)
 
     def new_curve(self, wdg, results, color=None, **kwargs):
         kwargs.setdefault("connect", "finite")
@@ -114,10 +219,34 @@ class NupylabWindow(ManagedDockWindow):
                     # non-empty strings evaluate to True
                     # apply map instead for boolean columns
                     param_cast = self.parameter_types[type(value)]
+                    bool_str_map = {
+                        "true": "True", "false": "False",
+                        "t": "True", "f": "False",
+                        "1": "True", "0": "False",
+                        "yes": "True", "no": "False",
+                    }
                     if param_cast is bool:
                         converted_df[column] = (
                             converted_df[column].str.casefold().map(bool_map)
                         )
+                    elif param_cast is str:
+                        converted_df[column] = (
+                            converted_df[column].fillna("").astype(str).str.strip()
+                            .str.casefold().map(lambda x: bool_str_map.get(x, x))
+                        )
+                        if isinstance(value, ListParameter):
+                            # Restore choice capitalization, e.g. "peis" -> "PEIS"
+                            choice_map = {
+                                str(c).casefold(): str(c) for c in value.choices
+                            }
+                            converted_df[column] = converted_df[column].map(
+                                lambda x: choice_map.get(x, x)
+                            )
+                            # Blank cells, e.g. from older parameter files, use default
+                            if value.default is not None:
+                                converted_df[column] = converted_df[column].replace(
+                                    "", str(value.default)
+                                )
                     cast_dict.update({column: param_cast})
         converted_df = converted_df.astype(cast_dict)
         return converted_df
@@ -126,7 +255,23 @@ class NupylabWindow(ManagedDockWindow):
         """Queue all rows in parameters table. Overwrites parent method."""
         log.info("Reading experiment parameters.")
         table_widget = self.tabs.widget(0)
-        table_df: pd.DataFrame = table_widget.table.model().export_df()
+        table_model = table_widget.table.model()
+        table_model.validate()
+        row_errors = table_model.row_errors()
+        if row_errors:
+            details = "\n".join(
+                f"Step {row + 1}: " + "; ".join(messages)
+                for row, messages in row_errors.items()
+            )
+            log.error("Experiment not queued, invalid parameters:\n%s", details)
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Parameters",
+                "Nothing was queued. Fix the cells marked in red with '!':\n\n"
+                + details,
+            )
+            return
+        table_df: pd.DataFrame = table_model.export_df()
         converted_df: pd.DataFrame = self.verify_parameters(table_df)
 
         num_steps: int = converted_df.shape[0]
@@ -142,23 +287,50 @@ class NupylabWindow(ManagedDockWindow):
             procedure.refresh_parameters()
             procedure.previous_procedure = previous_procedure
             current_step += 1
-            filename: str = unique_filename(
-                self.directory,
-                prefix=self.file_input.filename_base + "_",
-                suffix="_{Current Step}",
-                ext="csv",
-                dated_folder=False,
-                index=False,
-                procedure=procedure,
-            )
-            index: int = 2
-            basename: str = filename.split(".csv")[0]
-            while os.path.exists(filename):
-                filename = f"{basename}_{index}.csv"
-                index += 1
+            if self.store_measurement:
+                _experiments_dir = os.path.join(self.directory, "Experiments")
+                os.makedirs(_experiments_dir, exist_ok=True)
+                # Filename input sets the prefix, e.g. "EXPRDATA" -> EXPRDATA_<date>_1.csv
+                filename_base = self.file_input.filename_base.strip() or "EXPRDATA"
+                ext = self.file_input.filename_extension
+                try:
+                    filename: str = unique_filename(
+                        _experiments_dir,
+                        prefix=f"{filename_base}_",
+                        suffix="_{Current Step}",
+                        ext=ext,
+                        dated_folder=False,
+                        index=False,
+                        procedure=procedure,
+                    )
+                except KeyError as e:
+                    if not str(e.args[0]).startswith(
+                        "The following placeholder-keys are not valid:"
+                    ):
+                        raise
+                    log.error("Invalid filename provided: %s", e.args[0])
+                    return
+                index: int = 2
+                basename: str = filename.rsplit(f".{ext}", 1)[0]
+                while os.path.exists(filename):
+                    filename = f"{basename}_{index}.{ext}"
+                    index += 1
+            else:
+                # "Save data" unchecked: write to a temporary file, as pymeasure does
+                filename = tempfile.mktemp(prefix="TempFile_", suffix=".csv")
 
             results = Results(procedure, filename)
             experiment = self.new_experiment(results)
 
             self.manager.queue(experiment)
             previous_procedure = procedure
+
+            # If manager stopped (after abort/fail), show Resume instead of auto-running
+        if not self.manager.is_running():
+            self.abort_button.setText("Resume")
+            self.abort_button.setEnabled(True)
+            try:
+                self.abort_button.clicked.disconnect()
+            except Exception:
+                pass
+            self.abort_button.clicked.connect(self.resume)

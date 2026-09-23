@@ -1,5 +1,5 @@
 """
-GUI for SAFC station.
+GUI for SAFC2 station.
 
 This GUI connects to and displays data from
     * ROD-4 MFC Controller
@@ -10,16 +10,25 @@ This GUI connects to and displays data from
 
 Run the program by changing to the directory containing this file and calling:
 
-python safc_gui.py
+python safc2_gui.py
+
+Configs:
+Furnace: COM4
+ROD4: COM5
+Potentiostat: 18
+TC: 7
+Scanner: 17
 """
 
 import sys
+import time
 from typing import Dict, List
 
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.agilent4284A import (
     Agilent4284A as Potentiostat,
 )
+from nupylab.utilities.instrument_control import InstrumentControlWidget
 from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216 as Heater
 from nupylab.instruments.mfc.rod4 import ROD4 as MFC
 from nupylab.instruments.scanner.keithley705 import Keithley705 as Scanner
@@ -28,7 +37,6 @@ from nupylab.instruments.thermocouple_sensor.hp3478A import HP3478A as TC_Sensor
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
-    BooleanParameter,
     FloatParameter,
     IntegerParameter,
     ListParameter,
@@ -61,17 +69,19 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     ]
 
     resources = list_resources()
+    record_time = FloatParameter("Record Time", units="s", default=3.0)
 
-    furnace_port = ListParameter("Eurotherm Port", choices=resources, ui_class=None)
-    furnace_address = IntegerParameter(
-        "Eurotherm Address", minimum=1, maximum=254, step=1, default=1
-    )
-    mfc_port = ListParameter("ROD-4 Port", choices=resources, ui_class=None)
-    potentiostat_port = ListParameter(
-        "Potentiostat Port", choices=resources, ui_class=None
-    )
-    tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, ui_class=None)
-    scanner_port = ListParameter("Scanner Port", choices=resources, ui_class=None)
+    _default_furnace = "ASRL4::INSTR" if "ASRL4::INSTR" in resources else (resources[0] if resources else "")
+    _default_mfc = "ASRL5::INSTR" if "ASRL5::INSTR" in resources else (resources[0] if resources else "")
+    _default_potentiostat = "GPIB0::18::INSTR" if "GPIB0::18::INSTR" in resources else (resources[0] if resources else "")
+    _default_tc = "GPIB0::7::INSTR" if "GPIB0::7::INSTR" in resources else (resources[0] if resources else "")
+    _default_scanner = "GPIB0::17::INSTR" if "GPIB0::17::INSTR" in resources else (resources[0] if resources else "")
+
+    furnace_port = ListParameter("Eurotherm Port", choices=resources, default=_default_furnace, ui_class=None)
+    mfc_port = ListParameter("ROD-4 Port", choices=resources, default=_default_mfc, ui_class=None)
+    potentiostat_port = ListParameter("Potentiostat Port", choices=resources, default=_default_potentiostat, ui_class=None)
+    tc_sensor_port = ListParameter("TC Sensor Port", choices=resources, default=_default_tc, ui_class=None)
+    scanner_port = ListParameter("Scanner Port", choices=resources, default=_default_scanner, ui_class=None)
 
     target_temperature = FloatParameter("Target Temperature", units="C")
     ramp_rate = FloatParameter("Ramp Rate", units="C/min")
@@ -82,8 +92,8 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
     mfc_3_setpoint = FloatParameter("MFC 3 Setpoint", units="sccm")
     mfc_4_setpoint = FloatParameter("MFC 4 Setpoint", units="sccm")
 
-    eis_toggle = BooleanParameter("Run EIS")
-    eis_sample = IntegerParameter("EIS Sample Number")
+    eis_toggle = ListParameter("Run EIS", choices=["True", "False"], ui_class=None)
+    eis_sample = IntegerParameter("EIS Sample Number", minimum=0)
     maximum_frequency = FloatParameter("Maximum Frequency", units="Hz")
     minimum_frequency = FloatParameter("Minimum Frequency", units="Hz")
     amplitude_voltage = FloatParameter("Amplitude Voltage", units="V")
@@ -112,18 +122,12 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
         "-Z_im (ohm)",
         "Furnace Temperature (degC)",
         "1: Temperature (degC)",
-        "2: Temperature (degC)",
-        "3: Temperature (degC)",
         "MFC 1 Flow (cc/min)",
-        "MFC 2 Flow (cc/min)",
-        "MFC 3 Flow (cc/min)",
-        "MFC 4 Flow (cc/min)",
     ]
     # Inputs must match name of selected procedure parameters
     INPUTS: List[str] = [
         "record_time",
         "furnace_port",
-        "furnace_address",
         "mfc_port",
         "potentiostat_port",
         "tc_sensor_port",
@@ -145,7 +149,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             )
         else:
             furnace = Heater(
-                self.furnace_port, self.furnace_address, "Furnace Temperature (degC)"
+                self.furnace_port, "Furnace Temperature (degC)"
             )
             mfc = MFC(
                 self.mfc_port,
@@ -158,12 +162,21 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             )
             potentiostat = Potentiostat(
                 self.potentiostat_port,
-                ("1: Frequency (Hz)", "1: Z_re (ohm)", "1: -Z_im (ohm)"),
+                ("Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
             )
-            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)")
+            digits = 5
+            if self.record_time < 3:
+                digits = 4
+            elif self.record_time < 2:
+                digits = 3
+            tc_sensor = TC_Sensor(self.tc_sensor_port, "1: Temperature (degC)", digits)
             scanner = Scanner(self.scanner_port)
         self.instruments = (furnace, mfc, potentiostat, tc_sensor, scanner)
-        furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
+        furnace.set_parameters(
+            self.target_temperature,
+            self.ramp_rate,
+            self.dwell_time,
+        )
         mfc.set_parameters(
             (
                 self.mfc_1_setpoint,
@@ -172,14 +185,27 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
                 self.mfc_4_setpoint,
             )
         )
-        scanner.set_parameters(
-            1, tc_sensor, "cj_volt", lambda: setattr(tc_sensor, "cj_flag", True)
-        )
         scanner.set_parameters(2, tc_sensor, "1: Temperature (degC)")
         scanner.set_parameters(3, tc_sensor, "2: Temperature (degC)")
         scanner.set_parameters(4, tc_sensor, "3: Temperature (degC)")
+        tc_sensor.connect()
+        # Automatically measure cold junction temperature from 7057A thermistor
+        try:
+            if not scanner.connected:
+                scanner.connect()
+            scanner.keithley705.close_channel(1)
+            time.sleep(0.3)
+            cj_voltage = tc_sensor.hp3478a.measure_DCV
+            scanner.keithley705.open_channel(1)
+            cj_measured = 30 - 1000 * cj_voltage
+            if 15.0 < cj_measured < 50.0:
+                tc_sensor.cj_temp = cj_measured
+            else:
+                tc_sensor.cj_temp = 25.0
+        except Exception as e:
+            tc_sensor.cj_temp = 25.0
         potentiostat.connect()
-        if self.eis_toggle:
+        if str(self.eis_toggle).lower() == "true":
             potentiostat.set_parameters(
                 self.maximum_frequency,
                 self.minimum_frequency,
@@ -192,7 +218,7 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
             scanner.set_parameters(
                 self.eis_sample + 11,
                 potentiostat,
-                ("Frequency(Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
+                ("Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)"),
             )
         self.active_instruments = (furnace, mfc, scanner)
 
@@ -200,7 +226,73 @@ class SAFCProcedure(nupylab_procedure.NupylabProcedure):
 def main(*args):
     """Run SAFC procedure."""
     app = QtWidgets.QApplication(*args)
-    window = nupylab_window.NupylabWindow(SAFCProcedure)
+
+    furnace = Heater("ASRL4::INSTR", "Furnace Temperature (degC)")
+    mfc = MFC(
+        "ASRL5::INSTR",
+        (
+            "MFC 1 Flow (cc/min)",
+            "MFC 2 Flow (cc/min)",
+            "MFC 3 Flow (cc/min)",
+            "MFC 4 Flow (cc/min)",
+        )
+    )
+    potentiostat = Potentiostat(
+        "GPIB0::18::INSTR",
+        ("Frequency (Hz)", "Z_re (ohm)", "-Z_im (ohm)")
+    )
+    scanner_ctrl = Scanner("GPIB0::17::INSTR")  # for EIS sample switching
+
+    window = nupylab_window.NupylabWindow(
+        SAFCProcedure,
+        directory="C:/Users/HaileResearch/nupylab/data",
+        parameters_dir="C:/Users/HaileResearch/nupylab/parameters",
+    )
+
+    def abort_experiment():
+        try:
+            window.manager.abort()
+        except Exception:
+            pass
+        for inst in [furnace, mfc, potentiostat, scanner_ctrl]:
+            if inst.connected:
+                try:
+                    inst.disconnect()
+                except Exception:
+                    pass
+
+    control = InstrumentControlWidget(
+        [furnace, mfc, potentiostat],
+        abort_callback=abort_experiment,
+        scanner=scanner_ctrl,
+        directory=lambda: window.directory,
+    )
+
+    window.tabs.addTab(control, "Instrument Control")
+
+    def disconnect_control_instruments():
+        for inst in [furnace, mfc, potentiostat, scanner_ctrl]:
+            if inst.connected:
+                try:
+                    inst.disconnect()
+                except Exception:
+                    pass
+        time.sleep(0.5)
+
+    window.manager.queued.connect(disconnect_control_instruments)
+    window.manager.running.connect(
+        lambda: control.set_enabled_for_experiment(True)
+    )
+    window.manager.finished.connect(
+        lambda: control.set_enabled_for_experiment(False)
+    )
+    window.manager.aborted.connect(
+        lambda: control.set_enabled_for_experiment(False)
+    )
+    window.manager.failed.connect(
+        lambda: control.set_enabled_for_experiment(False)
+    )
+
     window.show()
     sys.exit(app.exec())
 

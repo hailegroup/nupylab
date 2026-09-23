@@ -1,6 +1,6 @@
 """Classes for adding table of parameters as a tab in station GUIs."""
 
-from typing import List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -11,10 +11,11 @@ from pymeasure.display.widgets import TabWidget
 class FileLineEdit(QtWidgets.QLineEdit):
     """Widget for browsing and selecting file of experimental parameters."""
 
-    def __init__(self, table_model, parent=None):
+    def __init__(self, table_model, parent=None, parameters_dir: str = ""):
         """Create line edit widget with completer and file browser."""
         super().__init__(parent)
 
+        self.parameters_dir = parameters_dir
         self.table_model = table_model
 
         completer = QtWidgets.QCompleter(self)
@@ -43,10 +44,12 @@ class FileLineEdit(QtWidgets.QLineEdit):
         )
 
     def _get_starting_directory(self):
-        """Get current directory if set, otherwise set to root folder."""
+        """Get current directory if set, otherwise use parameters_dir or root."""
         current_text = self.text()
         if current_text != '' and QtCore.QDir(current_text).exists():
             return current_text
+        elif self.parameters_dir and QtCore.QDir(self.parameters_dir).exists():
+            return self.parameters_dir
         else:
             return '/'
 
@@ -77,16 +80,51 @@ class TableModel(QtCore.QAbstractTableModel):
     """
 
     def __init__(
-            self, df: Optional[pd.DataFrame] = None, float_digits: int = 1, parent=None
+            self,
+            df: Optional[pd.DataFrame] = None,
+            float_digits: int = 1,
+            row_validator: Optional[Callable[[Dict[str, str]], Dict[str, str]]] = None,
+            parent=None,
     ) -> None:
-        """Set initial view."""
+        """Set initial view.
+
+        Args:
+            row_validator: optional function taking a row as {column label: cell
+                text} and returning {column label: error message} for invalid cells.
+                Invalid cells are shown in red with a trailing `!`.
+        """
         self.df: pd.DataFrame
         if df is None:
             self.df = pd.DataFrame(data=[0], columns=['None'])
         else:
             self.df = df
         self.float_digits: int = float_digits
+        self.row_validator = row_validator
+        self.errors: Dict[Tuple[int, int], str] = {}  # (row, column): message
         super().__init__(parent)
+        self.validate()
+
+    def validate(self) -> None:
+        """Recheck all rows with `row_validator` and store invalid cells."""
+        self.errors = {}
+        if self.row_validator is None:
+            return
+        columns = list(self.df.columns)
+        for row_index in range(self.df.shape[0]):
+            row = {
+                column: "" if pd.isna(value) else str(value)
+                for column, value in zip(columns, self.df.iloc[row_index])
+            }
+            for column, message in self.row_validator(row).items():
+                if column in columns:
+                    self.errors[(row_index, columns.index(column))] = message
+
+    def row_errors(self) -> Dict[int, List[str]]:
+        """Get error messages grouped by 0-based row index."""
+        grouped: Dict[int, List[str]] = {}
+        for (row_index, _), message in sorted(self.errors.items()):
+            grouped.setdefault(row_index, []).append(message)
+        return grouped
 
     def rowCount(self, parent=None) -> int:
         """Return number of rows in .csv file."""
@@ -98,11 +136,20 @@ class TableModel(QtCore.QAbstractTableModel):
 
     def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole) -> Optional[str]:
         """Display table content."""
-        if index.isValid() and role == QtCore.Qt.ItemDataRole.DisplayRole:
+        if not index.isValid():
+            return None
+        error = self.errors.get((index.row(), index.column()))
+        if role == QtCore.Qt.ItemDataRole.DisplayRole:
             value = self.df.iloc[index.row(), index.column()]
             if isinstance(value, float):
-                return f"{value:.{self.float_digits:d}g}"
-            return str(value)
+                text = f"{value:.{self.float_digits:d}g}"
+            else:
+                text = str(value)
+            return f"{text} !" if error else text
+        if error and role == QtCore.Qt.ItemDataRole.ForegroundRole:
+            return QtGui.QBrush(QtGui.QColor("red"))
+        if error and role == QtCore.Qt.ItemDataRole.ToolTipRole:
+            return error
         return None
 
     def headerData(self, section, orientation, role) -> Optional[str]:
@@ -116,6 +163,12 @@ class TableModel(QtCore.QAbstractTableModel):
         """Update cell contents. Called each time a cell is edited."""
         if index.isValid() and role == QtCore.Qt.ItemDataRole.EditRole:
             self.df.iloc[index.row(), index.column()] = value
+            self.validate()
+            # Other cells in the row may change validity, e.g. switching technique
+            self.dataChanged.emit(
+                self.index(index.row(), 0),
+                self.index(index.row(), self.columnCount() - 1),
+            )
             return True
         return False
 
@@ -130,9 +183,20 @@ class TableModel(QtCore.QAbstractTableModel):
 
     def update_data(self, path) -> None:
         """Update data upon selecting new parameters file."""
-        self.beginResetModel()
         new_df = pd.read_csv(path, dtype=str)
-        self.df = pd.DataFrame(new_df.values, columns=self.df.columns)
+        if new_df.shape[1] == self.df.shape[1]:
+            new_df = pd.DataFrame(new_df.values, columns=self.df.columns)
+        elif set(new_df.columns) <= set(self.df.columns):
+            # Older file missing newer columns: match by header, leave rest blank
+            new_df = new_df.reindex(columns=self.df.columns, fill_value="")
+        else:
+            raise ValueError(
+                f"Parameters file has {new_df.shape[1]} columns, expected "
+                f"{self.df.shape[1]}: {list(self.df.columns)}"
+            )
+        self.beginResetModel()
+        self.df = new_df
+        self.validate()
         self.endResetModel()
 
     def append_row(self):
@@ -144,6 +208,7 @@ class TableModel(QtCore.QAbstractTableModel):
             last_row = pd.DataFrame(self.df.iloc[[-1]])
         self.beginResetModel()
         self.df = pd.concat((self.df, last_row), ignore_index=True)
+        self.validate()
         self.endResetModel()
 
     def remove_row(self):
@@ -152,8 +217,27 @@ class TableModel(QtCore.QAbstractTableModel):
         if self.rowCount() != 0:
             self.beginResetModel()
             self.df = self.df.drop([self.rowCount() - 1])
+            self.validate()
             self.endResetModel()
 
+class ComboBoxDelegate(QtWidgets.QStyledItemDelegate):
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self.items = items  # list of strings for this column
+
+    def createEditor(self, parent, option, index):
+        combo = QtWidgets.QComboBox(parent)
+        combo.addItems(self.items)
+        return combo
+
+    def setEditorData(self, editor, index):
+        value = index.data()
+        if value in self.items:
+            editor.setCurrentText(value)
+
+    def setModelData(self, editor, model, index):
+        from pymeasure.display.Qt import QtCore
+        model.setData(index, editor.currentText(), QtCore.Qt.EditRole)
 
 class ParameterTable(QtWidgets.QTableView):
     """Table format view of experiment parameters."""
@@ -162,18 +246,27 @@ class ParameterTable(QtWidgets.QTableView):
         self,
         table_columns: List[str],
         float_digits: int = 1,
+        combo_columns: Dict[int, List[str]] = None,  # {col_index: [choices]}
+        row_validator: Optional[Callable[[Dict[str, str]], Dict[str, str]]] = None,
         parent=None
     ) -> None:
         """Connect to view model and configure basic appearance.
 
         Args:
            float_digits (int): float-point resolution in table
+           row_validator: optional row check, see :class:`TableModel`
            parent: parent class
         """
         super().__init__(parent)
         df = pd.DataFrame(columns=table_columns)
-        model = TableModel(df=df, float_digits=float_digits)
+        model = TableModel(
+            df=df, float_digits=float_digits, row_validator=row_validator
+        )
         self.setModel(model)
+        if combo_columns:
+            for col, items in combo_columns.items():
+                delegate = ComboBoxDelegate(items, self)
+                self.setItemDelegateForColumn(col, delegate)
         self.horizontalHeader().setStyleSheet("font: bold;")
         self.horizontalHeader().setMinimumHeight(50)
         self.horizontalHeader().setDefaultAlignment(
@@ -247,6 +340,9 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
             name: str,
             table_columns: Sequence[str],
             float_digits: int = 1,
+            combo_columns: List[int] = None,
+            parameters_dir: str = "",
+            row_validator: Optional[Callable[[Dict[str, str]], Dict[str, str]]] = None,
             parent=None
     ) -> None:
         """Initialize UI and layout.
@@ -259,20 +355,24 @@ class ParameterTableWidget(TabWidget, QtWidgets.QWidget):
         """
         super().__init__(name, parent)
         self.float_digits = float_digits
-        self._setup_ui(table_columns)
+        self.parameters_dir = parameters_dir
+        self.row_validator = row_validator
+        self._setup_ui(table_columns, combo_columns)
         self._layout()
 
-    def _setup_ui(self, table_columns):
+    def _setup_ui(self, table_columns, combo_columns):
         self.parameters_file_label = QtWidgets.QLabel(self)
         self.parameters_file_label.setText('Load Parameters:')
 
         self.table = ParameterTable(
             table_columns,
             float_digits=self.float_digits,
+            combo_columns=combo_columns,
+            row_validator=self.row_validator,
             parent=self,
         )
 
-        self.parameters_file = FileLineEdit(self.table.model, self)
+        self.parameters_file = FileLineEdit(self.table.model, self, parameters_dir=self.parameters_dir)
 
     def _layout(self):
         vbox = QtWidgets.QVBoxLayout(self)
