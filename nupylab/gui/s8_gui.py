@@ -20,6 +20,7 @@ from typing import Dict, List
 
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
+from nupylab.instruments.ac_potentiostat.biologic import eis_value_errors
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200 as Heater
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
@@ -67,7 +68,9 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     potentiostat_port: Parameter = Parameter(
         "Biologic Port", default="USB0", ui_class=None, group_by="eis_toggle"
     )
-    potentiostat_technique = ListParameter("EIS Technique", default="PEIS", choices=EIS_techniques)
+    potentiostat_technique = ListParameter(
+        "EIS Technique", default="PEIS", choices=EIS_techniques, ui_class=None
+    )
 
     eis_toggle: ListParameter = ListParameter(
         "Run eis", choices=["True", "False"], default="False", ui_class=None
@@ -99,6 +102,7 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
         "eis? [True/False]": "eis_toggle",
+        "EIS Technique": "potentiostat_technique",
         "Initial Ewe or I [V or A]": "initial_step",
         "Hold before EIS [min]": "duration_step",
         "Maximum Frequency [Hz]": "maximum_frequency",
@@ -126,8 +130,35 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
         "potentiostat",
         "potentiostat_model",
         "potentiostat_port",
-        "potentiostat_technique",
     ]
+
+    @classmethod
+    def table_row_errors(cls, row: Dict[str, str]) -> Dict[str, str]:
+        """Check one parameters table row before queueing.
+
+        Args:
+            row: parameter name to cell text for one table row.
+
+        Returns:
+            Parameter name to error message for each invalid cell.
+        """
+        if str(row.get("eis_toggle", "")).strip().casefold() not in (
+            "true", "t", "yes", "1"
+        ):
+            return {}
+        technique = str(row.get("potentiostat_technique", "")).strip().upper()
+        if technique not in cls.EIS_techniques:
+            technique = cls.potentiostat_technique.default
+        try:
+            initial_step = float(row["initial_step"])
+            amplitude = float(row["amplitude_voltage"])
+        except (KeyError, TypeError, ValueError):
+            return {}  # Blank or non-numeric cells are reported when queueing
+        errors = eis_value_errors(technique, initial_step, amplitude)
+        return {
+            {"initial_step": "initial_step", "amplitude": "amplitude_voltage"}[k]: v
+            for k, v in errors.items()
+        }
 
     def set_instruments(self) -> None:
         """Set and configure instruments list.

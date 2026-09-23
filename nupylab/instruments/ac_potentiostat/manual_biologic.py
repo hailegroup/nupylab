@@ -96,7 +96,7 @@ class Biologic(NupylabInstrument):
                 "record_every_dt": record_time
             }
         )
-        if technique in ("PEIS" or "SPEIS"):
+        if technique in ("PEIS", "SPEIS"):
             technique_dict.update({"amplitude_voltage": amp})
             technique_dict.update({"initial_voltage_step": step_0})
         else:

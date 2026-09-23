@@ -2342,6 +2342,8 @@ class GEIS(Technique):
         ],
     }
 
+    data_fields = [process0_data_fields, process1_data_fields]
+
     def __init__(
         self,
         initial_current_step=0.0,

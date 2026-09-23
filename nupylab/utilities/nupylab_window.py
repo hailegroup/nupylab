@@ -8,6 +8,7 @@ import os
 from typing import Dict, TYPE_CHECKING, Type
 
 from nupylab.utilities.parameter_table import ParameterTableWidget
+from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows.managed_dock_window import ManagedDockWindow
 from pymeasure.experiment import (
     BooleanParameter,
@@ -70,11 +71,25 @@ class NupylabWindow(ManagedDockWindow):
             for name, value in inspect.getmembers(procedure_class):
                 if name == param_name and isinstance(value, ListParameter):
                     combo_col_dict[i] = list(value.choices)
+        # Procedures may define `table_row_errors` to flag invalid table cells
+        row_validator = None
+        if hasattr(procedure_class, "table_row_errors"):
+            label_to_name = dict(procedure_class.TABLE_PARAMETERS)
+            name_to_label = {v: k for k, v in label_to_name.items()}
+
+            def row_validator(row: Dict[str, str]) -> Dict[str, str]:
+                errors = procedure_class.table_row_errors(
+                    {label_to_name[label]: text for label, text in row.items()
+                     if label in label_to_name}
+                )
+                return {name_to_label[name]: message for name, message in errors.items()
+                        if name in name_to_label}
+
         super().__init__(
             procedure_class,
             inputs_in_scrollarea=True,
             widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir,),
+                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir, row_validator=row_validator,),
             ),
             **kwargs,
         )
@@ -215,9 +230,22 @@ class NupylabWindow(ManagedDockWindow):
                         )
                     elif param_cast is str:
                         converted_df[column] = (
-                            converted_df[column].astype(str).str.strip()
+                            converted_df[column].fillna("").astype(str).str.strip()
                             .str.casefold().map(lambda x: bool_str_map.get(x, x))
                         )
+                        if isinstance(value, ListParameter):
+                            # Restore choice capitalization, e.g. "peis" -> "PEIS"
+                            choice_map = {
+                                str(c).casefold(): str(c) for c in value.choices
+                            }
+                            converted_df[column] = converted_df[column].map(
+                                lambda x: choice_map.get(x, x)
+                            )
+                            # Blank cells, e.g. from older parameter files, use default
+                            if value.default is not None:
+                                converted_df[column] = converted_df[column].replace(
+                                    "", str(value.default)
+                                )
                     cast_dict.update({column: param_cast})
         converted_df = converted_df.astype(cast_dict)
         return converted_df
@@ -226,7 +254,23 @@ class NupylabWindow(ManagedDockWindow):
         """Queue all rows in parameters table. Overwrites parent method."""
         log.info("Reading experiment parameters.")
         table_widget = self.tabs.widget(0)
-        table_df: pd.DataFrame = table_widget.table.model().export_df()
+        table_model = table_widget.table.model()
+        table_model.validate()
+        row_errors = table_model.row_errors()
+        if row_errors:
+            details = "\n".join(
+                f"Step {row + 1}: " + "; ".join(messages)
+                for row, messages in row_errors.items()
+            )
+            log.error("Experiment not queued, invalid parameters:\n%s", details)
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Parameters",
+                "Nothing was queued. Fix the cells marked in red with '!':\n\n"
+                + details,
+            )
+            return
+        table_df: pd.DataFrame = table_model.export_df()
         converted_df: pd.DataFrame = self.verify_parameters(table_df)
 
         num_steps: int = converted_df.shape[0]

@@ -1,6 +1,7 @@
 """Adapts Biologic driver to NUPylab instrument class for use with NUPyLab GUIs."""
 from __future__ import annotations
 import importlib
+import re
 import logging
 from typing import Sequence, Union, TYPE_CHECKING, Optional, List, Type, Callable
 
@@ -151,7 +152,7 @@ class Biologic(NupylabInstrument):
                 "record_every_dt": record_time
             }
         )
-        if technique in ("PEIS" or "SPEIS"):
+        if technique in ("PEIS", "SPEIS"):
             technique_dict.update({"amplitude_voltage": amp})
             technique_dict.update({"initial_voltage_step": step_0})
         else:
@@ -724,3 +725,54 @@ SGEIS_DICT = {
     "e_range": "KBIO_ERANGE_AUTO",
     "bandwidth": "KBIO_BW_5",
 }
+
+_RANGE_UNITS = {"pA": 1e-12, "nA": 1e-9, "uA": 1e-6, "mA": 1e-3, "A": 1.0}
+
+
+def _range_limit(range_name: str) -> Optional[float]:
+    """Convert a range name, e.g. `KBIO_IRANGE_1mA` or `KBIO_ERANGE_2_5`, to its
+    full-scale value in A or V. Returns None for auto or unrecognized ranges."""
+    match = re.fullmatch(r"KBIO_IRANGE_(\d+)(pA|nA|uA|mA|A)", range_name)
+    if match:
+        return int(match.group(1)) * _RANGE_UNITS[match.group(2)]
+    match = re.fullmatch(r"KBIO_ERANGE_(\d+(?:_\d+)?)", range_name)
+    if match:
+        return float(match.group(1).replace("_", "."))
+    return None
+
+
+def eis_value_errors(technique: str, initial_step: float, amplitude: float) -> dict:
+    """Check EIS bias and amplitude against the technique's configured range.
+
+    Args:
+        technique: `PEIS`, `SPEIS`, `GEIS`, or `SGEIS`.
+        initial_step: initial potential (V) or current (A) step.
+        amplitude: EIS amplitude in V or A, depending on technique.
+
+    Returns:
+        Dict mapping `initial_step` and/or `amplitude` to an error message. Empty if
+        both values are valid.
+    """
+    technique = technique.upper()
+    technique_dict = globals()[technique + "_DICT"]
+    if technique in ("PEIS", "SPEIS"):
+        quantity, unit = "potential", "V"
+        limit = _range_limit(technique_dict["e_range"])
+    else:
+        quantity, unit = "current", "A"
+        limit = _range_limit(technique_dict["i_range"])
+
+    errors = {}
+    if amplitude <= 0:
+        errors["amplitude"] = f"{technique} amplitude must be greater than 0 {unit}"
+    elif limit is not None and amplitude > limit:
+        errors["amplitude"] = (
+            f"{technique} amplitude {amplitude:g} {unit} exceeds the "
+            f"{limit:g} {unit} {quantity} range"
+        )
+    if limit is not None and abs(initial_step) > limit:
+        errors["initial_step"] = (
+            f"{technique} initial {quantity} {initial_step:g} {unit} is outside the "
+            f"±{limit:g} {unit} {quantity} range"
+        )
+    return errors
