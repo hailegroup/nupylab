@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import tempfile
 from typing import Dict, TYPE_CHECKING, Type
 
 from nupylab.utilities.parameter_table import ParameterTableWidget
@@ -286,23 +287,37 @@ class NupylabWindow(ManagedDockWindow):
             procedure.refresh_parameters()
             procedure.previous_procedure = previous_procedure
             current_step += 1
-            import os as _os
-            _experiments_dir = _os.path.join(self.directory, "Experiments")
-            _os.makedirs(_experiments_dir, exist_ok=True)
-            filename: str = unique_filename(
-                _experiments_dir,
-                prefix="EXPRDATA_",
-                suffix="_{Current Step}",
-                ext="csv",
-                dated_folder=False,
-                index=False,
-                procedure=procedure,
-            )
-            index: int = 2
-            basename: str = filename.split(".csv")[0]
-            while os.path.exists(filename):
-                filename = f"{basename}_{index}.csv"
-                index += 1
+            if self.store_measurement:
+                _experiments_dir = os.path.join(self.directory, "Experiments")
+                os.makedirs(_experiments_dir, exist_ok=True)
+                # Filename input sets the prefix, e.g. "EXPRDATA" -> EXPRDATA_<date>_1.csv
+                filename_base = self.file_input.filename_base.strip() or "EXPRDATA"
+                ext = self.file_input.filename_extension
+                try:
+                    filename: str = unique_filename(
+                        _experiments_dir,
+                        prefix=f"{filename_base}_",
+                        suffix="_{Current Step}",
+                        ext=ext,
+                        dated_folder=False,
+                        index=False,
+                        procedure=procedure,
+                    )
+                except KeyError as e:
+                    if not str(e.args[0]).startswith(
+                        "The following placeholder-keys are not valid:"
+                    ):
+                        raise
+                    log.error("Invalid filename provided: %s", e.args[0])
+                    return
+                index: int = 2
+                basename: str = filename.rsplit(f".{ext}", 1)[0]
+                while os.path.exists(filename):
+                    filename = f"{basename}_{index}.{ext}"
+                    index += 1
+            else:
+                # "Save data" unchecked: write to a temporary file, as pymeasure does
+                filename = tempfile.mktemp(prefix="TempFile_", suffix=".csv")
 
             results = Results(procedure, filename)
             experiment = self.new_experiment(results)
