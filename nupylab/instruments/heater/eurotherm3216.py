@@ -87,10 +87,17 @@ class Eurotherm3216(NupylabInstrument):
             )
         with self.lock:
             target_temperature, ramp_rate, dwell_time = self._parameters
+            # Hold the furnace at its current temperature while the program is
+            # rewritten, so step transitions don't drop toward SP1 or 0 degC.
+            hold_temperature = self.eurotherm.process_value
+            self.eurotherm.setpoint1 = hold_temperature
             self.eurotherm.program_status = "reset"
             self.eurotherm.end_type = "dwell"
-            for segment in self.eurotherm.segments:
-                segment.clear()
+            # All 8 segments execute on run; make the unused ones no-op steps.
+            for segment in self.eurotherm.segments[:-1]:
+                segment.target_setpoint = hold_temperature
+                segment.ramp_rate = 0
+                segment.dwell = 0
             # Eurotherm 3216 runs all 8 segments, so only the final segment matters
             self.eurotherm.segments[-1].target_setpoint = target_temperature
             self.eurotherm.segments[-1].ramp_rate = ramp_rate
@@ -115,9 +122,14 @@ class Eurotherm3216(NupylabInstrument):
         pass
 
     def shutdown(self):
-        """Reset Eurotherm program and close serial connection."""
+        """Close serial connection, leaving a completed program dwelling at setpoint.
+
+        The program is only reset if it did not finish (e.g. experiment aborted or
+        failed mid-ramp).
+        """
         with self.lock:
-            self.eurotherm.program_status = "reset"
+            if not self._finished:
+                self.eurotherm.program_status = "reset"
             self.eurotherm.serial.close()
 
     def control_widget(self, abort_callback=None):
