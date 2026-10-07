@@ -105,10 +105,12 @@ class ROD4(NupylabInstrument):
         pass
 
     def shutdown(self) -> None:
+        """Close serial connection, leaving MFCs flowing at their last setpoints.
+
+        Valves are not closed so gas flow continues if a run ends, fails, or is
+        aborted. Use "Close All Valves" in the Instrument Control tab to stop flow.
+        """
         with self.lock:
-            for i in range(1, 5):
-                ch = f"{i:02d}"
-                self._send(f"\x02{ch}SVM1\r".encode())
             self._serial.close()
 
     def control_widget(self, abort_callback=None):
