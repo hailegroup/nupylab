@@ -9,7 +9,7 @@ Run the program by changing to the directory containing this file and calling:
 
 python s8_gui.py
 
-The Instrument Control tab connects using the port, address, and model settings
+The Manual Control tab connects using the port, address, and model settings
 in the inputs panel.
 """
 
@@ -216,7 +216,7 @@ def main(*args):
     window = nupylab_window.NupylabWindow(S8Procedure)
     inputs = window.inputs
 
-    # Instrument Control tab uses the connection settings from the inputs panel
+    # Manual Control tab uses the connection settings from the inputs panel
     furnace = Heater(
         inputs.furnace_port.value(),
         inputs.furnace_address.value(),
@@ -289,7 +289,7 @@ def main(*args):
         button_feedback=True,
     )
 
-    window.tabs.addTab(control, "Instrument Control")
+    window.tabs.addTab(control, "Manual Control")
     if potentiostat_error is not None:
         _control_log.error(
             "Biologic control panel unavailable: %s", potentiostat_error

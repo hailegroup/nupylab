@@ -4,7 +4,7 @@ import logging
 import time
 
 from nupylab.drivers import eurotherm2400
-from nupylab.utilities import DataTuple, NupylabError, detect_instrument_port
+from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 _control_log = logging.getLogger('nupylab.instrument_control')
@@ -19,6 +19,8 @@ class Eurotherm2400(NupylabInstrument):
         lock: thread lock for preventing simultaneous calls to instrument.
         eurotherm: Eurotherm driver class.
     """
+
+    SHUTDOWN_TEMPERATURE = 20.0
 
     def __init__(
         self, port: str, address: int, data_label: str, name: str = "Eurotherm2400"
@@ -150,29 +152,68 @@ class Eurotherm2400(NupylabInstrument):
             self.eurotherm.program_status = "reset"
             self.eurotherm.serial.close()
 
-    @classmethod
-    def detect_port(cls, address: int = 1, resources=None, timeout: float = 0.3):
-        """Probe serial ports and return the first answering as this controller.
-
-        Args:
-            address: integer address of Eurotherm.
-            resources: resources to probe, defaults to the serial VISA resources.
-            timeout: per-port serial timeout in seconds. Kept short so that
-                scanning several ports stays quick.
+    def get_status(self):
+        """Read the values shown by the manual control panel.
 
         Returns:
-            VISA resource name, e.g. `ASRL1::INSTR`, or None if nothing answered.
+            Tuple of process value in deg C, working setpoint in deg C, output
+            power in percent, and program status.
         """
-        def probe(com_port: str) -> None:
-            instrument = eurotherm2400.Eurotherm2400(
-                com_port, address, timeout=timeout
+        with self.lock:
+            return (
+                self.eurotherm.process_value,
+                self.eurotherm.working_setpoint,
+                self.eurotherm.output_level,
+                self.eurotherm.program_status,
             )
-            try:
-                instrument.process_value  # raises unless a Eurotherm answers
-            finally:
-                instrument.serial.close()
 
-        return detect_instrument_port(probe, resources)
+    def start_ramp_and_hold(
+        self, target_temperature: float, ramp_rate: float
+    ) -> None:
+        """Ramp to a target temperature and hold there until stopped.
+
+        Unlike :meth:`start`, which dwells for a set time and then ends, this
+        holds the target indefinitely. It is what the manual control panel
+        uses, and it does not require :meth:`set_parameters` first.
+
+        Args:
+            target_temperature: target temperature in deg C.
+            ramp_rate: ramp rate in C/min.
+        """
+        self._finished = False
+        with self.lock:
+            self.eurotherm.program_status = "reset"
+            self.eurotherm.current_program = 1
+            self.eurotherm.programs[1].refresh()
+
+            self.eurotherm.programs[1].segments[1]["segment type"] = "ramp rate"
+            self.eurotherm.programs[1].segments[1]["rate"] = ramp_rate
+            self.eurotherm.programs[1].segments[1][
+                "target setpoint"
+            ] = target_temperature
+
+            # End with `dwell`, which holds the final setpoint indefinitely
+            self.eurotherm.programs[1].segments[2]["segment type"] = "end"
+            self.eurotherm.programs[1].segments[2]["end type"] = "dwell"
+
+            self.eurotherm.program_status = "run"
+
+    def shutdown_to(
+        self, temperature: float = None, ramp_rate: float = 5.0
+    ) -> None:
+        """Ramp the furnace to a safe temperature, then close the connection.
+
+        The controller keeps running the ramp after the connection closes.
+
+        Args:
+            temperature: temperature to ramp to, defaults to
+                :attr:`SHUTDOWN_TEMPERATURE`.
+            ramp_rate: ramp rate in C/min.
+        """
+        if temperature is None:
+            temperature = self.SHUTDOWN_TEMPERATURE
+        self.start_ramp_and_hold(temperature, ramp_rate)
+        self.disconnect()
 
     def control_widget(self, abort_callback=None):
         """Return a Qt control panel for this instrument."""
@@ -182,12 +223,11 @@ class Eurotherm2400(NupylabInstrument):
         instrument = self
 
         class Worker(QtCore.QThread):
-            result = QtCore.Signal(float)
+            result = QtCore.Signal(object)
 
             def run(self):
                 try:
-                    data = instrument.get_data()
-                    self.result.emit(data.value)
+                    self.result.emit(instrument.get_status())
                 except Exception:
                     pass
 
@@ -196,12 +236,23 @@ class Eurotherm2400(NupylabInstrument):
             instrument_name = "Eurotherm"
             record_columns = ["Furnace Temperature (degC)"]
             data_recorded = QtCore.Signal(list)
-            port_detected = QtCore.Signal(str)
+            START_TEXT = "Start Program"
+            STOP_TEXT = "Stop Program"
+            # Program status words differ between controllers: the 2200 idles
+            # at "off", the 2400 and 3216 at "reset", and the end-of-program
+            # hold is "end", "dwell" or "complete" depending on the model.
+            # A double click would otherwise start a program and stop it
+            # again; a second toggle this soon after one lands is ignored.
+            TOGGLE_GUARD_S = 1.0
+            IDLE_STATES = ("reset", "off")
+            HOLDING_STATES = ("end", "dwell", "complete")
 
             def __init__(self):
                 super().__init__("Eurotherm 2400 — Furnace")
                 self._worker = None
                 self._program_started = False
+                self._phase = None
+                self._last_toggle = 0.0
                 self._abort_callback = abort_callback
                 self.live_plot = LivePlotWidget(
                     "Furnace Temperature", "Temperature (°C)", n_traces=1
@@ -226,33 +277,25 @@ class Eurotherm2400(NupylabInstrument):
                 self.ramp_rate.setValue(5)
                 layout.addRow("Ramp Rate:", self.ramp_rate)
 
-                self.dwell_time = QtWidgets.QDoubleSpinBox()
-                self.dwell_time.setRange(0, 9999)
-                self.dwell_time.setSuffix(" min")
-                self.dwell_time.setValue(1)
-                layout.addRow("Dwell Time:", self.dwell_time)
-
                 btn_layout = QtWidgets.QHBoxLayout()
                 self.connect_btn = QtWidgets.QPushButton("Connect")
-                self.start_btn = QtWidgets.QPushButton("Start Program")
-                self.stop_btn = QtWidgets.QPushButton("Stop Program")
-                self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
+                self.program_btn = QtWidgets.QPushButton(self.START_TEXT)
+                self.shutdown_btn = QtWidgets.QPushButton("Shut Down")
                 self.connect_btn.clicked.connect(self.connect_instrument)
-                self.start_btn.clicked.connect(self.start_program)
-                self.stop_btn.clicked.connect(self.stop_program)
-                self.disconnect_btn.clicked.connect(self.disconnect_instrument)
-                self.detect_btn = QtWidgets.QPushButton("Detect Port")
-                self.detect_btn.clicked.connect(self.detect_instrument_port)
+                self.program_btn.clicked.connect(self.toggle_program)
+                self.shutdown_btn.clicked.connect(self.shutdown_instrument)
                 btn_layout.addWidget(self.connect_btn)
-                btn_layout.addWidget(self.start_btn)
-                btn_layout.addWidget(self.stop_btn)
-                btn_layout.addWidget(self.disconnect_btn)
-                btn_layout.addWidget(self.detect_btn)
+                btn_layout.addWidget(self.program_btn)
+                btn_layout.addWidget(self.shutdown_btn)
                 layout.addRow(btn_layout)
 
                 self.temp_label = QtWidgets.QLabel("Current Temp: —")
+                self.setpoint_label = QtWidgets.QLabel("Set Temp: —")
+                self.power_label = QtWidgets.QLabel("Power: —")
                 self.status_label = QtWidgets.QLabel("Status: Not connected")
                 layout.addRow(self.temp_label)
+                layout.addRow(self.setpoint_label)
+                layout.addRow(self.power_label)
                 layout.addRow(self.status_label)
 
                 self.setLayout(layout)
@@ -272,6 +315,18 @@ class Eurotherm2400(NupylabInstrument):
                     self.status_label.setText(f"Status: Error — {e}")
                     _control_log.error("Eurotherm connect failed: %s", e)
 
+            def _clear_readouts(self):
+                self.temp_label.setText("Current Temp: —")
+                self.setpoint_label.setText("Set Temp: —")
+                self.power_label.setText("Power: —")
+
+            def _set_program_running(self, running):
+                """Keep the single program button in step with the controller."""
+                self._program_started = running
+                self.program_btn.setText(
+                    self.STOP_TEXT if running else self.START_TEXT
+                )
+
             def disconnect_instrument(self):
                 self._abort_if_needed()
                 try:
@@ -280,58 +335,76 @@ class Eurotherm2400(NupylabInstrument):
                         self._worker.wait(2000)
                     instrument.disconnect()
                     self.status_label.setText("Status: Disconnected")
-                    self.temp_label.setText("Current Temp: —")
+                    self._clear_readouts()
                     _control_log.info("Eurotherm disconnected")
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
 
-            def detect_instrument_port(self):
-                if instrument.connected:
-                    self.status_label.setText(
-                        "Status: Disconnect before detecting port"
-                    )
-                    return
+            def shutdown_instrument(self):
+                """Ramp the furnace to a safe temperature, then disconnect."""
                 self._abort_if_needed()
-                self.status_label.setText("Status: Detecting port\u2026")
-                QtWidgets.QApplication.processEvents()
                 try:
-                    port = type(instrument).detect_port(instrument._address)
+                    self.timer.stop()
+                    if self._worker and self._worker.isRunning():
+                        self._worker.wait(2000)
+                    if not instrument.connected:
+                        instrument.connect()
+                    instrument.shutdown_to(ramp_rate=self.ramp_rate.value())
+                    self._set_program_running(False)
+                    self._clear_readouts()
+                    self.status_label.setText(
+                        "Status: Ramping to %.0f°C, disconnected"
+                        % instrument.SHUTDOWN_TEMPERATURE
+                    )
+                    _control_log.info(
+                        "Eurotherm shutting down: ramping to %.0f°C at "
+                        "%.1f°C/min, then disconnecting",
+                        instrument.SHUTDOWN_TEMPERATURE, self.ramp_rate.value()
+                    )
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error \u2014 {e}")
-                    _control_log.error("Eurotherm port detection failed: %s", e)
-                    return
-                if port is None:
-                    self.status_label.setText("Status: No Eurotherm found")
-                    _control_log.warning(
-                        "No Eurotherm answered on any serial port"
+                    self.status_label.setText(f"Status: Error — {e}")
+                    _control_log.error("Eurotherm shutdown failed: %s", e)
+
+            def toggle_program(self):
+                """Start the ramp, or stop it if one is already running.
+
+                Ignores a repeat click that lands within
+                :attr:`TOGGLE_GUARD_S` of the previous one finishing, so that
+                a double click cannot start a program and stop it again. The
+                window is measured from the end of the previous action, since
+                the serial write blocks the event loop while it runs.
+                """
+                now = time.monotonic()
+                if now - self._last_toggle < self.TOGGLE_GUARD_S:
+                    _control_log.info(
+                        "Ignoring repeat click on the program button"
                     )
                     return
-                instrument.set_connection(port, instrument._address)
-                self.status_label.setText(f"Status: Found on {port}")
-                _control_log.info("Eurotherm detected on %s", port)
-                self.port_detected.emit(port)
+                try:
+                    if self._program_started:
+                        self.stop_program()
+                    else:
+                        self.start_program()
+                finally:
+                    self._last_toggle = time.monotonic()
 
             def start_program(self):
                 self._abort_if_needed()
                 try:
                     if not instrument.connected:
                         instrument.connect()
-                    instrument.set_parameters(
-                        self.target_temp.value(),
-                        self.ramp_rate.value(),
-                        self.dwell_time.value(),
+                    instrument.start_ramp_and_hold(
+                        self.target_temp.value(), self.ramp_rate.value()
                     )
-                    instrument.start()
-                    self._program_started = True
+                    self._set_program_running(True)
                     self.live_plot.clear()
                     if not self.timer.isActive():
                         self.timer.start(2000)
-                    self.status_label.setText("Status: Program running")
+                    self.status_label.setText("Status: Ramping to setpoint")
                     _control_log.info(
-                        "Eurotherm program started: target=%.1f°C, "
-                        "ramp=%.1f°C/min, dwell=%.1fmin",
-                        self.target_temp.value(), self.ramp_rate.value(),
-                        self.dwell_time.value()
+                        "Eurotherm ramping to %.1f°C at %.1f°C/min, "
+                        "then holding",
+                        self.target_temp.value(), self.ramp_rate.value()
                     )
                 except Exception as e:
                     self.status_label.setText(f"Status: Error — {e}")
@@ -342,7 +415,7 @@ class Eurotherm2400(NupylabInstrument):
                 try:
                     with instrument.lock:
                         instrument.eurotherm.program_status = "reset"
-                    self._program_started = False
+                    self._set_program_running(False)
                     self.status_label.setText("Status: Stopped")
                     _control_log.info("Eurotherm program stopped")
                 except Exception as e:
@@ -355,13 +428,34 @@ class Eurotherm2400(NupylabInstrument):
                     return
                 self._worker = Worker()
 
-                def on_result(v):
-                    self.temp_label.setText(f"Current Temp: {v:.2f} °C")
-                    self.live_plot.add_point(v)
-                    self.data_recorded.emit([v])
-                    if instrument.finished and self._program_started:
-                        self.status_label.setText("Status: Program complete")
-                        self._program_started = False
+                def on_result(status):
+                    temperature, setpoint, power, program_status = status
+                    self.temp_label.setText(
+                        f"Current Temp: {temperature:.2f} °C"
+                    )
+                    self.setpoint_label.setText(
+                        f"Set Temp: {setpoint:.2f} °C"
+                    )
+                    self.power_label.setText(f"Power: {power:.1f} %")
+                    self.live_plot.add_point(temperature)
+                    self.data_recorded.emit([temperature])
+                    # Follow the controller rather than only the programs
+                    # this panel started: a queued experiment, the Eurotherm's
+                    # own front panel, or a previous session can each leave one
+                    # running, and Stop has to be reachable in all those cases.
+                    running = program_status not in self.IDLE_STATES
+                    if running != self._program_started:
+                        self._set_program_running(running)
+                    if not running:
+                        phase = "Stopped"
+                    elif program_status in self.HOLDING_STATES:
+                        phase = "Holding at setpoint"
+                    else:
+                        phase = "Ramping to setpoint"
+                    # Only on a change, so an error message stays readable
+                    if phase != self._phase:
+                        self._phase = phase
+                        self.status_label.setText("Status: %s" % phase)
 
                 self._worker.result.connect(on_result)
                 self._worker.start()

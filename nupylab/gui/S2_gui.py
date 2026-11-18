@@ -10,16 +10,15 @@ Run the program by changing to the directory containing this file and calling:
 python S2_gui.py
 
 The Furnace Controller input selects which Eurotherm the station is wired to,
-and defaults to the 2400 family used by the 2416 on S2. The Instrument Control
-tab connects using the port, address, and model settings in the inputs panel,
-and is rebuilt whenever the furnace type changes. Its Detect Port button scans
-the serial ports for a controller that answers and selects it here.
+and defaults to the 2400 family used by the 2416 on S2. The Manual Control tab
+connects using the port, address, and model settings in the inputs panel, and
+is rebuilt whenever the furnace type changes.
 """
 
 import logging
 import sys
 import time
-from typing import Dict, List, Type
+from typing import Dict, List, Tuple, Type, Union
 
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
@@ -156,13 +155,13 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.
     # Number of plots is determined by the longer of X_AXIS or Y_AXIS
+    # An entry naming two columns gives one plot with left and right y axes
     X_AXIS: List[str] = ["Z_re (ohm)","Frequency (Hz)", "Time (s)"]
-    Y_AXIS: List[str] = [
+    Y_AXIS: List[Union[str, Tuple[str, str]]] = [
         "-Z_im (ohm)",
         "|Z| (ohm)",
         "Phase (degrees)",
-        "Ewe (V)",
-        "I (A)",
+        ("Ewe (V)", "I (A)"),
         "Furnace Temperature (degC)",
     ]
     # Inputs must match name of selected procedure parameters
@@ -279,12 +278,12 @@ def main(*args):
     except Exception as e:
         potentiostat_error = e
 
-    # Each controller supplies its own panel, so the Instrument Control tab is
+    # Each controller supplies its own panel, so the Manual Control tab is
     # rebuilt when the furnace type changes rather than patched in place.
     current = {"furnace": None, "control": None, "type": None}
 
     def control_instruments():
-        """Instruments currently shown in the Instrument Control tab."""
+        """Instruments currently shown in the Manual Control tab."""
         instruments = []
         if current["furnace"] is not None:
             instruments.append(current["furnace"])
@@ -313,19 +312,8 @@ def main(*args):
                 except Exception:
                     pass
 
-    def on_port_detected(port):
-        """Select the port the control tab just found in the inputs panel."""
-        combo = inputs.furnace_port
-        index = combo.findText(port) if hasattr(combo, "findText") else -1
-        if index >= 0:
-            combo.setCurrentIndex(index)
-        else:
-            _control_log.info(
-                "Detected %s, which is not in the Eurotherm Port list", port
-            )
-
     def build_control_tab():
-        """(Re)build the Instrument Control tab for the selected furnace type."""
+        """(Re)build the Manual Control tab for the selected furnace type."""
         furnace_type = inputs.furnace_type.value()
         previous = current["control"]
         if previous is not None:
@@ -351,11 +339,7 @@ def main(*args):
             button_feedback=True,
         )
         current["control"] = control
-        window.tabs.addTab(control, "Instrument Control")
-
-        panel = getattr(current["furnace"], "_panel", None)
-        if panel is not None and hasattr(panel, "port_detected"):
-            panel.port_detected.connect(on_port_detected)
+        window.tabs.addTab(control, "Manual Control")
 
     def sync_connection_settings(*_):
         """Apply inputs panel connection settings on next control tab connect."""
@@ -378,7 +362,7 @@ def main(*args):
         if inputs.furnace_type.value() == current["type"]:
             return
         _control_log.info(
-            "Furnace controller changed to %s, rebuilding Instrument Control tab",
+            "Furnace controller changed to %s, rebuilding Manual Control tab",
             inputs.furnace_type.value(),
         )
         build_control_tab()
