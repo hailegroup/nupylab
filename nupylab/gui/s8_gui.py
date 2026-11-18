@@ -16,7 +16,7 @@ in the inputs panel.
 import logging
 import sys
 import time
-from typing import Dict, List
+from typing import Dict, List, Tuple, Union
 
 # Instrument Imports #
 from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
@@ -115,13 +115,13 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
 
     # Entries in axes must have matches in procedure DATA_COLUMNS.
     # Number of plots is determined by the longer of X_AXIS or Y_AXIS
+    # An entry naming two columns gives one plot with left and right y axes
     X_AXIS: List[str] = ["Z_re (ohm)","Frequency (Hz)", "Time (s)"]
-    Y_AXIS: List[str] = [
+    Y_AXIS: List[Union[str, Tuple[str, str]]] = [
         "-Z_im (ohm)",
         "|Z| (ohm)",
         "Phase (degrees)",
-        "Ewe (V)",
-        "I (A)",
+        ("Ewe (V)", "I (A)"),
         "Furnace Temperature (degC)",
     ]
     # Inputs must match name of selected procedure parameters
