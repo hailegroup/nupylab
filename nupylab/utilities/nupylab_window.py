@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import inspect
 import logging
 import os
 import tempfile
-from typing import Dict, TYPE_CHECKING, Type
+from typing import Dict, Iterator, List, Optional, Sequence, TYPE_CHECKING, Type
 
+import pymeasure.display.windows.managed_dock_window as managed_dock_window
+from nupylab.utilities.dock_widgets import NupylabDockWidget, split_y_axis
 from nupylab.utilities.parameter_table import ParameterTableWidget
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows.managed_dock_window import ManagedDockWindow
@@ -28,8 +32,37 @@ log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 
+@contextlib.contextmanager
+def _dock_widget_class(
+    y_axis_right_labels: Sequence[Optional[str]],
+) -> Iterator[None]:
+    """Build the Dock Tab with right-hand y axes for the duration of the context.
+
+    :class:`~pymeasure.display.windows.managed_dock_window.ManagedDockWindow`
+    builds its Dock Tab from the `DockWidget` name in its own module and offers no
+    hook for substituting a different class, so the name is swapped for the
+    duration of its initializer and restored afterwards.
+
+    Args:
+        y_axis_right_labels: right y-axis column of each dock, `None` entries
+            giving a dock with a single y axis.
+    """
+    original = managed_dock_window.DockWidget
+    managed_dock_window.DockWidget = functools.partial(
+        NupylabDockWidget, y_axis_right_labels=y_axis_right_labels
+    )
+    try:
+        yield
+    finally:
+        managed_dock_window.DockWidget = original
+
+
 class NupylabWindow(ManagedDockWindow):
     """Docked GUI window class.
+
+    Each entry of the procedure class attribute `Y_AXIS` gets its own dock. An
+    entry naming two columns, e.g. ``("Ewe (V)", "I (A)")``, gives one dock whose
+    plot carries the first column on its left y axis and the second on its right.
 
     NOTE: The parameter order in the procedure class attribute `TABLE_PARAMETERS`
     **MUST MATCH** the order of the corresponding table column labels.
@@ -64,6 +97,13 @@ class NupylabWindow(ManagedDockWindow):
             kwargs.setdefault("x_axis", procedure_class.X_AXIS)
         if hasattr(procedure_class, "Y_AXIS"):
             kwargs.setdefault("y_axis", procedure_class.Y_AXIS)
+        # A two-item `Y_AXIS` entry asks for one dock with left and right y axes
+        y_axis_right_labels: List[Optional[str]] = []
+        if isinstance(kwargs.get("y_axis"), (list, tuple)):
+            y_axis_labels, right_labels = split_y_axis(kwargs["y_axis"])
+            if any(right_labels):
+                kwargs["y_axis"] = y_axis_labels
+                y_axis_right_labels = right_labels
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
@@ -86,13 +126,20 @@ class NupylabWindow(ManagedDockWindow):
                 return {name_to_label[name]: message for name, message in errors.items()
                         if name in name_to_label}
 
-        super().__init__(
-            procedure_class,
-            inputs_in_scrollarea=True,
-            widget_list=(
-                ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir, row_validator=row_validator,),
-            ),
-            **kwargs,
+        with contextlib.ExitStack() as stack:
+            if y_axis_right_labels:
+                stack.enter_context(_dock_widget_class(y_axis_right_labels))
+            super().__init__(
+                procedure_class,
+                inputs_in_scrollarea=True,
+                widget_list=(
+                    ParameterTableWidget("Experiment Parameters", table_column_labels, combo_columns=combo_col_dict, parameters_dir=parameters_dir, row_validator=row_validator,),
+                ),
+                **kwargs,
+            )
+        # Right-axis columns are plotted too, so the browser must expect them
+        self.browser_widget.browser.measured_quantities.update(
+            label for label in y_axis_right_labels if label
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
         self.directory = directory or os.path.join(

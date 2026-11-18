@@ -78,10 +78,13 @@ class NupylabProcedure(Procedure):
                                          f"`DATA_COLUMNS`: {self.DATA_COLUMNS}")
 
         if hasattr(self, "Y_AXIS"):
-            for y in self.Y_AXIS:
-                if y not in self.DATA_COLUMNS:
-                    raise AttributeError(f"`Y_AXIS` entry `{y}` missing from "
-                                         f"`DATA_COLUMNS`: {self.DATA_COLUMNS}")
+            # A `Y_AXIS` entry may name two columns, one per y axis of one plot
+            for entry in self.Y_AXIS:
+                labels = (entry,) if isinstance(entry, str) else tuple(entry)
+                for y in labels:
+                    if y not in self.DATA_COLUMNS:
+                        raise AttributeError(f"`Y_AXIS` entry `{y}` missing from "
+                                             f"`DATA_COLUMNS`: {self.DATA_COLUMNS}")
 
         if hasattr(self, "INPUTS"):
             for input_ in self.INPUTS:
