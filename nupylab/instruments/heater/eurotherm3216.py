@@ -4,7 +4,7 @@ import logging
 import time
 
 from nupylab.drivers import eurotherm3216
-from nupylab.utilities import DataTuple, NupylabError
+from nupylab.utilities import DataTuple, NupylabError, detect_instrument_port
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 log = logging.getLogger(__name__)
@@ -38,6 +38,18 @@ class Eurotherm3216(NupylabInstrument):
             # Verify instrument responds before declaring connected
             _ = self.eurotherm.process_value
             self._connected = True
+
+    def set_connection(self, port: str, address: int = 1) -> None:
+        """Set port and address used by the next call to :meth:`connect`.
+
+        Args:
+            port: string name of port, e.g. `COM1` or `ASRL1::INSTR`.
+            address: integer address of Eurotherm.
+        """
+        if "COM" not in port:
+            port = port.replace("ASRL", "COM").replace("::INSTR", "")
+        self._port = port
+        self._address = address
 
     def disconnect(self) -> None:
         """Disconnect from Eurotherm."""
@@ -124,6 +136,30 @@ class Eurotherm3216(NupylabInstrument):
                 self.eurotherm.program_status = "reset"
             self.eurotherm.serial.close()
 
+    @classmethod
+    def detect_port(cls, address: int = 1, resources=None, timeout: float = 0.3):
+        """Probe serial ports and return the first answering as this controller.
+
+        Args:
+            address: integer address of Eurotherm.
+            resources: resources to probe, defaults to the serial VISA resources.
+            timeout: per-port serial timeout in seconds. Kept short so that
+                scanning several ports stays quick.
+
+        Returns:
+            VISA resource name, e.g. `ASRL1::INSTR`, or None if nothing answered.
+        """
+        def probe(com_port: str) -> None:
+            instrument = eurotherm3216.Eurotherm3216(
+                com_port, address, timeout=timeout
+            )
+            try:
+                instrument.process_value  # raises unless a Eurotherm answers
+            finally:
+                instrument.serial.close()
+
+        return detect_instrument_port(probe, resources)
+
     def control_widget(self, abort_callback=None):
         """Return a Qt control panel for this instrument."""
         from pymeasure.display.Qt import QtWidgets, QtCore
@@ -146,6 +182,7 @@ class Eurotherm3216(NupylabInstrument):
             instrument_name = "Eurotherm"
             record_columns = ["Furnace Temperature (degC)"]
             data_recorded = QtCore.Signal(list)
+            port_detected = QtCore.Signal(str)
 
             def __init__(self):
                 super().__init__("Eurotherm 3216 — Furnace")
@@ -193,10 +230,13 @@ class Eurotherm3216(NupylabInstrument):
                 self.start_btn.clicked.connect(self.start_program)
                 self.stop_btn.clicked.connect(self.stop_program)
                 self.disconnect_btn.clicked.connect(self.disconnect_instrument)
+                self.detect_btn = QtWidgets.QPushButton("Detect Port")
+                self.detect_btn.clicked.connect(self.detect_instrument_port)
                 btn_layout.addWidget(self.connect_btn)
                 btn_layout.addWidget(self.start_btn)
                 btn_layout.addWidget(self.stop_btn)
                 btn_layout.addWidget(self.disconnect_btn)
+                btn_layout.addWidget(self.detect_btn)
                 layout.addRow(btn_layout)
 
                 self.temp_label = QtWidgets.QLabel("Current Temp: \u2014")
@@ -257,6 +297,32 @@ class Eurotherm3216(NupylabInstrument):
                     _control_log.info("Eurotherm disconnected")
                 except Exception as e:
                     self.status_label.setText(f"Status: Error \u2014 {e}")
+
+            def detect_instrument_port(self):
+                if instrument.connected:
+                    self.status_label.setText(
+                        "Status: Disconnect before detecting port"
+                    )
+                    return
+                self._abort_if_needed()
+                self.status_label.setText("Status: Detecting port\u2026")
+                QtWidgets.QApplication.processEvents()
+                try:
+                    port = type(instrument).detect_port(instrument._address)
+                except Exception as e:
+                    self.status_label.setText(f"Status: Error \u2014 {e}")
+                    _control_log.error("Eurotherm port detection failed: %s", e)
+                    return
+                if port is None:
+                    self.status_label.setText("Status: No Eurotherm found")
+                    _control_log.warning(
+                        "No Eurotherm answered on any serial port"
+                    )
+                    return
+                instrument.set_connection(port, instrument._address)
+                self.status_label.setText(f"Status: Found on {port}")
+                _control_log.info("Eurotherm detected on %s", port)
+                self.port_detected.emit(port)
 
             def start_program(self):
                 self._abort_if_needed()
