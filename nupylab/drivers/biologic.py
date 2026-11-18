@@ -24,12 +24,15 @@
  technique files must be passed to the library, depending on **which series
  the instrument is in (VMP3 series or SP-300 series)**.
 
-.. note :: On **64-bit Windows systems**, you should use the ``EClib64.dll``
- instead of the ``EClib.dll``. If the EC-lab development package is installed
- in the default location, this driver will try and load the correct DLL
- automatically, if not, the DLL path will need to passed explicitly and the
- user will need to take 32 vs. 64 bit into account. **NOTE:** The relevant 32
- vs. 64 bit status is that of Windows, not of Python.
+.. note :: With **64-bit Python** you should use the ``EClib64.dll`` and
+ ``blfind64.dll`` instead of ``EClib.dll`` and ``blfind.dll``. If the EC-lab
+ development package is installed in the default location, this driver will
+ try and load the correct DLLs automatically, if not, the DLL path will need
+ to be passed explicitly and the user will need to take 32 vs. 64 bit into
+ account. **NOTE:** The relevant 32 vs. 64 bit status is that of the running
+ Python process, not of Windows. ``ctypes`` can only load a DLL built for the
+ same architecture as the process loading it, so 32-bit Python on 64-bit
+ Windows still needs the 32-bit DLLs.
 
 .. note :: If it is desired to run this driver and the EC-lab development DLL
  on **Linux**, this can be achieved by running in Wine. This requires the
@@ -159,7 +162,8 @@ class BiologicPotentiostat:
                 C:\EC-Lab Development Package\EC-Lab Development Package\, falling
                 back to C:\EC-Lab Development Package\ if the DLL is not found there.
                 If no value is given the default location will be used. The 32/64 bit
-                status is inferred for selecting the proper DLL file.
+                status of the running Python process is inferred for selecting
+                the proper DLL files.
 
         Raises:
             WindowsError: If the EClib DLL cannot be found
@@ -178,11 +182,14 @@ class BiologicPotentiostat:
         self._id: Optional[c_int32] = None
         self._device_info: Optional[DeviceInfos] = None
 
-        # Check whether this is 64-bit Windows (not whether Python is 64 bit)
-        if "PROGRAMFILES(X86)" in os.environ:
+        # ctypes can only load a DLL built for the same architecture as the
+        # process loading it, so match the DLLs to Python, not to Windows.
+        if sys.maxsize > 2 ** 32:
             eclib_dll_name = "EClib64.dll"
+            blfind_dll_name = "blfind64.dll"
         else:
             eclib_dll_name = "EClib.dll"
+            blfind_dll_name = "blfind.dll"
 
         # Load the EClib dll, checking both default install layouts
         if eclib_path is None:
@@ -199,7 +206,7 @@ class BiologicPotentiostat:
             )
 
         eclib_dll_path = eclib_path + eclib_dll_name
-        blfind_dll_path = eclib_path + "blfind64.dll"
+        blfind_dll_path = eclib_path + blfind_dll_name
 
         self._eclib = WinDLL(eclib_dll_path)
         self._blfind = WinDLL(blfind_dll_path)
