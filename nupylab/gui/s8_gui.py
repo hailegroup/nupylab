@@ -44,12 +44,14 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     `num_steps`, and `current_steps` from parent class.
     """
 
-    resources = list_resources()
+    resources = list_resources() or ("No instruments found",)
     Potentiostat_options = ["Biologic",]
     Biologic_models = ["SP200", "SP300"]
     EIS_techniques = ["PEIS", "SPEIS", "GEIS", "SGEIS"]
 
-    _default_furnace = "ASRL4::INSTR" if "ASRL4::INSTR" in resources else (resources[0] if resources else "")
+    _default_furnace = (
+        "ASRL4::INSTR" if "ASRL4::INSTR" in resources else resources[0]
+    )
 
     #Furnace parameters
     furnace_port: ListParameter = ListParameter(
