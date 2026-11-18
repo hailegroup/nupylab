@@ -1,0 +1,37 @@
+Index: .idea/misc.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"Black\">\r\n    <option name=\"sdkName\" value=\"Python 3.10 (nupylab)\" />\r\n  </component>\r\n  <component name=\"ProjectRootManager\" version=\"2\" project-jdk-name=\"Python 3.14\" project-jdk-type=\"Python SDK\" />\r\n  <component name=\"PythonCompatibilityInspectionAdvertiser\">\r\n    <option name=\"version\" value=\"3\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/misc.xml b/.idea/misc.xml
+--- a/.idea/misc.xml	(revision 25def391e162394faaa97c23d3018f97136a9be9)
++++ b/.idea/misc.xml	(date 1790192329970)
+@@ -3,7 +3,7 @@
+   <component name="Black">
+     <option name="sdkName" value="Python 3.10 (nupylab)" />
+   </component>
+-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.14" project-jdk-type="Python SDK" />
++  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (nupylab)" project-jdk-type="Python SDK" />
+   <component name="PythonCompatibilityInspectionAdvertiser">
+     <option name="version" value="3" />
+   </component>
+Index: .idea/nupylab.iml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/nupylab.iml b/.idea/nupylab.iml
+new file mode 100644
+--- /dev/null	(date 1790192244064)
++++ b/.idea/nupylab.iml	(date 1790192244064)
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<module version="4">
++  <component name="PyDocumentationSettings">
++    <option name="format" value="GOOGLE" />
++    <option name="myDocStringFormat" value="Google" />
++  </component>
++</module>
+\ No newline at end of file

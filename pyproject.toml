@@ -1,5 +1,9 @@
 [build-system]
-requires = ["setuptools>=69.0"]
+# setuptools 68.0.0 is the last release supporting Python 3.7.
+requires = [
+    "setuptools>=69.0; python_version >= '3.8'",
+    "setuptools==68.0.0; python_version < '3.8'",
+]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,13 +14,17 @@ authors = [
 ]
 description = "Python-based lab instrument control for the Haile Group"
 readme = "README.rst"
-requires-python = ">=3.8"
+# 3.7.1 rather than 3.7.0: pandas 1.3.5, the last 3.7-compatible release,
+# declares Requires-Python >=3.7.1. Windows 7 users want 3.7.9, the final
+# 3.7 release with a Windows installer.
+requires-python = ">=3.7.1"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -25,14 +33,37 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 keywords = ["LabVIEW, measure, instrument, experiment"]
+
+# Python 3.7 support exists for 32-bit Windows 7 machines, where 3.7 is the
+# highest usable interpreter (CPython 3.9+ dropped Windows 7). pip evaluates the
+# markers below at install time, so the same `pip install .` works everywhere.
 dependencies = [
     "gpib-ctypes>=0.3.0",
-    "minimalmodbus>=2.1.1",
-    "numpy>=1.24.4",
-    "pandas>=2.0.3",
-    "pymeasure>=0.14.0",
-    "pyvisa>=1.14.1",
-    "pyvisa-py>=0.7.1",
+
+    # --- Python 3.8 and newer ---
+    "minimalmodbus>=2.1.1; python_version >= '3.8'",
+    "numpy>=1.24.4; python_version >= '3.8'",
+    "pandas>=2.0.3; python_version >= '3.8'",
+    "pymeasure>=0.14.0; python_version >= '3.8'",
+    "pyvisa>=1.14.1; python_version >= '3.8'",
+    "pyvisa-py>=0.7.1; python_version >= '3.8'",
+
+    # --- Python 3.7 (32-bit Windows 7) ---
+    # Newest release of each that supports 3.7 and publishes a cp37-win32 or
+    # pure-Python wheel, so `--only-binary :all:` resolves without a compiler.
+    "minimalmodbus==2.0.1; python_version < '3.8'",
+    "numpy==1.21.6; python_version < '3.8'",
+    "pandas==1.3.5; python_version < '3.8'",
+    "pymeasure==0.13.0; python_version < '3.8'",
+    "pyvisa==1.12.0; python_version < '3.8'",
+    "pyvisa-py==0.6.3; python_version < '3.8'",
+
+    # pymeasure transitives, pinned on 3.7 only. pyqtgraph 0.12.4 is both the
+    # last 3.7 release and the one that back-fills the Qt5 shims
+    # (QtGui.QAction, QtGui.QFileSystemModel) this package's imports rely on.
+    "pyqtgraph==0.12.4; python_version < '3.8'",
+    "pint==0.18; python_version < '3.8'",
+    "importlib-metadata==6.7.0; python_version < '3.8'",
 ]
 dynamic = ["version"]
 
@@ -41,9 +72,35 @@ Repository = "https://github.com/hailegroup/nupylab"
 Documentation = "https://nupylab.readthedocs.io/en/latest/index.html"
 
 [project.optional-dependencies]
-qt5 = ["PySide2"]
-qt6 = ["PySide6"]
-develop = ["build", "PySide6", "pytest", "pytest-qt", "pytest-cov", "mypy", "tox"]
+# PySide2 remains the Qt5 binding on 3.8+. On 3.7 it is PyQt5, which is the
+# binding with 32-bit Windows wheels across that whole range.
+qt5 = [
+    "PySide2; python_version >= '3.8'",
+    "PyQt5==5.15.9; python_version < '3.8'",
+    "PyQt5-Qt5==5.15.2; python_version < '3.8'",
+    "PyQt5-sip==12.12.1; python_version < '3.8'",
+]
+# PySide6 has never shipped a 32-bit Windows wheel and requires 3.8+.
+qt6 = ["PySide6; python_version >= '3.8'"]
+develop = [
+    "build; python_version >= '3.8'",
+    "PySide6; python_version >= '3.8'",
+    "pytest; python_version >= '3.8'",
+    "pytest-qt; python_version >= '3.8'",
+    "pytest-cov; python_version >= '3.8'",
+    "mypy; python_version >= '3.8'",
+    "tox; python_version >= '3.8'",
+
+    "build==0.10.0; python_version < '3.8'",
+    "pytest==7.4.4; python_version < '3.8'",
+    "pytest-qt==4.2.0; python_version < '3.8'",
+    "pytest-cov==4.1.0; python_version < '3.8'",
+    "mypy==1.4.1; python_version < '3.8'",
+    "tox==4.8.0; python_version < '3.8'",
+    "PyQt5==5.15.9; python_version < '3.8'",
+    "PyQt5-Qt5==5.15.2; python_version < '3.8'",
+    "PyQt5-sip==12.12.1; python_version < '3.8'",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "nupylab.__version__"}
