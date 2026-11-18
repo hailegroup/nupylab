@@ -54,13 +54,21 @@ dependencies = [
     "minimalmodbus==2.0.1; python_version < '3.8'",
     "numpy==1.21.6; python_version < '3.8'",
     "pandas==1.3.5; python_version < '3.8'",
-    "pymeasure==0.13.0; python_version < '3.8'",
+    # 0.14.0, not 0.13.0: 0.13.0 dropped its importlib_metadata fallback while
+    # still claiming 3.7 support, and it predates the proterial (ROD-4, Aera)
+    # and agilent4284A drivers this package imports. 0.14.0 declares
+    # Requires-Python >=3.8 but contains no 3.8-only syntax, so install.bat
+    # installs it with --ignore-requires-python and nupylab/__init__.py
+    # supplies the one missing stdlib module.
+    "pymeasure==0.14.0; python_version < '3.8'",
     "pyvisa==1.12.0; python_version < '3.8'",
     "pyvisa-py==0.6.3; python_version < '3.8'",
 
     # pymeasure transitives, pinned on 3.7 only. pyqtgraph 0.12.4 is both the
     # last 3.7 release and the one that back-fills the Qt5 shims
     # (QtGui.QAction, QtGui.QFileSystemModel) this package's imports rely on.
+    # importlib-metadata is required, not optional: it backs the
+    # importlib.metadata alias installed in nupylab/__init__.py.
     "pyqtgraph==0.12.4; python_version < '3.8'",
     "pint==0.18; python_version < '3.8'",
     "importlib-metadata==6.7.0; python_version < '3.8'",

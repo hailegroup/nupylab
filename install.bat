@@ -16,6 +16,18 @@ setlocal
 python -m pip install --upgrade pip setuptools wheel
 if errorlevel 1 goto failed
 
+REM Python 3.7 only: PyMeasure 0.14.0 is the first release carrying the
+REM proterial (ROD-4, Aera) and agilent4284A drivers NUPyLab imports, and it
+REM declares Requires-Python >=3.8 -- but it contains no 3.8-only syntax. The
+REM single stdlib module it assumes is aliased in nupylab/__init__.py, so it is
+REM installed here with the metadata check bypassed. 0.13.0 is NOT a substitute:
+REM it dropped its own 3.7 fallback and predates those drivers.
+for /f "delims=" %%v in ('python -c "import sys; print(sys.version_info[:2] < (3, 8))"') do set NUPYLAB_OLDPY=%%v
+if "%NUPYLAB_OLDPY%"=="True" (
+    python -m pip install --only-binary :all: --no-deps --ignore-requires-python PyMeasure==0.14.0
+    if errorlevel 1 goto failed
+)
+
 python -m pip install --only-binary :all: -e .
 if errorlevel 1 goto failed
 
