@@ -43,7 +43,7 @@ class NupylabWindow(ManagedDockWindow):
     def __init__(
         self,
         procedure_class: Type[NupylabProcedure],
-        directory: str,
+        directory: str = "",
         parameters_dir: str = "",
         extra_tabs = None,
         **kwargs,
@@ -52,6 +52,8 @@ class NupylabWindow(ManagedDockWindow):
 
         Args:
             procedure_class: NUPyLab procedure class to run.
+            directory: base data directory. Defaults to the user's Documents folder.
+            parameters_dir: directory for saved parameter tables.
             **kwargs: optional keyword arguments that will be passed to
                 :class:`pymeasure.display.windows.managed_window.ManagedDockWindow`
         """
@@ -77,7 +79,9 @@ class NupylabWindow(ManagedDockWindow):
             **kwargs,
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
-        self.directory = directory
+        self.directory = directory or os.path.join(
+            os.path.expanduser("~"), "Documents"
+        )
         if hasattr(self, 'file_input'):
             self.file_input.filename = "EXPRDATA"
             
