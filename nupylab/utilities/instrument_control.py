@@ -338,14 +338,54 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                  abort_callback: Optional[Callable] = None,
                  scanner=None,
                  directory = "",  # str or callable returning str
+                 recording_beside_panels: bool = False,
+                 fit_panels_height: bool = False,
+                 button_feedback: bool = False,
                  parent=None):
+        """
+        Args:
+            recording_beside_panels: place Data Recording controls as a pane next
+                to the instrument panels instead of in a row below them.
+            fit_panels_height: size the top pane to show the tallest instrument
+                panel in full instead of the default fixed height.
+            button_feedback: darken buttons from press until their action
+                finishes, so slow actions like connecting show the click registered.
+        """
         super().__init__(parent)
         self._panels = []
         self._abort_callback = abort_callback
         self._experiment_running = False
         self._scanner = scanner
         self._directory = directory
+        self._recording_beside_panels = recording_beside_panels
+        self._fit_panels_height = fit_panels_height
         self._setup_ui(instruments or [])
+        if button_feedback:
+            self._add_button_feedback()
+
+    _BUSY_MIN_MS = 300  # keep busy shading visible for fast actions
+
+    def _add_button_feedback(self):
+        self.setStyleSheet(
+            self.styleSheet()
+            + 'QPushButton[busy="true"] { background-color: #505050; color: white; }'
+        )
+        for button in self.findChildren(QtWidgets.QPushButton):
+            button.pressed.connect(lambda b=button: self._set_button_busy(b, True))
+            # Timer cannot fire until the clicked handler returns control to Qt
+            button.released.connect(
+                lambda b=button: QtCore.QTimer.singleShot(
+                    self._BUSY_MIN_MS, lambda: self._set_button_busy(b, False)
+                )
+            )
+
+    @staticmethod
+    def _set_button_busy(button, busy: bool):
+        button.setProperty("busy", busy)
+        button.style().unpolish(button)
+        button.style().polish(button)
+        # Paint now; slow handlers block the event loop until they return
+        button.repaint()
 
     def _setup_ui(self, instruments):
         layout = QtWidgets.QVBoxLayout()
@@ -370,12 +410,13 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                 panels_layout.addWidget(panel)
                 self._panels.append(panel)
 
-        panels_scroll.setWidget(container)
-        layout.addWidget(panels_scroll)
-
         # Recording controls — instrument selector + record/save/delete buttons
         rec_group = QtWidgets.QGroupBox("Data Recording")
-        rec_layout = QtWidgets.QHBoxLayout()
+        if self._recording_beside_panels:
+            rec_layout = QtWidgets.QVBoxLayout()
+            rec_layout.setAlignment(QtCore.Qt.AlignTop)
+        else:
+            rec_layout = QtWidgets.QHBoxLayout()
 
         rec_layout.addWidget(QtWidgets.QLabel("Instrument:"))
         self._instrument_selector = QtWidgets.QComboBox()
@@ -407,7 +448,22 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         rec_layout.addWidget(self._rec_status)
 
         rec_group.setLayout(rec_layout)
-        layout.addWidget(rec_group)
+
+        if self._recording_beside_panels:
+            panels_layout.addWidget(rec_group)
+        panels_scroll.setWidget(container)
+        if self._fit_panels_height:
+            # Tallest pane plus room for the frame and horizontal scrollbar
+            fit_height = (
+                container.sizeHint().height()
+                + 2 * panels_scroll.frameWidth()
+                + panels_scroll.horizontalScrollBar().sizeHint().height()
+            )
+            panels_scroll.setMinimumHeight(fit_height)
+            panels_scroll.setMaximumHeight(fit_height)
+        layout.addWidget(panels_scroll)
+        if not self._recording_beside_panels:
+            layout.addWidget(rec_group)
 
         self._recorder = None
 
