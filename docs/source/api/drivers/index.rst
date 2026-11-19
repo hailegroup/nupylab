@@ -13,6 +13,7 @@ This section contains documentation on the instrument drivers.
    eurotherm2200
    eurotherm2400
    eurotherm3216
+   keithley182
    keithley705
    labjack_u12
    omron_e5

@@ -4,6 +4,7 @@ GUI for S2 impedance station.
 This GUI connects to and displays data from
     * Eurotherm 2416 Furnace Controller (via the Eurotherm 2400 driver)
     * Biologic SP-300 Potentiostat (optional)
+    * pO2 sensor read by a Keithley 2182 and a Keithley 182 (optional)
 
 Run the program by changing to the directory containing this file and calling:
 
@@ -13,6 +14,15 @@ The Furnace Controller input selects which Eurotherm the station is wired to,
 and defaults to the 2400 family used by the 2416 on S2. The Manual Control tab
 connects using the port, address, and model settings in the inputs panel, and
 is rebuilt whenever the furnace type changes.
+
+The pO2 sensor is split across two meters on S2: the Keithley 2182A at
+GPIB0::7 measures the sensor thermocouple on its channel 1, and the Keithley 182
+at GPIB0::8 measures the sensor potential. The Manual Control tab reads both and
+shows the sensor temperature, the pO2 in atm, and the sensor voltage, whether or
+not an experiment is queued. The calibration coefficients `a` and `b` are read from a text file,
+selectable both from the inputs panel and from the Manual Control tab, and
+default to zero until one is chosen. See `po2_calibration_example.txt` in
+`nupylab/instruments/o2_sensor` for the file format.
 """
 
 import logging
@@ -26,11 +36,15 @@ from nupylab.instruments.ac_potentiostat.biologic import eis_value_errors
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200
 from nupylab.instruments.heater.eurotherm2400 import Eurotherm2400
 from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216
+from nupylab.instruments.o2_sensor.keithley2182_182 import (
+    Keithley2182And182 as PO2_Sensor,
+)
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
+    BooleanParameter,
     FloatParameter,
     IntegerParameter,
     ListParameter,
@@ -47,6 +61,37 @@ FURNACE_TYPES: Dict[str, Type] = {
 }
 
 FURNACE_DATA_LABEL = "Furnace Temperature (degC)"
+
+PO2_DATA_LABELS = (
+    "pO2 Sensor Temperature (degC)",
+    "pO2 (atm)",
+    "pO2 Sensor Voltage (V)",
+)
+
+# S2's pO2 sensor is read by two GPIB meters at these addresses
+PO2_NANOVOLTMETER_PORT = "GPIB0::7::INSTR"  # Keithley 2182A, sensor thermocouple
+PO2_VOLTMETER_PORT = "GPIB0::8::INSTR"  # Keithley 182, sensor potential
+
+
+def resource_choices(resources, *expected):
+    """Offer the station's known addresses whether or not they answered.
+
+    `list_resources` only reports instruments that are powered on and on the
+    bus, so without this a meter switched on after the GUI started could not be
+    selected at all.
+
+    Args:
+        resources: VISA resources found on this machine.
+        *expected: resource names to offer even when they were not found.
+
+    Returns:
+        Tuple of resource names, found ones first.
+    """
+    choices = list(resources)
+    for resource in expected:
+        if resource not in choices:
+            choices.append(resource)
+    return tuple(choices)
 
 
 def make_heater(furnace_type, port, address, data_label=FURNACE_DATA_LABEL):
@@ -86,6 +131,10 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     _default_furnace = (
         "ASRL1::INSTR" if "ASRL1::INSTR" in resources else resources[0]
     )
+    # The pO2 meters sit at fixed GPIB addresses on S2
+    po2_resources = resource_choices(
+        resources, PO2_NANOVOLTMETER_PORT, PO2_VOLTMETER_PORT
+    )
 
     #Furnace parameters
     furnace_type: ListParameter = ListParameter(
@@ -114,6 +163,26 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "EIS Technique", default="PEIS", choices=EIS_techniques, ui_class=None
     )
 
+    # pO2 Sensor Parameters
+    po2_toggle: BooleanParameter = BooleanParameter(
+        "pO2 Sensor Connected", default=False
+    )
+    po2_nanovoltmeter_port: ListParameter = ListParameter(
+        "Keithley 2182 Port",
+        choices=po2_resources,
+        default=PO2_NANOVOLTMETER_PORT,
+        ui_class=None,
+    )
+    po2_voltmeter_port: ListParameter = ListParameter(
+        "Keithley 182 Port",
+        choices=po2_resources,
+        default=PO2_VOLTMETER_PORT,
+        ui_class=None,
+    )
+    po2_calibration_file: Parameter = Parameter(
+        "pO2 Calibration File", default="", ui_class=None
+    )
+
     eis_toggle: ListParameter = ListParameter(
         "Run eis", choices=["True", "False"], default="False", ui_class=None
     )
@@ -136,7 +205,10 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "Z_re (ohm)",
         "-Z_im (ohm)",
         "|Z| (ohm)",
-        "Phase (degrees)"
+        "Phase (degrees)",
+        "pO2 Sensor Temperature (degC)",
+        "pO2 (atm)",
+        "pO2 Sensor Voltage (V)",
     ]
 
     TABLE_PARAMETERS: Dict[str, str] = {
@@ -163,6 +235,8 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "Phase (degrees)",
         ("Ewe (V)", "I (A)"),
         "Furnace Temperature (degC)",
+        "pO2 (atm)",
+        ("pO2 Sensor Temperature (degC)", "pO2 Sensor Voltage (V)"),
     ]
     # Inputs must match name of selected procedure parameters
     INPUTS: List[str] = [
@@ -173,6 +247,10 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "potentiostat",
         "potentiostat_model",
         "potentiostat_port",
+        "po2_toggle",
+        "po2_nanovoltmeter_port",
+        "po2_voltmeter_port",
+        "po2_calibration_file",
     ]
 
     @classmethod
@@ -213,10 +291,17 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         `active_instruments` attributes.
         """
         if self.previous_procedure is not None:
-            furnace, potentiostat = self.previous_procedure.instruments
+            furnace, potentiostat, po2_sensor = self.previous_procedure.instruments
         else:
             furnace = make_heater(
                 self.furnace_type, self.furnace_port, self.furnace_address
+            )
+            # The calibration file is applied below, and only when the pO2
+            # sensor is in use, so a stale path cannot fail an unrelated step
+            po2_sensor = PO2_Sensor(
+                self.po2_nanovoltmeter_port,
+                self.po2_voltmeter_port,
+                PO2_DATA_LABELS,
             )
             potentiostat = Potentiostat(
                 self.potentiostat_port,
@@ -232,10 +317,10 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
                     "Phase (degrees)",
                 ),
             )
-        self.instruments = (furnace, potentiostat)
+        self.instruments = (furnace, potentiostat, po2_sensor)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
         if str(self.eis_toggle).lower() == "true":
-            self.active_instruments = (furnace, potentiostat)
+            self.active_instruments = [furnace, potentiostat]
             potentiostat.set_parameters(
                 self.record_time,
                 self.initial_step,
@@ -248,7 +333,11 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
                 lambda: furnace.finished,
             )
         else:
-            self.active_instruments = (furnace,)
+            self.active_instruments = [furnace]
+        if self.po2_toggle:
+            if self.po2_calibration_file:
+                po2_sensor.set_calibration_file(self.po2_calibration_file)
+            self.active_instruments.append(po2_sensor)
 
 
 def main(*args):
@@ -278,6 +367,14 @@ def main(*args):
     except Exception as e:
         potentiostat_error = e
 
+    # The two Keithleys are only opened when the pO2 panel connects, so this
+    # costs nothing if the station is not wired to a pO2 sensor.
+    po2_sensor = PO2_Sensor(
+        inputs.po2_nanovoltmeter_port.value(),
+        inputs.po2_voltmeter_port.value(),
+        PO2_DATA_LABELS,
+    )
+
     # Each controller supplies its own panel, so the Manual Control tab is
     # rebuilt when the furnace type changes rather than patched in place.
     current = {"furnace": None, "control": None, "type": None}
@@ -289,6 +386,7 @@ def main(*args):
             instruments.append(current["furnace"])
         if potentiostat is not None:
             instruments.append(potentiostat)
+        instruments.append(po2_sensor)
         return instruments
 
     def disconnect_control_instruments():
@@ -341,6 +439,18 @@ def main(*args):
         current["control"] = control
         window.tabs.addTab(control, "Manual Control")
 
+        # A calibration file picked in the pO2 panel also belongs in the inputs
+        # panel, since queued experiments build their own pO2 sensor from it.
+        panel = getattr(po2_sensor, "_panel", None)
+        if panel is not None:
+            panel.calibration_changed.connect(mirror_po2_calibration)
+
+    def mirror_po2_calibration():
+        """Show the loaded calibration file path in the inputs panel."""
+        path = po2_sensor.calibration_file
+        if path and path != inputs.po2_calibration_file.value():
+            inputs.po2_calibration_file.setValue(path)
+
     def sync_connection_settings(*_):
         """Apply inputs panel connection settings on next control tab connect."""
         try:
@@ -354,8 +464,29 @@ def main(*args):
                     inputs.potentiostat_port.value(),
                     inputs.potentiostat_model.value(),
                 )
+            po2_sensor.set_connection(
+                inputs.po2_nanovoltmeter_port.value(),
+                inputs.po2_voltmeter_port.value(),
+            )
         except Exception as e:
             _control_log.warning("Could not read connection settings: %s", e)
+
+    def sync_po2_calibration(*_):
+        """Load the calibration file named in the inputs panel, if any.
+
+        The Manual Control panel has its own file picker; this only runs when
+        the inputs panel entry is edited, so it does not override that choice.
+        """
+        path = inputs.po2_calibration_file.value().strip()
+        if not path or path == po2_sensor.calibration_file:
+            return
+        try:
+            a, b = po2_sensor.set_calibration_file(path)
+            _control_log.info(
+                "pO2 calibration loaded from %s: a = %.6g, b = %.6g", path, a, b
+            )
+        except Exception as e:
+            _control_log.error("pO2 calibration file failed: %s", e)
 
     def on_furnace_type_changed(*_):
         """Swap the control tab over when a different controller is selected."""
@@ -373,18 +504,26 @@ def main(*args):
             "Biologic control panel unavailable: %s", potentiostat_error
         )
 
-    def connect_input(name, callback):
+    def connect_input(name, callback, signals=None):
         element = getattr(inputs, name)
-        for signal in ("currentTextChanged", "valueChanged", "textChanged"):
+        for signal in signals or ("currentTextChanged", "valueChanged", "textChanged"):
             if hasattr(element, signal):
                 getattr(element, signal).connect(callback)
                 break
 
     for name in (
-        "furnace_port", "furnace_address", "potentiostat_port", "potentiostat_model"
+        "furnace_port", "furnace_address", "potentiostat_port", "potentiostat_model",
+        "po2_nanovoltmeter_port", "po2_voltmeter_port",
     ):
         connect_input(name, sync_connection_settings)
     connect_input("furnace_type", on_furnace_type_changed)
+    # Wait for the whole path rather than loading on every keystroke
+    connect_input(
+        "po2_calibration_file",
+        sync_po2_calibration,
+        ("editingFinished", "textChanged"),
+    )
+    sync_po2_calibration()
 
     window.manager.queued.connect(disconnect_control_instruments)
     window.manager.running.connect(
