@@ -19,9 +19,12 @@ The pO2 sensor is split across two meters on S2: the Keithley 2182A at
 GPIB0::7 measures the sensor thermocouple on its channel 1, and the Keithley 182
 at GPIB0::8 measures the sensor potential. The Manual Control tab reads both and
 shows the sensor temperature, the pO2 in atm, and the sensor voltage, whether or
-not an experiment is queued. The calibration coefficients `a` and `b` are read from a text file,
-selectable both from the inputs panel and from the Manual Control tab, and
-default to zero until one is chosen. See `po2_calibration_example.txt` in
+not an experiment is queued. A queued experiment records all three as well,
+unless neither meter answers, in which case it runs without them.
+
+The calibration coefficients `a` and `b` are read from a text file, selectable
+both from the inputs panel and from the Manual Control tab, and default to zero
+until one is chosen. See `po2_calibration_example.txt` in
 `nupylab/instruments/o2_sensor` for the file format.
 """
 
@@ -44,7 +47,6 @@ from nupylab.utilities.instrument_control import InstrumentControlWidget
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.experiment import (
-    BooleanParameter,
     FloatParameter,
     IntegerParameter,
     ListParameter,
@@ -52,6 +54,10 @@ from pymeasure.experiment import (
 )
 
 _control_log = logging.getLogger('nupylab.instrument_control')
+# The control log writes straight into a widget, so anything logged off the GUI
+# thread, i.e. from a running procedure, goes to the standard log instead
+log = logging.getLogger(__name__)
+log.addHandler(logging.NullHandler())
 
 # S2 runs a Eurotherm 2416, which the Eurotherm 2400 driver covers.
 FURNACE_TYPES: Dict[str, Type] = {
@@ -164,9 +170,6 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     )
 
     # pO2 Sensor Parameters
-    po2_toggle: BooleanParameter = BooleanParameter(
-        "pO2 Sensor Connected", default=False
-    )
     po2_nanovoltmeter_port: ListParameter = ListParameter(
         "Keithley 2182 Port",
         choices=po2_resources,
@@ -247,7 +250,6 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "potentiostat",
         "potentiostat_model",
         "potentiostat_port",
-        "po2_toggle",
         "po2_nanovoltmeter_port",
         "po2_voltmeter_port",
         "po2_calibration_file",
@@ -334,10 +336,18 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
             )
         else:
             self.active_instruments = [furnace]
-        if self.po2_toggle:
-            if self.po2_calibration_file:
-                po2_sensor.set_calibration_file(self.po2_calibration_file)
+        # There is no pO2 toggle in the inputs panel, so the sensor joins the
+        # measurement whenever its two meters answer. Connecting here rather
+        # than leaving it to `startup` keeps a station whose Keithleys are off
+        # from failing every queued step.
+        if self.po2_calibration_file:
+            po2_sensor.set_calibration_file(self.po2_calibration_file)
+        try:
+            if not po2_sensor.connected:
+                po2_sensor.connect()
             self.active_instruments.append(po2_sensor)
+        except Exception as e:
+            log.warning("pO2 sensor unavailable, continuing without it: %s", e)
 
 
 def main(*args):

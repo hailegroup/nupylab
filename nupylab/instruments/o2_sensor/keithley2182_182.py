@@ -158,7 +158,9 @@ class Keithley2182And182(NupylabInstrument):
             calibration_file: path to a text file holding `a` and `b`, see
                 :func:`load_po2_calibration`. Optional.
             invert_voltage: whether to negate the voltage read by the Keithley
-                182, which depends on how the sensor leads are wired.
+                182, which depends on how the sensor leads are wired. Set in
+                code rather than from the control panel; the default matches
+                the single-Keithley pO2 sensor class.
             thermocouple: thermocouple type of the pO2 sensor.
             name: name of instrument.
 
@@ -433,11 +435,6 @@ class Keithley2182And182(NupylabInstrument):
                 self.refresh_calibration()
                 layout.addRow(self.cal_label)
 
-                self.invert_box = QtWidgets.QCheckBox("Invert sensor voltage")
-                self.invert_box.setChecked(instrument.invert_voltage)
-                self.invert_box.toggled.connect(self.on_invert_toggled)
-                layout.addRow(self.invert_box)
-
                 btn_layout = QtWidgets.QHBoxLayout()
                 self.connect_btn = QtWidgets.QPushButton("Connect")
                 self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
@@ -526,13 +523,6 @@ class Keithley2182And182(NupylabInstrument):
                     self.cal_file_label.setStyleSheet("color: red;")
                     self.status_label.setText(f"Status: Error — {e}")
                     _control_log.error("pO2 calibration file failed: %s", e)
-
-            def on_invert_toggled(self, checked):
-                instrument.invert_voltage = checked
-                _control_log.info(
-                    "pO2 sensor voltage sign %s",
-                    "inverted" if checked else "as measured",
-                )
 
             def connect_instrument(self):
                 self._abort_if_needed()
