@@ -319,6 +319,15 @@ class LivePlotWidget(QtWidgets.QWidget):
             self._plot_widget.setLabel('bottom', x_label)
             self._plot_widget.setLabel('left', y_label)
 
+    def set_log_y(self, enabled: bool = True):
+        """Plot the y axis on a log scale, for data spanning several decades.
+
+        Values are still added in linear units; pyqtgraph transforms them.
+        Non-positive values cannot be shown on a log axis.
+        """
+        if self._use_pg:
+            self._plot_widget.setLogMode(False, enabled)
+
     def clear(self):
         """Clear all data."""
         self._data = [[] for _ in range(self.n_traces)]

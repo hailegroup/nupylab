@@ -9,3 +9,13 @@ Keithley 2182
    :members:
    :undoc-members:
    :show-inheritance:
+
+Keithley 2182 and 182
+---------------------
+
+.. autoclass:: nupylab.instruments.o2_sensor.keithley2182_182.Keithley2182And182
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autofunction:: nupylab.instruments.o2_sensor.keithley2182_182.load_po2_calibration
