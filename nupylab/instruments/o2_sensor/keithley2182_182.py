@@ -290,25 +290,58 @@ class Keithley2182And182(NupylabInstrument):
         self._voltmeter_port = voltmeter_port
         self._port = f"{nanovoltmeter_port}, {voltmeter_port}"
 
+    def _close_meters(self) -> None:
+        """Close whichever VISA sessions are open. Call while holding the lock."""
+        for attribute in ("keithley2182", "keithley182"):
+            instrument = getattr(self, attribute)
+            if instrument is not None:
+                try:
+                    instrument.adapter.close()
+                except Exception:
+                    pass
+                setattr(self, attribute, None)
+        self._connected = False
+
     def connect(self) -> None:
         """Connect to the Keithley 2182 and the Keithley 182.
 
         Configures the 2182 to read the sensor thermocouple on channel 1 and the
         182 to free-run on DC volts.
+
+        Raises:
+            NupylabError: if either meter cannot be set up, naming which one.
+                Whatever was opened is closed again first, since a second VISA
+                session to a meter left open by a failed attempt is itself a
+                cause of GPIB bus errors.
         """
         with self.lock:
-            self.keithley2182 = keithley2182.Keithley2182(self._nanovoltmeter_port)
-            self.keithley2182.clear()
-            self.keithley2182.reset()
-            self.keithley2182.thermocouple = self._thermocouple
-            self.keithley2182.ch_1.setup_temperature()
-
-            self.keithley182 = keithley182.Keithley182(self._voltmeter_port)
-            self.keithley182.reset()
-            # The sensor potential is a slow DC signal read every few seconds,
-            # so take the 100 ms integration period for the quietest readings
-            self.keithley182.setup_voltage(integration_period=0.1)
-        self._connected = True
+            self._close_meters()
+            try:
+                self.keithley2182 = keithley2182.Keithley2182(
+                    self._nanovoltmeter_port
+                )
+                self.keithley2182.clear()
+                self.keithley2182.reset()
+                self.keithley2182.thermocouple = self._thermocouple
+                self.keithley2182.ch_1.setup_temperature()
+            except Exception as e:
+                self._close_meters()
+                raise NupylabError(
+                    f"Keithley 2182 on {self._nanovoltmeter_port} failed: {e}"
+                ) from e
+            try:
+                self.keithley182 = keithley182.Keithley182(self._voltmeter_port)
+                self.keithley182.reset()
+                # The sensor potential is a slow DC signal read every few
+                # seconds, so take the 100 ms integration period for the
+                # quietest readings
+                self.keithley182.setup_voltage(integration_period=0.1)
+            except Exception as e:
+                self._close_meters()
+                raise NupylabError(
+                    f"Keithley 182 on {self._voltmeter_port} failed: {e}"
+                ) from e
+            self._connected = True
 
     def disconnect(self) -> None:
         """Close both connections."""
@@ -320,15 +353,7 @@ class Keithley2182And182(NupylabInstrument):
             except Exception:
                 pass
         with self.lock:
-            for attribute in ("keithley2182", "keithley182"):
-                instrument = getattr(self, attribute)
-                if instrument is not None:
-                    try:
-                        instrument.adapter.close()
-                    except Exception:
-                        pass
-                    setattr(self, attribute, None)
-            self._connected = False
+            self._close_meters()
         time.sleep(0.3)
 
     # Measurement #
