@@ -11,7 +11,9 @@ talk, so :attr:`Keithley182.voltage` reads from the bus without writing a query
 first. In a multiple trigger mode the instrument free-runs and each read returns
 its latest reading; if a new reading is not yet available, the 182 holds off the
 bus until one is, which can look like a VISA timeout, hence the generous default
-timeout below.
+timeout below. A read ends on EOI, which the 182 asserts with the last character
+of a message, rather than on the CR LF it also sends; those characters are
+stripped when a reading is parsed.
 
 Factory defaults, restored by :meth:`Keithley182.reset`, are 6.5-digit
 resolution (`B1`), readings from the A/D converter (`F0`), reading with prefix
@@ -62,7 +64,7 @@ class Keithley182(Instrument):
         self,
         adapter,
         name: str = "Keithley 182 Sensitive Digital Voltmeter",
-        read_termination: str = "\n",
+        read_termination: Optional[str] = None,
         timeout: int = 10000,
         **kwargs,
     ) -> None:
@@ -71,9 +73,13 @@ class Keithley182(Instrument):
         Args:
             adapter: PyVISA resource name, e.g. `GPIB::7::INSTR`, or adapter.
             name: name of instrument.
-            read_termination: read terminator. The 182 powers up with a CR LF
-                terminator (`Y0`); the trailing LF is used here, and any stray
-                CR is stripped when a reading is parsed.
+            read_termination: read terminator, none by default. The 182 marks
+                the end of a message by asserting EOI with its last character,
+                which is how a read here ends; the CR LF it also appends (`Y0`)
+                is stripped when the reading is parsed. Matching a terminator
+                instead would warn, and eventually desynchronize reads,
+                whenever the instrument's own terminator setting differed. Pass
+                one only for a 182 with EOI disabled (`K1` or `K3`).
             timeout: VISA timeout in ms. The default is generous because the
                 182 holds off the bus until a new reading is available, which
                 with slow integration, filtering, and a long trigger interval
