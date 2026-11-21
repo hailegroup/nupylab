@@ -10,10 +10,12 @@ and then exercises the two pO2 meters one at a time, never holding more than one
 session open. Every command is timed and reported on its own line, so a stall
 says which transfer caused it rather than only which instrument.
 
-The Keithley 182 is tried under three configurations, since the one the GUI uses
-is in question: a free-running series at a half-second interval, the same at the
-0.01 s minimum, and one reading per talk. Each starts from a device clear, so an
-earlier stall does not decide the next result.
+The Keithley 182 is read the way the GUI now reads it: one reading per trigger,
+confirmed by serial poll before anything is read. That matters, because a read
+issued when no reading is waiting leaves the 182 holding the bus off and
+unreachable until it is power cycled, which also locks out any other program on
+the bus. Pass --all to try the configurations that read without checking first,
+which are known to do exactly that.
 
 Nothing here is saved to either instrument's power-on setup.
 """
@@ -45,20 +47,27 @@ SETUP_182 = (
     ("G0X", "reading only, no prefix"),
 )
 
+# Only the first runs by default. The others read without first confirming a
+# reading is waiting, which is what leaves the instrument holding the bus off
+# and unreachable until it is power cycled, so they are kept for --all.
 SCENARIOS_182 = (
     (
-        "free-running, 0.5 s interval (what the GUI now sends)",
-        (("Q500X", "trigger interval 500 ms"), ("T0X", "multiple on talk")),
+        "one reading per trigger, waiting on a serial poll (what the GUI "
+        "now does)",
+        (("T5X", "one-shot on X"),),
+        "poll",
         True,
     ),
     (
-        "free-running, 0.01 s interval (what the GUI sent before)",
-        (("Q10X", "trigger interval 10 ms"), ("T0X", "multiple on talk")),
-        True,
-    ),
-    (
-        "one reading per talk, no interval set",
+        "one reading per talk, reading straight away",
         (("T1X", "one-shot on talk"),),
+        "read",
+        False,
+    ),
+    (
+        "free-running, 0.5 s interval (what the GUI did before)",
+        (("Q500X", "trigger interval 500 ms"), ("T0X", "multiple on talk")),
+        "trigger",
         False,
     ),
 )
@@ -140,6 +149,13 @@ def identify(rm, resources):
         finally:
             if instrument is not None:
                 try:
+                    # The 182 reads most of `*IDN?` as white space around the
+                    # command letters I, D and N, which stay in its command
+                    # buffer until some later X executes them. Clear it.
+                    instrument.clear()
+                except Exception:
+                    pass
+                try:
                     instrument.close()
                 except Exception:
                     pass
@@ -184,10 +200,40 @@ def probe_2182(rm, resource=NANOVOLTMETER):
     print()
 
 
-def probe_182_scenario(meter, label, trigger_commands, interval_set):
-    """Configure the 182 one way and try to read it three times."""
+def wait_for_reading(meter, timeout=5.0, interval=0.05):
+    """Serial poll until the status byte says a reading is waiting.
+
+    Bit 0 of the status byte is the reading-done bit, by the same layout as
+    the SRQ mask. A serial poll is a bus command, so the instrument answers it
+    even while converting.
+    """
+    deadline = time.monotonic() + timeout
+    polls = 0
+    while True:
+        polls += 1
+        if meter.read_stb() & 1:
+            return "ready after {} poll(s)".format(polls)
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                "no reading after {:g} s and {} polls".format(timeout, polls)
+            )
+        time.sleep(interval)
+
+
+def probe_182_scenario(meter, label, trigger_commands, read_style):
+    """Configure the 182 one way and try to take three readings.
+
+    Args:
+        meter: open pyvisa resource for the 182.
+        label: what to print for this configuration.
+        trigger_commands: the trigger commands that distinguish it.
+        read_style: `poll` triggers and waits on a serial poll before reading,
+            `read` reads straight away and lets the instrument hold the bus
+            off, `trigger` starts a free-running series and then reads.
+    """
     print("  {}:".format(label))
     if not timed("device clear", lambda: meter.clear()):
+        print("    stopped: the instrument is not accepting bus commands\n")
         return
     for command, meaning in SETUP_182 + tuple(trigger_commands):
         if not timed(
@@ -196,19 +242,30 @@ def probe_182_scenario(meter, label, trigger_commands, interval_set):
         ):
             print("    stopped: the command above did not go through\n")
             return
-    # A multiple trigger mode needs one stimulus before it starts converting
-    if interval_set and not timed(
-        "H0X    trigger", lambda: write_only(meter, "H0X")
+    if read_style == "trigger" and not timed(
+        "H0X    start the series", lambda: write_only(meter, "H0X")
     ):
         return
     for i in range(3):
+        if read_style == "poll":
+            if not timed(
+                "H0X    trigger reading {}".format(i + 1),
+                lambda: write_only(meter, "H0X"),
+            ):
+                return
+            if not timed(
+                "wait for reading {}".format(i + 1),
+                lambda: wait_for_reading(meter),
+            ):
+                print("    stopped: not reading, to leave the 182 usable\n")
+                return
         if not timed("read {}".format(i + 1), lambda: meter.read().strip()):
             print("    stopped: no reading came back\n")
             return
     print()
 
 
-def probe_182(rm, resource=VOLTMETER):
+def probe_182(rm, resource=VOLTMETER, run_all=False):
     """Try the Keithley 182 under each trigger configuration in turn."""
     print("Keithley 182 on {}:".format(resource))
     meter = None
@@ -229,8 +286,11 @@ def probe_182(rm, resource=VOLTMETER):
         timed("U2X    firmware revision", lambda: write_only(meter, "U2X"))
         timed("read revision", lambda: meter.read().strip())
         print()
-        for label, trigger_commands, interval_set in SCENARIOS_182:
-            probe_182_scenario(meter, label, trigger_commands, interval_set)
+        for label, trigger_commands, read_style, by_default in SCENARIOS_182:
+            if by_default or run_all:
+                probe_182_scenario(meter, label, trigger_commands, read_style)
+            else:
+                print("  {}: skipped, pass --all to try it\n".format(label))
     finally:
         try:
             meter.close()
@@ -239,14 +299,47 @@ def probe_182(rm, resource=VOLTMETER):
     print()
 
 
+def probe_driver(resource=VOLTMETER):
+    """Read the 182 through the driver the GUI uses, start to finish."""
+    print("Keithley 182 through the nupylab driver:")
+    try:
+        from nupylab.drivers.keithley182 import Keithley182
+    except Exception as e:
+        report("import driver", error=e)
+        return
+    meter = None
+    try:
+        meter = Keithley182(resource)
+        report("open session")
+        timed("device clear", lambda: meter.device_clear())
+        timed("setup_voltage", lambda: meter.setup_voltage(integration_period=0.1))
+        for i in range(3):
+            if not timed(
+                "measure_voltage {}".format(i + 1),
+                lambda: "{:.6f} V".format(meter.measure_voltage()),
+            ):
+                return
+    except Exception as e:
+        report("driver", error=e)
+    finally:
+        if meter is not None:
+            try:
+                meter.adapter.close()
+            except Exception:
+                pass
+    print()
+
+
 def main():
     """Run every probe in turn."""
+    run_all = "--all" in sys.argv[1:]
     rm = pyvisa.ResourceManager()
     print("PyVISA {}, backend {}\n".format(pyvisa.__version__, rm.visalib))
     resources = list_resources(rm)
     identify(rm, resources)
     probe_2182(rm)
-    probe_182(rm)
+    probe_182(rm, run_all=run_all)
+    probe_driver()
     print("Done. Paste this whole output back.")
 
 

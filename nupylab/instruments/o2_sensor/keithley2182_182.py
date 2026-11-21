@@ -387,7 +387,9 @@ class Keithley2182And182(NupylabInstrument):
                     f"Keithley 2182 on {self._nanovoltmeter_port}: {e}"
                 ) from e
             try:
-                voltage = self.keithley182.voltage
+                # Triggers a reading and waits for the instrument to report it
+                # ready, rather than reading into its bus hold-off
+                voltage = self.keithley182.measure_voltage()
             except Exception as e:
                 # A read that times out leaves the 182 holding the bus off, and
                 # every later transfer to it then fails until it is cleared or

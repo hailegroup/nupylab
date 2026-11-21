@@ -33,10 +33,13 @@ implemented, nor are the `U3`-`U14` alternate outputs.
 import logging
 import math
 import re
+import time
 from typing import Optional, Union
 
 from pymeasure.instruments import Instrument
 from pymeasure.instruments.validators import strict_discrete_set, strict_range
+
+from nupylab.utilities import NupylabError
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -59,6 +62,10 @@ class Keithley182(Instrument):
 
     #: Value sent in place of a reading when the input overflows the range.
     OVERFLOW_READING: float = 9.999999e95
+
+    #: Status byte bit set when a reading is waiting to be read, as laid out
+    #: by the SRQ mask, see :attr:`srq_mask`.
+    READING_DONE: int = 1
 
     def __init__(
         self,
@@ -411,15 +418,22 @@ class Keithley182(Instrument):
         resolution: float = 6.5,
         integration_period: Union[str, float] = "line cycle",
         digital_filter: str = "medium",
-        trigger_interval: float = 0.5,
+        trigger_mode: str = "one-shot on x",
+        trigger_interval: Optional[float] = None,
         relative: bool = False,
     ) -> None:
         """Configure the voltmeter for DC voltage measurements.
 
         Selects readings from the A/D converter in the bare reading format, and
-        leaves the instrument free-running on `multiple on talk` so that each
-        read returns its latest reading. The trigger source has to be set here
-        because the factory default is the external trigger input.
+        leaves the instrument taking one reading per trigger. The trigger mode
+        has to be set here because the factory default source is the rear panel
+        trigger input.
+
+        Pair this with :meth:`measure_voltage`, which triggers a reading and
+        waits for the instrument to report it ready. Do not simply read: the
+        182 holds the bus off until a reading is available, and a read issued
+        when none is coming leaves the instrument unreachable, so that even a
+        device clear cannot revive it.
 
         Args:
             measurement_range: `auto` or a range in volts, see
@@ -428,15 +442,12 @@ class Keithley182(Instrument):
             integration_period: see :attr:`integration_period`. Pass 0.1 for the
                 quietest readings.
             digital_filter: see :attr:`digital_filter`.
-            trigger_interval: interval between readings of the free-running
-                series, in seconds. Leaving this unset would keep whatever
-                interval the power-on setup holds, and a long one starves
-                reads: the 182 holds the bus off until its next reading is
-                ready, so a read then fails with a timeout. The default keeps
-                a reading fresh for a caller polling every second or two while
-                leaving the instrument idle between conversions, so that it
-                services the bus promptly; asking for the 0.01 s minimum
-                instead leaves it converting back to back.
+            trigger_mode: see :attr:`trigger_mode`. One of the one-shot modes,
+                so that each reading is asked for rather than arriving from a
+                series the instrument may stop producing.
+            trigger_interval: interval between readings in seconds, for a
+                multiple trigger mode only. Ignored, and not sent, in a
+                one-shot mode, where nothing runs between triggers.
             relative: whether to leave reading relative (zero) enabled. Disabled
                 by default so that absolute potentials are reported.
         """
@@ -446,6 +457,7 @@ class Keithley182(Instrument):
             "resolution": resolution,
             "integration_period": integration_period,
             "digital_filter": digital_filter,
+            "trigger_mode": trigger_mode,
             "trigger_interval": trigger_interval,
             "relative": relative,
         }
@@ -458,10 +470,9 @@ class Keithley182(Instrument):
             self.disable_relative()
         self.reading_source = "adc"
         self.reading_format = "reading"
-        self.set_trigger_interval(trigger_interval)
-        self.trigger_mode = "multiple on talk"
-        # A multiple trigger mode needs one trigger stimulus to start processing
-        self.trigger()
+        if trigger_interval is not None and trigger_mode.startswith("multiple"):
+            self.set_trigger_interval(trigger_interval)
+        self.trigger_mode = trigger_mode
 
     # Readings #
 
@@ -508,16 +519,61 @@ class Keithley182(Instrument):
             return math.nan
         return value
 
-    def measure_voltage(self) -> float:
-        """Trigger a single measurement and return it.
+    def reading_available(self) -> bool:
+        """Get whether a reading is waiting to be read.
 
-        Use with a one-shot trigger mode; in a multiple mode, reading
-        :attr:`voltage` is sufficient.
+        Serial polls the instrument. A serial poll is a bus command the 182
+        answers even while it is converting, unlike a read, which it holds the
+        bus off for until a reading is available.
+        """
+        return bool(self.adapter.connection.read_stb() & self.READING_DONE)
+
+    def wait_for_reading(
+        self, timeout: float = 5.0, interval: float = 0.05
+    ) -> bool:
+        """Wait until the instrument reports that a reading is ready.
+
+        Args:
+            timeout: how long to wait, in seconds.
+            interval: how long to wait between serial polls, in seconds.
+
+        Returns:
+            Whether a reading became available within `timeout`.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            if self.reading_available():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(interval)
+
+    def measure_voltage(self, timeout: float = 5.0) -> float:
+        """Trigger one reading, wait for it, and return it.
+
+        The safe way to read this instrument: it asks for a reading, confirms
+        by serial poll that one is waiting, and only then reads. Reading
+        without that check risks the bus hold-off the 182 applies when no
+        reading is available, which leaves it unreachable until it is power
+        cycled, a device clear included.
+
+        Args:
+            timeout: how long to wait for the reading, in seconds. Allow for
+                the integration period and for the digital filter to settle.
 
         Returns:
             Reading in volts, or `nan` if it overflows the present range.
+
+        Raises:
+            NupylabError: if no reading arrives within `timeout`. The
+                instrument is left alone rather than read, so it stays usable.
         """
         self.trigger()
+        if not self.wait_for_reading(timeout):
+            raise NupylabError(
+                f"{self.name} reported no reading within {timeout:g} s; "
+                "not reading, to leave the instrument on the bus."
+            )
         return self.voltage
 
     @property
