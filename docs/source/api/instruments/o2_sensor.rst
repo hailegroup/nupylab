@@ -22,6 +22,10 @@ Keithley 2182 and 182
    :members:
    :undoc-members:
 
-.. autofunction:: nupylab.instruments.o2_sensor.keithley2182_182.load_po2_calibration
+.. autofunction:: nupylab.instruments.o2_sensor.keithley2182_182.load_calibrations
 
-.. autofunction:: nupylab.instruments.o2_sensor.keithley2182_182.find_latest_calibration
+.. autofunction:: nupylab.instruments.o2_sensor.keithley2182_182.latest_calibration
+
+.. autofunction:: nupylab.instruments.o2_sensor.keithley2182_182.append_calibration
+
+.. autofunction:: nupylab.instruments.o2_sensor.po2_calibration_dialog.choose_calibration

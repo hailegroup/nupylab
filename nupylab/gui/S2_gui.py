@@ -33,12 +33,13 @@ is recorded to `~/.nupylab/solenoid_valve.json` and shown in the panel as
 history, which is what this GUI wrote rather than where the valve is, since
 LabVIEW drives the same output.
 
-The calibration coefficients `a` and `b` are read from a text file. S2's
-calibrations live in `nupylab/instruments/o2_sensor/S2 Calibrations`, each named
-`YYYYMMDD_gas_po2_calibration.txt` for the day it was taken and the gas it was
-taken in, and the newest of them is loaded at startup. The Manual Control tab
-shows which one is in use, with its date, its gas and who took it, and can load
-another; see `po2_calibration_example.txt` in that folder for the format.
+Every pO2 calibration the station has taken lives in one file,
+`nupylab/instruments/o2_sensor/po2_calibrations.csv`, a row per calibration of
+its date, who took it, the gas, and the coefficients `a` and `b`. The newest is
+loaded at startup and is the one a queued experiment uses. The Manual Control
+tab shows which is in use, with its date, gas and calibrator, and its
+`Add/Select Calibration` button lists them all to pick an older one or record a
+new one.
 """
 
 import logging
@@ -56,7 +57,7 @@ from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216
 from nupylab.instruments.o2_sensor.keithley2182_182 import (
     Keithley2182And182 as PO2_Sensor,
 )
-from nupylab.instruments.o2_sensor.keithley2182_182 import find_latest_calibration
+from nupylab.instruments.o2_sensor.keithley2182_182 import CALIBRATION_FILE
 from nupylab.instruments.valve.labjack_u12 import LabJackSolenoid
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
@@ -198,12 +199,10 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         default=PO2_VOLTMETER_PORT,
         ui_class=None,
     )
-    # Defaults to the newest file in the station's calibrations folder, so a
-    # fresh calibration is picked up by dropping it in and restarting
+    # Every calibration the station has taken lives in this one file, and a
+    # queued experiment uses the newest of them
     po2_calibration_file: Parameter = Parameter(
-        "pO2 Calibration File",
-        default=find_latest_calibration() or "",
-        ui_class=None,
+        "pO2 Calibration File", default=CALIBRATION_FILE, ui_class=None
     )
 
     eis_toggle: ListParameter = ListParameter(
@@ -361,7 +360,12 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         # than leaving it to `startup` keeps a station whose Keithleys are off
         # from failing every queued step.
         if self.po2_calibration_file:
-            po2_sensor.set_calibration_file(self.po2_calibration_file)
+            try:
+                po2_sensor.set_calibration_file(self.po2_calibration_file)
+            except Exception as e:
+                # An empty calibration file is ordinary on a station that has
+                # not calibrated its sensor yet
+                log.warning("pO2 sensor is uncalibrated: %s", e)
         try:
             if not po2_sensor.connected:
                 po2_sensor.connect()
