@@ -52,11 +52,17 @@ SETUP_182 = (
 # and unreachable until it is power cycled, so they are kept for --all.
 SCENARIOS_182 = (
     (
-        "one reading per trigger, waiting on a serial poll (what the GUI "
-        "now does)",
+        "as it is, waiting on a serial poll and writing nothing (what the "
+        "GUI now does)",
+        (),
+        "wait",
+        True,
+    ),
+    (
+        "one reading per trigger, waiting on a serial poll",
         (("T5X", "one-shot on X"),),
         "poll",
-        True,
+        False,
     ),
     (
         "one reading per talk, reading straight away",
@@ -227,11 +233,26 @@ def probe_182_scenario(meter, label, trigger_commands, read_style):
         meter: open pyvisa resource for the 182.
         label: what to print for this configuration.
         trigger_commands: the trigger commands that distinguish it.
-        read_style: `poll` triggers and waits on a serial poll before reading,
+        read_style: `wait` writes nothing and only waits on a serial poll
+            before reading, `poll` triggers each reading and waits for it,
             `read` reads straight away and lets the instrument hold the bus
             off, `trigger` starts a free-running series and then reads.
     """
     print("  {}:".format(label))
+    if read_style == "wait":
+        # Writes nothing at all, not even a device clear, so the instrument
+        # keeps whatever setup the station has always run it with
+        for i in range(3):
+            if not timed(
+                "wait for reading {}".format(i + 1),
+                lambda: wait_for_reading(meter),
+            ):
+                print("    stopped: not reading, to leave the 182 usable\n")
+                return
+            if not timed("read {}".format(i + 1), lambda: meter.read().strip()):
+                return
+        print()
+        return
     if not timed("device clear", lambda: meter.clear()):
         print("    stopped: the instrument is not accepting bus commands\n")
         return
@@ -311,12 +332,12 @@ def probe_driver(resource=VOLTMETER):
     try:
         meter = Keithley182(resource)
         report("open session")
-        timed("device clear", lambda: meter.device_clear())
-        timed("setup_voltage", lambda: meter.setup_voltage(integration_period=0.1))
+        # Nothing is written to the instrument, which is the point: the driver
+        # reads it exactly as the station's LabVIEW program does
         for i in range(3):
             if not timed(
-                "measure_voltage {}".format(i + 1),
-                lambda: "{:.6f} V".format(meter.measure_voltage()),
+                "read_voltage {}".format(i + 1),
+                lambda: "{:.6f} V".format(meter.read_voltage()),
             ):
                 return
     except Exception as e:

@@ -35,6 +35,10 @@ from nupylab.utilities import DataTuple, NupylabError
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 _control_log = logging.getLogger("nupylab.instrument_control")
+# The control log writes straight into a widget, so anything logged off the GUI
+# thread, i.e. from a reading, goes to the standard log instead
+log = logging.getLogger(__name__)
+log.addHandler(logging.NullHandler())
 
 # `a = 1.0e-4`, `a: 1.0e-4`, `a, 1.0e-4` or `a 1.0e-4`, one coefficient per line
 _SEPARATORS_RE = re.compile(r"[=:,\s]+")
@@ -123,6 +127,11 @@ class Keithley2182And182(NupylabInstrument):
         keithley2182: Keithley 2182 driver class, reading temperature.
         keithley182: Keithley 182 driver class, reading sensor potential.
     """
+
+    #: How long to wait for the Keithley 182 to have a reading waiting, in
+    #: seconds, when connecting and when reading.
+    CONNECT_TIMEOUT: float = 5.0
+    READ_TIMEOUT: float = 5.0
 
     #: Reference pO2 in atm, i.e. that of the air-side reference electrode.
     REFERENCE_PO2: float = 0.2095
@@ -305,8 +314,9 @@ class Keithley2182And182(NupylabInstrument):
     def connect(self) -> None:
         """Connect to the Keithley 2182 and the Keithley 182.
 
-        Configures the 2182 to read the sensor thermocouple on channel 1 and the
-        182 to free-run on DC volts.
+        Configures the 2182 to read the sensor thermocouple on channel 1. The
+        182 is only checked for a reading, never configured, see
+        :meth:`nupylab.drivers.keithley182.Keithley182.read_voltage`.
 
         Raises:
             NupylabError: if either meter cannot be set up, naming which one.
@@ -334,11 +344,18 @@ class Keithley2182And182(NupylabInstrument):
                 ) from e
             try:
                 self.keithley182 = keithley182.Keithley182(self._voltmeter_port)
-                self.keithley182.reset()
-                # The sensor potential is a slow DC signal read every few
-                # seconds, so take the 100 ms integration period for the
-                # quietest readings
-                self.keithley182.setup_voltage(integration_period=0.1)
+                # Nothing is written to the 182: it is left exactly as its
+                # front panel and saved setup have it, which is how the
+                # station's LabVIEW program has read it for years. Recalling
+                # the factory setup here would select the rear panel trigger
+                # input, which nothing drives, and the instrument would stop
+                # producing readings. A serial poll is a bus command, so it
+                # checks the instrument is answering without changing it.
+                if not self.keithley182.wait_for_reading(self.CONNECT_TIMEOUT):
+                    raise NupylabError(
+                        "no reading waiting; check that its front panel is "
+                        "taking readings continuously"
+                    )
             except Exception as e:
                 self._close_meters()
                 raise NupylabError(
@@ -387,9 +404,9 @@ class Keithley2182And182(NupylabInstrument):
                     f"Keithley 2182 on {self._nanovoltmeter_port}: {e}"
                 ) from e
             try:
-                # Triggers a reading and waits for the instrument to report it
-                # ready, rather than reading into its bus hold-off
-                voltage = self.keithley182.measure_voltage()
+                # Waits for the instrument to report a reading ready, rather
+                # than reading into its bus hold-off
+                voltage = self.keithley182.read_voltage(self.READ_TIMEOUT)
             except Exception as e:
                 # A read that times out leaves the 182 holding the bus off, and
                 # every later transfer to it then fails until it is cleared or
@@ -400,9 +417,9 @@ class Keithley2182And182(NupylabInstrument):
                     recovery = ", cleared and reconfigured it"
                 except Exception as recovery_error:
                     recovery = f", and could not clear it: {recovery_error}"
-                _control_log.warning(
-                    "Keithley 182 read failed%s", recovery
-                )
+                # Not the control log: its handler writes into a widget, and
+                # this runs on a worker or procedure thread
+                log.warning("Keithley 182 read failed%s", recovery)
                 raise NupylabError(
                     f"Keithley 182 on {self._voltmeter_port}: {e}{recovery}"
                 ) from e

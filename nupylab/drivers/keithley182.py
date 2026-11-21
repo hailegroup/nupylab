@@ -280,8 +280,11 @@ class Keithley182(Instrument):
     def reset(self) -> None:
         """Recall the factory default setup.
 
-        Note that the factory default trigger source is the rear panel external
-        trigger input; see :meth:`setup_voltage`.
+        Rarely what you want on a working station: the factory default trigger
+        source is the rear panel external trigger input, so unless something
+        drives it, the instrument stops producing readings and the next read
+        meets the bus hold-off. :meth:`device_clear` restores the instrument's
+        own saved power-on setup instead.
         """
         self.write("L1X")
 
@@ -424,16 +427,18 @@ class Keithley182(Instrument):
     ) -> None:
         """Configure the voltmeter for DC voltage measurements.
 
-        Selects readings from the A/D converter in the bare reading format, and
-        leaves the instrument taking one reading per trigger. The trigger mode
-        has to be set here because the factory default source is the rear panel
-        trigger input.
+        Consider not calling this at all. An instrument that a station has read
+        from for years is already configured, by its front panel and its saved
+        power-on setup, and reconfiguring it can only move it off a working
+        state: use :meth:`read_voltage`, which writes nothing.
 
-        Pair this with :meth:`measure_voltage`, which triggers a reading and
-        waits for the instrument to report it ready. Do not simply read: the
-        182 holds the bus off until a reading is available, and a read issued
-        when none is coming leaves the instrument unreachable, so that even a
-        device clear cannot revive it.
+        Selects readings from the A/D converter in the bare reading format, and
+        leaves the instrument taking one reading per trigger. Pair it with
+        :meth:`measure_voltage`, which triggers a reading and waits for the
+        instrument to report it ready. Do not simply read: the 182 holds the
+        bus off until a reading is available, and a read issued when none is
+        coming leaves the instrument unreachable, so that even a device clear
+        cannot revive it, and takes every other program on the bus down too.
 
         Args:
             measurement_range: `auto` or a range in volts, see
@@ -547,6 +552,35 @@ class Keithley182(Instrument):
             if time.monotonic() >= deadline:
                 return False
             time.sleep(interval)
+
+    def read_voltage(self, timeout: float = 5.0) -> float:
+        """Return the reading the instrument has waiting, writing nothing.
+
+        For a 182 left free-running by its own saved setup, which is how a
+        station that has only ever read from it has it configured. Nothing is
+        sent to the instrument, so its configuration is left exactly as the
+        front panel has it, and the serial poll keeps a read from ever meeting
+        the bus hold-off.
+
+        Args:
+            timeout: how long to wait for a reading, in seconds.
+
+        Returns:
+            Reading in volts, or `nan` if it overflows the present range.
+
+        Raises:
+            NupylabError: if no reading is waiting within `timeout`, which
+                means the instrument is not producing readings, e.g. because
+                it is in a one-shot trigger mode or waiting on a trigger
+                source nothing drives.
+        """
+        if not self.wait_for_reading(timeout):
+            raise NupylabError(
+                f"{self.name} has no reading waiting after {timeout:g} s; "
+                "check its trigger mode on the front panel. Not reading, to "
+                "leave the instrument on the bus."
+            )
+        return self.voltage
 
     def measure_voltage(self, timeout: float = 5.0) -> float:
         """Trigger one reading, wait for it, and return it.
