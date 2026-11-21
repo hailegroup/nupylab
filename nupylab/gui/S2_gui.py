@@ -26,9 +26,12 @@ unless neither meter answers, in which case it runs without them.
 The solenoid valve is driven from the LabJack U12's AO1 output and appears in
 the Manual Control tab only, not in queued experiments. Its selector follows
 the station's LabVIEW front panel, where `True` applies no power to the valve
-and `False` powers it, at a drive voltage set from the panel. Connecting and
-disconnecting leave the valve exactly as it is, so it only moves when the user
-applies a state.
+and `False` powers it, at a drive voltage set from the panel. There is nothing
+to read back from it, so the panel has no connect button: Apply opens the
+LabJack if needed and writes, and the valve moves at no other time. Each write
+is recorded to `~/.nupylab/solenoid_valve.json` and shown in the panel as
+history, which is what this GUI wrote rather than where the valve is, since
+LabVIEW drives the same output.
 
 The calibration coefficients `a` and `b` are read from a text file, selectable
 both from the inputs panel and from the Manual Control tab, and default to zero

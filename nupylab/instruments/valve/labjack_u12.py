@@ -14,13 +14,28 @@ down all leave the analog output exactly where it is, so the valve only changes
 when the user applies a state. An analog output holds its voltage until it is
 written again or the U12 loses power, so a valve left powered stays powered
 across a restart of this GUI.
+
+There is nothing to read from this instrument, so there is no connection worth
+holding open between writes and the control panel offers no connect or
+disconnect button. Applying a state opens the LabJack if it is not already
+open, writes, and leaves it at that.
+
+Each write is appended to a record file so that the last state this GUI applied
+survives a restart. That record is a log of what this GUI did, not a reading of
+the valve: the U12 cannot read an analog output back, and the station's LabVIEW
+program writes the same output without knowing about this file. Nothing here
+acts on the record, and it is shown only as history.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
-from typing import Optional
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Union
 
 from nupylab.drivers import labjack_u12
 from nupylab.utilities import DataTuple, NupylabError
@@ -61,6 +76,8 @@ class LabJackSolenoid(NupylabInstrument):
     DEFAULT_DRIVE_VOLTAGE: float = 3.0
     #: Analog output S2's solenoid valve is wired to, 1 for AO1.
     DEFAULT_CHANNEL: int = 1
+    #: Where :meth:`_record_write` keeps the last state this GUI applied.
+    DEFAULT_STATE_FILE: Path = Path.home() / ".nupylab" / "solenoid_valve.json"
 
     def __init__(
         self,
@@ -69,6 +86,7 @@ class LabJackSolenoid(NupylabInstrument):
         id_num: int = -1,
         data_label: str = "Solenoid Valve Voltage (V)",
         name: str = "Solenoid Valve",
+        state_file: Optional[Union[str, os.PathLike]] = None,
     ) -> None:
         """Initialize solenoid valve connection parameters.
 
@@ -81,6 +99,9 @@ class LabJackSolenoid(NupylabInstrument):
             data_label: label for DataTuples, should match an entry in
                 DATA_COLUMNS of the calling procedure.
             name: name of instrument.
+            state_file: where to record each write, or None for
+                :attr:`DEFAULT_STATE_FILE`. Pass an empty string to record
+                nothing.
 
         Raises:
             ValueError: if `channel` or `drive_voltage` is out of range.
@@ -95,6 +116,11 @@ class LabJackSolenoid(NupylabInstrument):
         # one there is no way to know what the valve is doing. Reporting 0 V
         # would be a guess, and a wrong one for a valve left powered.
         self._applied_voltage: Optional[float] = None
+        if state_file is None:
+            self._state_file: Optional[Path] = self.DEFAULT_STATE_FILE
+        else:
+            self._state_file = Path(state_file) if state_file else None
+        self._last_record: Optional[dict] = self._read_record()
         self._port = f"LabJack U12 id {self._id_num} AO{self._channel}"
         super().__init__(data_label, name)
 
@@ -141,8 +167,93 @@ class LabJackSolenoid(NupylabInstrument):
 
     @property
     def applied_voltage(self) -> Optional[float]:
-        """Get the voltage last written, or None if nothing has been written."""
+        """Get the voltage this session last wrote, or None if it wrote none."""
         return self._applied_voltage
+
+    # Record of past writes #
+
+    @property
+    def state_file(self) -> Optional[Path]:
+        """Get the path writes are recorded to, or None if they are not."""
+        return self._state_file
+
+    @property
+    def last_record(self) -> Optional[dict]:
+        """Get the last write recorded, from this session or an earlier one.
+
+        This is a log of what this GUI wrote, not a reading. The U12 cannot
+        report an analog output, and the station's LabVIEW program drives the
+        same output without touching this record, so the valve may well not be
+        where the record says. Nothing in this class acts on it.
+
+        Returns:
+            Mapping with `timestamp`, `state`, `voltage` and `channel` keys, or
+            None if nothing has ever been recorded.
+        """
+        return self._last_record
+
+    def _read_record(self) -> Optional[dict]:
+        """Read the recorded write, or None if there is not a readable one."""
+        if self._state_file is None:
+            return None
+        try:
+            with open(self._state_file, encoding="utf-8") as f:
+                record = json.load(f)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as e:
+            log.warning("Solenoid valve record could not be read: %s", e)
+            return None
+        if not isinstance(record, dict) or "voltage" not in record:
+            log.warning("Solenoid valve record is not in the expected form.")
+            return None
+        return record
+
+    def _record_write(self, state: bool, voltage: float) -> None:
+        """Record a write that has just succeeded.
+
+        A record that cannot be written is logged and otherwise ignored, since
+        nothing reads it back and losing it must not cost control of the valve.
+
+        Args:
+            state: selector state written, `True` for no power.
+            voltage: voltage written, in volts.
+        """
+        record = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "state": bool(state),
+            "voltage": float(voltage),
+            "channel": self._channel,
+            "channel_name": self.channel_name,
+        }
+        self._last_record = record
+        if self._state_file is None:
+            return
+        try:
+            self._state_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._state_file, "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+        except OSError as e:
+            log.warning("Solenoid valve record could not be written: %s", e)
+
+    def last_record_summary(self) -> str:
+        """Describe the last recorded write in one line, for display.
+
+        Returns:
+            Human-readable summary, or a note that nothing has been recorded.
+        """
+        record = self._last_record
+        if record is None:
+            return "No write recorded by this GUI"
+        try:
+            when = datetime.fromisoformat(record["timestamp"])
+            stamp = when.strftime("%Y-%m-%d %H:%M")
+        except (KeyError, TypeError, ValueError):
+            stamp = "an unknown time"
+        return (
+            f"This GUI last wrote {record.get('state')} "
+            f"({record['voltage']:.2f} V) at {stamp}"
+        )
 
     def voltage_for(self, state: bool) -> float:
         """Get the drive voltage a selector state corresponds to.
@@ -249,6 +360,7 @@ class LabJackSolenoid(NupylabInstrument):
                 analogOut1=analog_out[1],
             )
         self._applied_voltage = voltage
+        self._record_write(self._state, voltage)
 
     def set_parameters(self, state: bool) -> None:
         """Set the selector state to apply on the next call to :meth:`start`.
@@ -362,21 +474,31 @@ class LabJackSolenoid(NupylabInstrument):
 
                 layout.addLayout(grid)
 
+                # There is nothing to read from this instrument, so there is no
+                # connection to hold open between writes. Apply opens the
+                # LabJack if it is not already open, writes, and that is all.
                 btn_layout = QtWidgets.QHBoxLayout()
-                self.connect_btn = QtWidgets.QPushButton("Connect")
                 self.apply_btn = QtWidgets.QPushButton("Apply")
-                self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
-                self.connect_btn.clicked.connect(self.connect_instrument)
                 self.apply_btn.clicked.connect(self.apply_state)
-                self.disconnect_btn.clicked.connect(self.disconnect_instrument)
-                btn_layout.addWidget(self.connect_btn)
                 btn_layout.addWidget(self.apply_btn)
-                btn_layout.addWidget(self.disconnect_btn)
+                btn_layout.addStretch()
                 layout.addLayout(btn_layout)
 
-                self.applied_label = QtWidgets.QLabel("Applied: not written yet")
+                self.applied_label = QtWidgets.QLabel(
+                    "Applied: nothing written this session"
+                )
                 layout.addWidget(self.applied_label)
-                self.status_label = QtWidgets.QLabel("Status: Not connected")
+
+                self.record_label = QtWidgets.QLabel(instrument.last_record_summary())
+                self.record_label.setStyleSheet("color: gray;")
+                self.record_label.setToolTip(
+                    "History of what this GUI wrote. The valve cannot be read "
+                    "back, and LabVIEW drives the same output, so this is not "
+                    "necessarily where the valve is now."
+                )
+                layout.addWidget(self.record_label)
+
+                self.status_label = QtWidgets.QLabel("Status: Idle")
                 layout.addWidget(self.status_label)
                 self.setLayout(layout)
 
@@ -396,8 +518,11 @@ class LabJackSolenoid(NupylabInstrument):
 
             def _show_applied(self):
                 voltage = instrument.applied_voltage
+                self.record_label.setText(instrument.last_record_summary())
                 if voltage is None:
-                    self.applied_label.setText("Applied: not written yet")
+                    self.applied_label.setText(
+                        "Applied: nothing written this session"
+                    )
                     return
                 powered = "powered" if voltage else "no power"
                 self.applied_label.setText(
@@ -406,33 +531,6 @@ class LabJackSolenoid(NupylabInstrument):
                 self.data_recorded.emit([f"{voltage:.3f}"])
 
             # Actions #
-
-            def connect_instrument(self):
-                self._abort_if_needed()
-                try:
-                    instrument.set_drive_voltage(self.voltage_spin.value())
-                    instrument.connect()
-                    self.status_label.setText("Status: Connected")
-                    self._show_applied()
-                    _control_log.info(
-                        "Solenoid valve connected on %s, valve left as it was",
-                        instrument._port,
-                    )
-                except Exception as e:
-                    self.status_label.setText(f"Status: Error - {e}")
-                    _control_log.error("Solenoid valve connect failed: %s", e)
-
-            def disconnect_instrument(self):
-                self._abort_if_needed()
-                try:
-                    instrument.disconnect()
-                    self.status_label.setText("Status: Disconnected")
-                    _control_log.info(
-                        "Solenoid valve disconnected, valve left as it was"
-                    )
-                except Exception as e:
-                    self.status_label.setText(f"Status: Error - {e}")
-                    _control_log.error("Solenoid valve disconnect failed: %s", e)
 
             def apply_state(self):
                 self._abort_if_needed()
