@@ -33,13 +33,16 @@ is recorded to `~/.nupylab/solenoid_valve.json` and shown in the panel as
 history, which is what this GUI wrote rather than where the valve is, since
 LabVIEW drives the same output.
 
-The calibration coefficients `a` and `b` are read from a text file, selectable
-both from the inputs panel and from the Manual Control tab, and default to zero
-until one is chosen. See `po2_calibration_example.txt` in
-`nupylab/instruments/o2_sensor` for the file format.
+The calibration coefficients `a` and `b` are read from a text file. S2's
+calibrations live in `nupylab/instruments/o2_sensor/S2 Calibrations`, each named
+`YYYYMMDD_gas_po2_calibration.txt` for the day it was taken and the gas it was
+taken in, and the newest of them is loaded at startup. The Manual Control tab
+shows which one is in use, with its date, its gas and who took it, and can load
+another; see `po2_calibration_example.txt` in that folder for the format.
 """
 
 import logging
+import os
 import sys
 import time
 from typing import Dict, List, Tuple, Type, Union
@@ -53,6 +56,7 @@ from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216
 from nupylab.instruments.o2_sensor.keithley2182_182 import (
     Keithley2182And182 as PO2_Sensor,
 )
+from nupylab.instruments.o2_sensor.keithley2182_182 import find_latest_calibration
 from nupylab.instruments.valve.labjack_u12 import LabJackSolenoid
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
@@ -194,8 +198,12 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         default=PO2_VOLTMETER_PORT,
         ui_class=None,
     )
+    # Defaults to the newest file in the station's calibrations folder, so a
+    # fresh calibration is picked up by dropping it in and restarting
     po2_calibration_file: Parameter = Parameter(
-        "pO2 Calibration File", default="", ui_class=None
+        "pO2 Calibration File",
+        default=find_latest_calibration() or "",
+        ui_class=None,
     )
 
     eis_toggle: ListParameter = ListParameter(
@@ -501,16 +509,22 @@ def main(*args):
     def sync_po2_calibration(*_):
         """Load the calibration file named in the inputs panel, if any.
 
-        The Manual Control panel has its own file picker; this only runs when
-        the inputs panel entry is edited, so it does not override that choice.
+        Runs once at startup, where the input holds the newest calibration in
+        the station's folder, and again whenever the entry is edited. The
+        Manual Control panel has its own file picker, and this does not
+        override that choice, since it only acts on a path it has not loaded.
         """
         path = inputs.po2_calibration_file.value().strip()
         if not path or path == po2_sensor.calibration_file:
             return
         try:
-            a, b = po2_sensor.set_calibration_file(path)
+            calibration = po2_sensor.set_calibration_file(path)
             _control_log.info(
-                "pO2 calibration loaded from %s: a = %.6g, b = %.6g", path, a, b
+                "pO2 calibration loaded from %s: a = %.6g, b = %.6g, %s",
+                os.path.basename(path),
+                calibration.a,
+                calibration.b,
+                calibration.describe(),
             )
         except Exception as e:
             _control_log.error("pO2 calibration file failed: %s", e)

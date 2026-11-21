@@ -1,0 +1,33 @@
+# Example pO2 sensor calibration file. This file is a template: it is not
+# named like a calibration, so the GUI never loads it.
+#
+# Name a real calibration for the day it was taken and the gas it was taken
+# in, as YYYYMMDD_gas_po2_calibration.txt, e.g.
+#
+#     20261121_air_po2_calibration.txt
+#     20261121_5pct_H2_po2_calibration.txt
+#
+# and keep it in this folder. The S2 GUI loads the newest file named that way
+# when it starts, and the pO2 panel can load any other.
+#
+# pO2 = 0.2095 * 10 ** (20158 * ((E - a) / T - b))
+#
+#   E : pO2 sensor potential in volts, as measured by the Keithley 182
+#   T : pO2 sensor temperature in kelvin, as measured by the Keithley 2182
+#   a : sensor voltage offset in volts
+#   b : offset on E / T in volts per kelvin
+#
+# Blank lines are ignored, as is anything after a # or ! comment character.
+# A name and its value may be separated by =, :, , or whitespace, and `slope`
+# and `intercept` are accepted in place of `a` and `b`.
+#
+# THE VALUES BELOW ARE ARBITRARY PLACEHOLDERS. Replace them with the
+# coefficients from the calibration of the sensor in use.
+
+a = 1.0e-4
+b = 2.5e-7
+
+# Who took this calibration, and in what gas. The gas is also taken from the
+# file name when it is not given here, and so is the date.
+calibrated_by =
+gas =

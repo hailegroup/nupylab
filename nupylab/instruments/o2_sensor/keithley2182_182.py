@@ -17,6 +17,11 @@ with `E` the sensor potential in volts, `T` the sensor temperature in kelvin,
 and `a` and `b` the calibration coefficients for the sensor. The coefficients
 are read from a text file with :func:`load_po2_calibration`, and default to zero
 (an ideal, uncalibrated sensor) until one is selected.
+
+S2's calibrations live in the `S2 Calibrations` folder beside this module, each
+named for the day it was taken and the gas it was taken in, as
+`YYYYMMDD_gas_po2_calibration.txt`. :func:`find_latest_calibration` picks the
+newest of them, which is what the GUI loads when it starts.
 """
 
 from __future__ import annotations
@@ -26,7 +31,8 @@ import math
 import os
 import re
 import time
-from typing import List, Optional, Sequence, Tuple
+from datetime import date, datetime
+from typing import Dict, List, NamedTuple, Optional, Sequence
 
 from pymeasure.instruments.keithley import keithley2182
 
@@ -40,8 +46,20 @@ _control_log = logging.getLogger("nupylab.instrument_control")
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
-# `a = 1.0e-4`, `a: 1.0e-4`, `a, 1.0e-4` or `a 1.0e-4`, one coefficient per line
-_SEPARATORS_RE = re.compile(r"[=:,\s]+")
+#: Folder holding S2's calibration files, beside this module.
+CALIBRATION_DIR: str = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "S2 Calibrations"
+)
+
+# `20261121_air_po2_calibration.txt`: the day the calibration was taken and the
+# gas it was taken in. A file named any other way is not a calibration, so the
+# example template in the folder is never picked up as one.
+_FILENAME_RE = re.compile(
+    r"^(?P<date>\d{8})_(?P<gas>.+?)_po2_calibration", re.IGNORECASE
+)
+# Splits `a = 1.0e-4`, `a: 1.0e-4` or `a, 1.0e-4` into its name and its value,
+# leaving any further separator in the value, as a name may well contain one
+_SEPARATOR_RE = re.compile(r"\s*[=:,]\s*")
 # Names accepted for each coefficient. `slope` and `intercept` match the names
 # used by the single-Keithley pO2 sensor class.
 _COEFFICIENT_NAMES = {
@@ -52,65 +70,197 @@ _COEFFICIENT_NAMES = {
     "intercept": "b",
     "po2_intercept": "b",
 }
+# Names accepted for everything else a calibration file records
+_METADATA_NAMES = {
+    "calibrated_by": "calibrated_by",
+    "by": "calibrated_by",
+    "name": "calibrated_by",
+    "operator": "calibrated_by",
+    "gas": "gas",
+    "date": "date",
+}
 
 
-def load_po2_calibration(path: str) -> Tuple[float, float]:
-    """Read pO2 calibration coefficients `a` and `b` from a text file.
+class PO2Calibration(NamedTuple):
+    """One pO2 sensor calibration: its coefficients and where it came from."""
 
-    Blank lines are ignored, as is anything after a `#`, `!`, or `%` comment
-    character. Coefficients may be named, one per line::
+    a: float
+    b: float
+    gas: Optional[str] = None
+    calibrated_by: Optional[str] = None
+    date: Optional[date] = None
+    path: Optional[str] = None
 
-        # S2 pO2 sensor calibration
-        a = 1.0e-4
-        b = 2.5e-7
+    @property
+    def date_text(self) -> str:
+        """Get the calibration date as `November 21, 2026`, or `unknown`."""
+        return self.date.strftime("%B %d, %Y") if self.date else "unknown date"
 
-    where the name and value may be separated by `=`, `:`, `,`, or whitespace,
-    and `slope` and `intercept` are accepted as aliases of `a` and `b`.
-    Alternatively, the file may hold two bare numbers, `a` first.
+    def describe(self) -> str:
+        """Get a one-line summary of when, by whom and in what gas."""
+        who = self.calibrated_by or "unknown"
+        gas = self.gas or "unknown gas"
+        return f"{self.date_text}, by {who}, in {gas}"
+
+
+def _parse_filename(path: str) -> Dict[str, object]:
+    """Read the calibration date and gas out of a file name.
 
     Args:
         path: path to the calibration file.
 
     Returns:
-        Tuple of coefficients `a` and `b`.
+        Any of `date` and `gas` the name carries, which is neither if it is
+        not named as a calibration.
+    """
+    match = _FILENAME_RE.match(os.path.basename(path))
+    if match is None:
+        return {}
+    found: Dict[str, object] = {"gas": match.group("gas").replace("_", " ")}
+    try:
+        found["date"] = datetime.strptime(match.group("date"), "%Y%m%d").date()
+    except ValueError:
+        pass  # Named like a calibration, but not with a real date
+    return found
+
+
+def load_po2_calibration(path: str) -> PO2Calibration:
+    """Read a pO2 sensor calibration from a text file.
+
+    Blank lines are ignored, as is anything after a `#` or `!` comment
+    character. Each remaining line names a value::
+
+        # S2 pO2 sensor calibration
+        a = 1.0e-4
+        b = 2.5e-7
+        calibrated_by = Jane Doe
+        gas = 5% H2
+
+    where the name and value may be separated by `=`, `:`, `,`, or whitespace,
+    and `slope` and `intercept` are accepted as aliases of `a` and `b`. A file
+    may instead hold two bare numbers, `a` first.
+
+    The calibration date and the gas also come from the file name, which is
+    where the date can only come from, so a file named
+    `20261121_air_po2_calibration.txt` needs neither in its text.
+
+    Args:
+        path: path to the calibration file.
+
+    Returns:
+        The calibration, with whatever of the gas, the name of whoever took it
+        and its date could be found.
 
     Raises:
-        NupylabError: if the file cannot be read or does not define both
+        NupylabError: if the file cannot be read, holds a line that is neither
+            a comment nor a recognized name, or does not define both
             coefficients.
     """
-    named: dict = {}
+    coefficients: Dict[str, float] = {}
+    metadata: Dict[str, object] = _parse_filename(path)
     positional: List[float] = []
     try:
         with open(path, "r") as calibration_file:
             for number, line in enumerate(calibration_file, start=1):
-                for comment in ("#", "!", "%"):
+                for comment in ("#", "!"):
                     line = line.split(comment)[0]
                 line = line.strip()
                 if not line:
                     continue
-                fields = _SEPARATORS_RE.split(line)
-                try:
-                    if len(fields) == 1:
-                        positional.append(float(fields[0]))
-                    elif len(fields) == 2 and fields[0].lower() in _COEFFICIENT_NAMES:
-                        named[_COEFFICIENT_NAMES[fields[0].lower()]] = float(fields[1])
+                fields = _SEPARATOR_RE.split(line, maxsplit=1)
+                if len(fields) == 1:
+                    fields = line.split(None, 1)
+                name = fields[0].strip().lower().replace(" ", "_")
+                value = fields[1].strip() if len(fields) == 2 else ""
+                if len(fields) == 1:
+                    try:
+                        positional.append(float(name))
+                        continue
+                    except ValueError:
+                        value = ""
+                if name in _COEFFICIENT_NAMES:
+                    try:
+                        coefficients[_COEFFICIENT_NAMES[name]] = float(value)
+                    except ValueError:
+                        raise NupylabError(
+                            f"Could not read pO2 calibration file {path}, line "
+                            f"{number}: `{line}` does not give a number."
+                        )
+                elif name in _METADATA_NAMES:
+                    if not value:
+                        continue  # A blank entry leaves the file name's value
+                    if _METADATA_NAMES[name] == "date":
+                        try:
+                            metadata["date"] = datetime.strptime(
+                                value.replace("-", ""), "%Y%m%d"
+                            ).date()
+                        except ValueError:
+                            raise NupylabError(
+                                f"Could not read pO2 calibration file {path}, "
+                                f"line {number}: `{value}` is not a date as "
+                                "YYYYMMDD."
+                            )
                     else:
-                        raise ValueError(line)
-                except ValueError:
+                        metadata[_METADATA_NAMES[name]] = value
+                else:
                     raise NupylabError(
-                        f"Could not read pO2 calibration file {path}, line {number}: "
-                        f"`{line}` is not a coefficient."
+                        f"Could not read pO2 calibration file {path}, line "
+                        f"{number}: `{line}` is not a coefficient, a comment, "
+                        "or anything else this file may name."
                     )
     except OSError as e:
         raise NupylabError(f"Could not open pO2 calibration file {path}: {e}")
 
-    if "a" in named and "b" in named:
-        return named["a"], named["b"]
-    if len(positional) >= 2:
-        return positional[0], positional[1]
-    raise NupylabError(
-        f"pO2 calibration file {path} does not define both coefficients `a` and `b`."
+    if "a" not in coefficients or "b" not in coefficients:
+        if len(positional) >= 2:
+            coefficients = {"a": positional[0], "b": positional[1]}
+        else:
+            raise NupylabError(
+                f"pO2 calibration file {path} does not define both "
+                "coefficients `a` and `b`."
+            )
+    return PO2Calibration(
+        a=coefficients["a"],
+        b=coefficients["b"],
+        gas=metadata.get("gas"),
+        calibrated_by=metadata.get("calibrated_by"),
+        date=metadata.get("date"),
+        path=path,
     )
+
+
+def find_latest_calibration(directory: str = CALIBRATION_DIR) -> Optional[str]:
+    """Find the newest calibration file in a folder.
+
+    Only files named `YYYYMMDD_gas_po2_calibration...` count, so a template or
+    a note kept alongside them is never mistaken for a calibration. Files
+    sharing a date are ordered by name.
+
+    Args:
+        directory: folder to look in, S2's calibrations by default.
+
+    Returns:
+        Path of the newest calibration file, or `None` if the folder holds
+        none or cannot be read.
+    """
+    try:
+        names = os.listdir(directory)
+    except OSError as e:
+        log.warning("Could not read pO2 calibration folder %s: %s", directory, e)
+        return None
+    dated = []
+    for name in names:
+        match = _FILENAME_RE.match(name)
+        if match is None:
+            continue
+        try:
+            taken = datetime.strptime(match.group("date"), "%Y%m%d").date()
+        except ValueError:
+            continue
+        dated.append((taken, name))
+    if not dated:
+        return None
+    return os.path.join(directory, max(dated)[1])
 
 
 class Keithley2182And182(NupylabInstrument):
@@ -191,9 +341,7 @@ class Keithley2182And182(NupylabInstrument):
         self._nanovoltmeter_port: str = nanovoltmeter_port
         self._voltmeter_port: str = voltmeter_port
         self._port = f"{nanovoltmeter_port}, {voltmeter_port}"  # For __repr__
-        self._a: float = po2_a
-        self._b: float = po2_b
-        self._calibration_file: Optional[str] = None
+        self._calibration = PO2Calibration(a=po2_a, b=po2_b)
         self._invert_voltage: bool = invert_voltage
         self._thermocouple: str = thermocouple
         if calibration_file:
@@ -203,19 +351,24 @@ class Keithley2182And182(NupylabInstrument):
     # Calibration #
 
     @property
+    def calibration(self) -> PO2Calibration:
+        """Get the calibration in use, coefficients and provenance."""
+        return self._calibration
+
+    @property
     def a(self) -> float:
         """Get calibration coefficient `a`, a sensor voltage offset in V."""
-        return self._a
+        return self._calibration.a
 
     @property
     def b(self) -> float:
         """Get calibration coefficient `b`, an offset on E / T in V/K."""
-        return self._b
+        return self._calibration.b
 
     @property
     def calibration_file(self) -> Optional[str]:
         """Get the path of the loaded calibration file, if any."""
-        return self._calibration_file
+        return self._calibration.path
 
     def set_calibration(self, po2_a: float, po2_b: float) -> None:
         """Set the calibration coefficients directly.
@@ -224,29 +377,26 @@ class Keithley2182And182(NupylabInstrument):
             po2_a: calibration coefficient `a`, a sensor voltage offset in V.
             po2_b: calibration coefficient `b`, an offset on E / T in V/K.
         """
-        self._a = float(po2_a)
-        self._b = float(po2_b)
-        self._calibration_file = None
+        self._calibration = PO2Calibration(a=float(po2_a), b=float(po2_b))
         self._notify_calibration_changed()
 
-    def set_calibration_file(self, path: str) -> Tuple[float, float]:
-        """Read the calibration coefficients from a text file.
+    def set_calibration_file(self, path: str) -> PO2Calibration:
+        """Read the calibration from a text file.
 
         Args:
             path: path to the calibration file, see
                 :func:`load_po2_calibration`.
 
         Returns:
-            Tuple of coefficients `a` and `b`.
+            The calibration read from the file.
 
         Raises:
             NupylabError: if the file cannot be read or does not define both
                 coefficients.
         """
-        self._a, self._b = load_po2_calibration(path)
-        self._calibration_file = path
+        self._calibration = load_po2_calibration(path)
         self._notify_calibration_changed()
-        return self._a, self._b
+        return self._calibration
 
     def _notify_calibration_changed(self) -> None:
         """Tell the control panel, if any, that the coefficients changed."""
@@ -279,7 +429,7 @@ class Keithley2182And182(NupylabInstrument):
         if kelvin <= 0:
             return float("nan")
         exponent: float = self.NERNST_CONSTANT * (
-            (voltage - self._a) / kelvin - self._b
+            (voltage - self._calibration.a) / kelvin - self._calibration.b
         )
         try:
             return self.REFERENCE_PO2 * 10**exponent
@@ -517,8 +667,11 @@ class Keithley2182And182(NupylabInstrument):
                 layout.addRow(cal_layout)
 
                 self.cal_label = QtWidgets.QLabel()
+                self.cal_detail_label = QtWidgets.QLabel()
+                self.cal_detail_label.setStyleSheet("color: gray;")
                 self.refresh_calibration()
                 layout.addRow(self.cal_label)
+                layout.addRow(self.cal_detail_label)
 
                 btn_layout = QtWidgets.QHBoxLayout()
                 self.connect_btn = QtWidgets.QPushButton("Connect")
@@ -567,14 +720,26 @@ class Keithley2182And182(NupylabInstrument):
                 )
 
             def refresh_calibration(self):
-                """Show the coefficients and file the instrument now holds."""
-                path = instrument.calibration_file
-                if path:
-                    self.cal_file_label.setText(os.path.basename(path))
+                """Show the calibration the instrument now holds."""
+                calibration = instrument.calibration
+                if calibration.path:
+                    self.cal_file_label.setText(
+                        os.path.basename(calibration.path)
+                    )
                     self.cal_file_label.setStyleSheet("color: black;")
+                    self.cal_detail_label.setText(
+                        "Calibrated {}, in {}, by {}".format(
+                            calibration.date_text,
+                            calibration.gas or "an unrecorded gas",
+                            calibration.calibrated_by or "an unrecorded user",
+                        )
+                    )
                 else:
                     self.cal_file_label.setText("no file selected")
                     self.cal_file_label.setStyleSheet("color: gray;")
+                    self.cal_detail_label.setText(
+                        "Uncalibrated: pO2 is the ideal Nernst response"
+                    )
                 self._update_calibration_label()
 
             def _abort_if_needed(self):
@@ -583,10 +748,12 @@ class Keithley2182And182(NupylabInstrument):
 
             def select_calibration_file(self):
                 """Pick the text file holding the `a` and `b` coefficients."""
+                # Opens on the station's calibrations unless one is loaded
+                # from somewhere else, in which case stay where the user is
                 start_dir = (
                     os.path.dirname(instrument.calibration_file)
                     if instrument.calibration_file
-                    else ""
+                    else CALIBRATION_DIR
                 )
                 path, _ = QtWidgets.QFileDialog.getOpenFileName(
                     self,
@@ -597,11 +764,15 @@ class Keithley2182And182(NupylabInstrument):
                 if not path:
                     return
                 try:
-                    a, b = instrument.set_calibration_file(path)
+                    calibration = instrument.set_calibration_file(path)
                     self.refresh_calibration()
                     _control_log.info(
-                        "pO2 calibration loaded from %s: a = %.6g, b = %.6g",
-                        path, a, b
+                        "pO2 calibration loaded from %s: a = %.6g, b = %.6g, "
+                        "%s",
+                        os.path.basename(path),
+                        calibration.a,
+                        calibration.b,
+                        calibration.describe(),
                     )
                 except Exception as e:
                     self.cal_file_label.setText("Error")
