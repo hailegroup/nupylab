@@ -375,7 +375,7 @@ def _loadLibrary(
     """
     if platform == "win32":
         try:
-            if lib_path is not None:
+            if lib_path is None:
                 return ctypes.WinDLL("ljackuw.dll")
             return ctypes.WinDLL(lib_path)
         except Exception as exc:
@@ -2711,9 +2711,39 @@ class U12:
             stateIO = ctypes.c_long(0)
         else:
             stateIO = ctypes.c_long(stateIO)
-        count = ctypes.c_ushort(999)
+        # The UW driver writes four bytes through `count`, so a 16-bit type
+        # here would overrun its buffer:
+        # int32_t AOUpdate(int32_t *idnum, int32_t demo, int32_t trisD,
+        #                  int32_t trisIO, int32_t *stateD, int32_t *stateIO,
+        #                  int32_t updateDigital, int32_t resetCounter,
+        #                  uint32_t *count, float analogOut0, float analogOut1)
+        count = ctypes.c_ulong(999)
 
-        # Create arrays and other ctypes
+        # Declaring the prototype lets ctypes check the argument types rather
+        # than inferring them from whatever Python objects are passed in
+        self._lib.AOUpdate.argtypes = [
+            ctypes.POINTER(ctypes.c_long),
+            ctypes.c_long,
+            ctypes.c_long,
+            ctypes.c_long,
+            ctypes.POINTER(ctypes.c_long),
+            ctypes.POINTER(ctypes.c_long),
+            ctypes.c_long,
+            ctypes.c_long,
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.c_float,
+            ctypes.c_float,
+        ]
+        self._lib.AOUpdate.restype = ctypes.c_long
+
+        # With argtypes declared, `None` is no longer accepted in place of an
+        # integer. It only reached the driver as 0 anyway, and the tris
+        # arguments are ignored unless `updateDigital` is set.
+        if trisD is None:
+            trisD = 0
+        if trisIO is None:
+            trisIO = 0
+
         ecode = self._lib.AOUpdate(
             ctypes.byref(idNum),
             demo,

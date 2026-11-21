@@ -15,3 +15,4 @@ This section contains documentation on the instrument classes.
    o2_sensor
    scanner
    thermocouple_sensor
+   valve

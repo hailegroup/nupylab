@@ -5,6 +5,7 @@ This GUI connects to and displays data from
     * Eurotherm 2416 Furnace Controller (via the Eurotherm 2400 driver)
     * Biologic SP-300 Potentiostat (optional)
     * pO2 sensor read by a Keithley 2182 and a Keithley 182 (optional)
+    * Solenoid valve driven by a LabJack U12 analog output (manual control only)
 
 Run the program by changing to the directory containing this file and calling:
 
@@ -21,6 +22,13 @@ at GPIB0::8 measures the sensor potential. The Manual Control tab reads both and
 shows the sensor temperature, the pO2 in atm, and the sensor voltage, whether or
 not an experiment is queued. A queued experiment records all three as well,
 unless neither meter answers, in which case it runs without them.
+
+The solenoid valve is driven from the LabJack U12's AO1 output and appears in
+the Manual Control tab only, not in queued experiments. Its selector follows
+the station's LabVIEW front panel, where `True` applies no power to the valve
+and `False` powers it, at a drive voltage set from the panel. Connecting and
+disconnecting leave the valve exactly as it is, so it only moves when the user
+applies a state.
 
 The calibration coefficients `a` and `b` are read from a text file, selectable
 both from the inputs panel and from the Manual Control tab, and default to zero
@@ -42,6 +50,7 @@ from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216
 from nupylab.instruments.o2_sensor.keithley2182_182 import (
     Keithley2182And182 as PO2_Sensor,
 )
+from nupylab.instruments.valve.labjack_u12 import LabJackSolenoid
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
@@ -385,6 +394,10 @@ def main(*args):
         PO2_DATA_LABELS,
     )
 
+    # The LabJack driver is only loaded when the valve panel connects, so a
+    # station without one, or without ljackuw.dll, still opens the GUI
+    solenoid = LabJackSolenoid()
+
     # Each controller supplies its own panel, so the Manual Control tab is
     # rebuilt when the furnace type changes rather than patched in place.
     current = {"furnace": None, "control": None, "type": None}
@@ -397,6 +410,7 @@ def main(*args):
         if potentiostat is not None:
             instruments.append(potentiostat)
         instruments.append(po2_sensor)
+        instruments.append(solenoid)
         return instruments
 
     def disconnect_control_instruments():
