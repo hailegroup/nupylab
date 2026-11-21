@@ -27,7 +27,9 @@ NANOVOLTMETER = "GPIB0::7::INSTR"  # Keithley 2182A, sensor thermocouple
 VOLTMETER = "GPIB0::8::INSTR"  # Keithley 182, sensor potential
 
 IDENTIFY_TIMEOUT_MS = 3000
-METER_TIMEOUT_MS = 10000
+# A stalled GPIB transfer can take longer than this to give up, since the board
+# rounds the timeout up to one of its own settings
+METER_TIMEOUT_MS = 5000
 
 # What the GUI sends the 182, as (command, what it does). The trigger interval
 # and mode are appended per scenario.
@@ -220,6 +222,10 @@ def probe_182(rm, resource=VOLTMETER):
         report("open session", error=e)
         return
     try:
+        # A serial poll is a bus command rather than data, so it tells apart an
+        # instrument that is wedged, holding the handshake and answering
+        # nothing, from one that is listening but not accepting data
+        timed("serial poll (status byte)", lambda: meter.read_stb())
         timed("U2X    firmware revision", lambda: write_only(meter, "U2X"))
         timed("read revision", lambda: meter.read().strip())
         print()

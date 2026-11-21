@@ -389,8 +389,20 @@ class Keithley2182And182(NupylabInstrument):
             try:
                 voltage = self.keithley182.voltage
             except Exception as e:
+                # A read that times out leaves the 182 holding the bus off, and
+                # every later transfer to it then fails until it is cleared or
+                # power cycled. Try to clear it rather than leave it stuck.
+                recovery = ""
+                try:
+                    self.keithley182.recover()
+                    recovery = ", cleared and reconfigured it"
+                except Exception as recovery_error:
+                    recovery = f", and could not clear it: {recovery_error}"
+                _control_log.warning(
+                    "Keithley 182 read failed%s", recovery
+                )
                 raise NupylabError(
-                    f"Keithley 182 on {self._voltmeter_port}: {e}"
+                    f"Keithley 182 on {self._voltmeter_port}: {e}{recovery}"
                 ) from e
         if self._invert_voltage:
             voltage = -voltage

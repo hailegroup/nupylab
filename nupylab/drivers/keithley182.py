@@ -86,6 +86,7 @@ class Keithley182(Instrument):
                 can take several seconds.
             **kwargs: passed on to :class:`pymeasure.instruments.Instrument`.
         """
+        self._setup: Optional[dict] = None
         super().__init__(
             adapter,
             name,
@@ -277,6 +278,31 @@ class Keithley182(Instrument):
         """
         self.write("L1X")
 
+    def device_clear(self) -> None:
+        """Send a GPIB device clear (SDC).
+
+        Unlike :meth:`reset`, this is a bus-level command rather than one the
+        182 has to parse, so it is the way to reach an instrument that has
+        stopped accepting commands. The 182 treats it as a reset to its
+        power-on setup, as its manual's command defaults describe.
+        """
+        self.adapter.connection.clear()
+
+    def recover(self) -> None:
+        """Clear the instrument and restore the setup it was last given.
+
+        A read that times out can leave the 182 holding the bus off, after
+        which every transfer to it fails, so a caller whose read failed should
+        try this before giving up.
+
+        Raises:
+            Exception: whatever the clear or the setup raises, if the
+                instrument is not reachable at all.
+        """
+        self.device_clear()
+        if self._setup is not None:
+            self.setup_voltage(**self._setup)
+
     def save_setup(self) -> None:
         """Save the current setup as the power-on setup."""
         self.write("L0X")
@@ -414,6 +440,15 @@ class Keithley182(Instrument):
             relative: whether to leave reading relative (zero) enabled. Disabled
                 by default so that absolute potentials are reported.
         """
+        # Kept so that `recover` can restore this setup after a device clear
+        self._setup = {
+            "measurement_range": measurement_range,
+            "resolution": resolution,
+            "integration_period": integration_period,
+            "digital_filter": digital_filter,
+            "trigger_interval": trigger_interval,
+            "relative": relative,
+        }
         self.measurement_range = measurement_range
         self.resolution = resolution
         self.integration_period = integration_period
