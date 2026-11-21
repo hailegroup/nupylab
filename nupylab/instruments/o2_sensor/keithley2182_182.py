@@ -11,12 +11,15 @@ The partial pressure of oxygen follows from the Nernst equation,
 
 .. math::
 
-    pO_2 = 0.2095 \\times 10^{20158 \\left( \\frac{E - a}{T} - b \\right)}
+    pO_2 = 0.2095 \\times 10^{20158 \\left( \\frac{E - b}{T} - a \\right)}
 
-with `E` the sensor potential in volts, `T` the sensor temperature in kelvin,
-and `a` and `b` the calibration coefficients for the sensor. The coefficients
-are read from a text file with :func:`load_po2_calibration`, and default to zero
-(an ideal, uncalibrated sensor) until one is selected.
+with `E` the sensor potential in volts and `T` the sensor temperature in
+kelvin. The calibration coefficients are those of the sensor's measured
+potential against its temperature, :math:`E = aT + b`, so `a` is a slope in
+V/K and `b` an intercept in V. That is the form and the lettering S2's LabVIEW
+program uses, so coefficients recorded for this station carry over unchanged.
+They are read from a text file with :func:`load_po2_calibration`, and default
+to zero (an ideal, uncalibrated sensor) until one is selected.
 
 S2's calibrations live in the `S2 Calibrations` folder beside this module, each
 named for the day it was taken and the gas it was taken in, as
@@ -60,15 +63,15 @@ _FILENAME_RE = re.compile(
 # Splits `a = 1.0e-4`, `a: 1.0e-4` or `a, 1.0e-4` into its name and its value,
 # leaving any further separator in the value, as a name may well contain one
 _SEPARATOR_RE = re.compile(r"\s*[=:,]\s*")
-# Names accepted for each coefficient. `slope` and `intercept` match the names
-# used by the single-Keithley pO2 sensor class.
+# Names accepted for each coefficient, by what they are in E = aT + b. The
+# single-Keithley pO2 sensor class calls its own arguments po2_slope and
+# po2_intercept the other way round, so those names are deliberately not
+# accepted here: a file is better rejected than read with the two swapped.
 _COEFFICIENT_NAMES = {
     "a": "a",
     "slope": "a",
-    "po2_slope": "a",
     "b": "b",
     "intercept": "b",
-    "po2_intercept": "b",
 }
 # Names accepted for everything else a calibration file records
 _METADATA_NAMES = {
@@ -82,7 +85,11 @@ _METADATA_NAMES = {
 
 
 class PO2Calibration(NamedTuple):
-    """One pO2 sensor calibration: its coefficients and where it came from."""
+    """One pO2 sensor calibration: its coefficients and where it came from.
+
+    The coefficients are those of the sensor potential against its
+    temperature, `E = aT + b`: `a` is a slope in V/K and `b` an intercept in V.
+    """
 
     a: float
     b: float
@@ -310,9 +317,11 @@ class Keithley2182And182(NupylabInstrument):
             data_label: labels for DataTuples. :meth:`get_data` returns sensor
                 temperature, pO2, and sensor voltage, and corresponding labels
                 should match entries in DATA_COLUMNS of the calling procedure.
-            po2_a: calibration coefficient `a`, a sensor voltage offset in V.
+            po2_a: calibration coefficient `a`, the slope of the sensor
+                potential against its temperature, in V/K.
                 Overridden by `calibration_file`, if given.
-            po2_b: calibration coefficient `b`, an offset on E / T in V/K.
+            po2_b: calibration coefficient `b`, the intercept of the sensor
+                potential against its temperature, in V.
                 Overridden by `calibration_file`, if given.
             calibration_file: path to a text file holding `a` and `b`, see
                 :func:`load_po2_calibration`. Optional.
@@ -357,12 +366,12 @@ class Keithley2182And182(NupylabInstrument):
 
     @property
     def a(self) -> float:
-        """Get calibration coefficient `a`, a sensor voltage offset in V."""
+        """Get coefficient `a`, the slope of E against T, in V/K."""
         return self._calibration.a
 
     @property
     def b(self) -> float:
-        """Get calibration coefficient `b`, an offset on E / T in V/K."""
+        """Get coefficient `b`, the intercept of E against T, in V."""
         return self._calibration.b
 
     @property
@@ -374,8 +383,10 @@ class Keithley2182And182(NupylabInstrument):
         """Set the calibration coefficients directly.
 
         Args:
-            po2_a: calibration coefficient `a`, a sensor voltage offset in V.
-            po2_b: calibration coefficient `b`, an offset on E / T in V/K.
+            po2_a: calibration coefficient `a`, the slope of the sensor
+                potential against its temperature, in V/K.
+            po2_b: calibration coefficient `b`, the intercept of the sensor
+                potential against its temperature, in V.
         """
         self._calibration = PO2Calibration(a=float(po2_a), b=float(po2_b))
         self._notify_calibration_changed()
@@ -429,7 +440,7 @@ class Keithley2182And182(NupylabInstrument):
         if kelvin <= 0:
             return float("nan")
         exponent: float = self.NERNST_CONSTANT * (
-            (voltage - self._calibration.a) / kelvin - self._calibration.b
+            (voltage - self._calibration.b) / kelvin - self._calibration.a
         )
         try:
             return self.REFERENCE_PO2 * 10**exponent
@@ -716,7 +727,7 @@ class Keithley2182And182(NupylabInstrument):
 
             def _update_calibration_label(self):
                 self.cal_label.setText(
-                    "a = %.6g V, b = %.6g V/K" % (instrument.a, instrument.b)
+                    "a = %.6g V/K, b = %.6g V" % (instrument.a, instrument.b)
                 )
 
             def refresh_calibration(self):
