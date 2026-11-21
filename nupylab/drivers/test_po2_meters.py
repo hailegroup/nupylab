@@ -7,12 +7,15 @@ VISA session on the bus:
 
 It lists every resource the board can see, asks each GPIB instrument who it is,
 and then exercises the two pO2 meters one at a time, never holding more than one
-session open. Each step prints either its result or the exact VISA error, so a
-failure says which instrument and which transfer caused it.
+session open. Every command is timed and reported on its own line, so a stall
+says which transfer caused it rather than only which instrument.
 
-The 2182 probe sets channel 1 to temperature and the 182 probe configures DC
-volts, i.e. what the GUI does on connect. Neither saves anything to the
-instrument's power-on setup.
+The Keithley 182 is tried under three configurations, since the one the GUI uses
+is in question: a free-running series at a half-second interval, the same at the
+0.01 s minimum, and one reading per talk. Each starts from a device clear, so an
+earlier stall does not decide the next result.
+
+Nothing here is saved to either instrument's power-on setup.
 """
 
 import sys
@@ -23,15 +26,74 @@ import pyvisa
 NANOVOLTMETER = "GPIB0::7::INSTR"  # Keithley 2182A, sensor thermocouple
 VOLTMETER = "GPIB0::8::INSTR"  # Keithley 182, sensor potential
 
-TIMEOUT_MS = 3000
+IDENTIFY_TIMEOUT_MS = 3000
+METER_TIMEOUT_MS = 10000
+
+# What the GUI sends the 182, as (command, what it does). The trigger interval
+# and mode are appended per scenario.
+SETUP_182 = (
+    ("L1X", "recall factory defaults"),
+    ("R0X", "auto-range"),
+    ("B1X", "6.5-digit resolution"),
+    ("S2X", "100 ms integration"),
+    ("N1X", "filters on"),
+    ("P2X", "medium digital filter"),
+    ("Z0X", "reading relative off"),
+    ("F0X", "readings from the A/D"),
+    ("G0X", "reading only, no prefix"),
+)
+
+SCENARIOS_182 = (
+    (
+        "free-running, 0.5 s interval (what the GUI now sends)",
+        (("Q500X", "trigger interval 500 ms"), ("T0X", "multiple on talk")),
+        True,
+    ),
+    (
+        "free-running, 0.01 s interval (what the GUI sent before)",
+        (("Q10X", "trigger interval 10 ms"), ("T0X", "multiple on talk")),
+        True,
+    ),
+    (
+        "one reading per talk, no interval set",
+        (("T1X", "one-shot on talk"),),
+        False,
+    ),
+)
 
 
-def report(step, result=None, error=None):
-    """Print one step's outcome."""
+def report(step, result=None, error=None, seconds=None):
+    """Print one step's outcome, with how long it took."""
+    timing = "" if seconds is None else "[{:6.0f} ms] ".format(seconds * 1000)
     if error is None:
-        print("    ok    {:<22} {}".format(step, "" if result is None else result))
+        print(
+            "    ok    {}{:<34} {}".format(
+                timing, step, "" if result is None else result
+            )
+        )
     else:
-        print("    FAIL  {:<22} {}: {}".format(step, type(error).__name__, error))
+        print(
+            "    FAIL  {}{:<34} {}: {}".format(
+                timing, step, type(error).__name__, error
+            )
+        )
+
+
+def write_only(meter, command):
+    """Write one command, returning nothing so its report line stays clean."""
+    meter.write(command)
+
+
+def timed(step, call):
+    """Run one transfer, reporting its result or its error. Returns success."""
+    start = time.monotonic()
+    try:
+        result = call()
+    except Exception as e:
+        report(step, error=e, seconds=time.monotonic() - start)
+        return False
+    report(step, result, seconds=time.monotonic() - start)
+    return True
 
 
 def list_resources(rm):
@@ -66,8 +128,8 @@ def identify(rm, resources):
             continue
         instrument = None
         try:
-            instrument = rm.open_resource(resource)
-            instrument.timeout = TIMEOUT_MS
+            instrument = rm.open_resource(resource, read_termination="\n")
+            instrument.timeout = IDENTIFY_TIMEOUT_MS
             print("    {:<20} {}".format(resource, instrument.query("*IDN?").strip()))
         except Exception as e:
             print(
@@ -87,27 +149,31 @@ def probe_2182(rm, resource=NANOVOLTMETER):
     print("Keithley 2182 on {}:".format(resource))
     meter = None
     try:
-        meter = rm.open_resource(resource)
-        meter.timeout = TIMEOUT_MS
+        # PyMeasure's class defaults to a CR terminator, but the 2182 ends its
+        # replies with LF: the mismatch is what warns about termination
+        # characters on every read
+        meter = rm.open_resource(resource, read_termination="\n")
+        meter.timeout = METER_TIMEOUT_MS
         report("open session")
     except Exception as e:
         report("open session", error=e)
         return
     try:
-        report("*IDN?", meter.query("*IDN?").strip())
-        meter.write("*CLS")
-        report("*CLS")
-        meter.write("*RST")
+        timed("*IDN?", lambda: meter.query("*IDN?").strip())
+        timed("*CLS", lambda: write_only(meter, "*CLS"))
+        timed("*RST", lambda: write_only(meter, "*RST"))
         time.sleep(0.5)
-        report("*RST")
-        meter.write(":SENS:TEMP:TC S")
-        report("thermocouple type S")
-        meter.write(":SENS:CHAN 1;:SENS:FUNC 'TEMP'")
-        report("channel 1 temperature")
-        report("reading", "{} degC".format(meter.query(":READ?").strip()))
-        report("error queue", meter.query(":SYST:ERR?").strip())
-    except Exception as e:
-        report("transfer", error=e)
+        timed(":SENS:TEMP:TC S", lambda: write_only(meter, ":SENS:TEMP:TC S"))
+        timed(
+            "channel 1 temperature",
+            lambda: write_only(meter, ":SENS:CHAN 1;:SENS:FUNC 'TEMP'"),
+        )
+        for i in range(3):
+            timed(
+                "reading {}".format(i + 1),
+                lambda: "{} degC".format(meter.query(":READ?").strip()),
+            )
+        timed("error queue", lambda: meter.query(":SYST:ERR?").strip())
     finally:
         try:
             meter.close()
@@ -116,36 +182,49 @@ def probe_2182(rm, resource=NANOVOLTMETER):
     print()
 
 
-def probe_182(rm, resource=VOLTMETER):
-    """Configure the Keithley 182 for DC volts and read it.
+def probe_182_scenario(meter, label, trigger_commands, interval_set):
+    """Configure the 182 one way and try to read it three times."""
+    print("  {}:".format(label))
+    if not timed("device clear", lambda: meter.clear()):
+        return
+    for command, meaning in SETUP_182 + tuple(trigger_commands):
+        if not timed(
+            "{:<6} {}".format(command, meaning),
+            lambda c=command: write_only(meter, c),
+        ):
+            print("    stopped: the command above did not go through\n")
+            return
+    # A multiple trigger mode needs one stimulus before it starts converting
+    if interval_set and not timed(
+        "H0X    trigger", lambda: write_only(meter, "H0X")
+    ):
+        return
+    for i in range(3):
+        if not timed("read {}".format(i + 1), lambda: meter.read().strip()):
+            print("    stopped: no reading came back\n")
+            return
+    print()
 
-    Uses the device-dependent commands the driver sends: auto-range, 100 ms
-    integration, filters on with a medium digital response, reading relative
-    off, readings from the A/D converter with a prefix, and multiple on talk.
-    """
+
+def probe_182(rm, resource=VOLTMETER):
+    """Try the Keithley 182 under each trigger configuration in turn."""
     print("Keithley 182 on {}:".format(resource))
     meter = None
     try:
-        meter = rm.open_resource(resource, read_termination="\n")
-        meter.timeout = TIMEOUT_MS
+        # No terminator: a GPIB message ends on EOI, which the 182 asserts with
+        # its last character, and the CR LF it adds is stripped when parsed
+        meter = rm.open_resource(resource)
+        meter.timeout = METER_TIMEOUT_MS
         report("open session")
     except Exception as e:
         report("open session", error=e)
         return
     try:
-        meter.write("U2X")
-        report("firmware revision", meter.read().strip())
-        meter.write("R0S2N1P2Z0F0G1T0X")
-        time.sleep(0.5)
-        report("configure DC volts")
-        meter.write("H0X")
-        report("trigger")
-        report("reading", meter.read().strip())
-        report("second reading", meter.read().strip())
-        meter.write("U1X")
-        report("error conditions", meter.read().strip())
-    except Exception as e:
-        report("transfer", error=e)
+        timed("U2X    firmware revision", lambda: write_only(meter, "U2X"))
+        timed("read revision", lambda: meter.read().strip())
+        print()
+        for label, trigger_commands, interval_set in SCENARIOS_182:
+            probe_182_scenario(meter, label, trigger_commands, interval_set)
     finally:
         try:
             meter.close()

@@ -317,8 +317,11 @@ class Keithley2182And182(NupylabInstrument):
         with self.lock:
             self._close_meters()
             try:
+                # PyMeasure's class asks for a CR terminator, but the 2182
+                # ends its replies with LF, so every read would warn that the
+                # string does not end with the termination characters
                 self.keithley2182 = keithley2182.Keithley2182(
-                    self._nanovoltmeter_port
+                    self._nanovoltmeter_port, read_termination="\n"
                 )
                 self.keithley2182.clear()
                 self.keithley2182.reset()
