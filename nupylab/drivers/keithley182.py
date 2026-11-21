@@ -379,6 +379,7 @@ class Keithley182(Instrument):
         resolution: float = 6.5,
         integration_period: Union[str, float] = "line cycle",
         digital_filter: str = "medium",
+        trigger_interval: float = 0.01,
         relative: bool = False,
     ) -> None:
         """Configure the voltmeter for DC voltage measurements.
@@ -395,6 +396,13 @@ class Keithley182(Instrument):
             integration_period: see :attr:`integration_period`. Pass 0.1 for the
                 quietest readings.
             digital_filter: see :attr:`digital_filter`.
+            trigger_interval: interval between readings of the free-running
+                series, in seconds. The default is the shortest the instrument
+                accepts, and it silently uses the shortest interval its
+                integration period and filtering allow. Leaving this unset
+                would keep whatever interval the power-on setup holds, and a
+                long one starves reads: the 182 holds the bus off until its
+                next reading is ready, so a read then fails with a timeout.
             relative: whether to leave reading relative (zero) enabled. Disabled
                 by default so that absolute potentials are reported.
         """
@@ -407,6 +415,7 @@ class Keithley182(Instrument):
             self.disable_relative()
         self.reading_source = "adc"
         self.reading_format = "reading"
+        self.set_trigger_interval(trigger_interval)
         self.trigger_mode = "multiple on talk"
         # A multiple trigger mode needs one trigger stimulus to start processing
         self.trigger()

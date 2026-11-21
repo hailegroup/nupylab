@@ -479,13 +479,21 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         # Bottom: plots and log side by side
         bottom_layout = QtWidgets.QHBoxLayout()
 
-        if any(hasattr(p, 'live_plot') for p in self._panels):
+        # A panel offers one plot as `live_plot`, titled by `plot_title`, or
+        # several as `live_plots`, a mapping of tab title to plot widget.
+        if any(
+            hasattr(p, 'live_plot') or hasattr(p, 'live_plots')
+            for p in self._panels
+        ):
             plot_group = QtWidgets.QGroupBox("Live Data")
             plot_layout = QtWidgets.QVBoxLayout()
             self._plot_tabs = QtWidgets.QTabWidget()
             self._plot_tabs.setMinimumHeight(250)
             for panel in self._panels:
-                if hasattr(panel, 'live_plot'):
+                if hasattr(panel, 'live_plots'):
+                    for title, plot in panel.live_plots.items():
+                        self._plot_tabs.addTab(plot, title)
+                elif hasattr(panel, 'live_plot'):
                     self._plot_tabs.addTab(
                         panel.live_plot,
                         getattr(panel, 'plot_title', 'Plot')

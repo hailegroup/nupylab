@@ -370,10 +370,25 @@ class Keithley2182And182(NupylabInstrument):
         Returns:
             DataTuples in the order of sensor temperature in deg C, pO2 in atm,
             and sensor voltage in V.
+
+        Raises:
+            NupylabError: if either meter cannot be read, naming which one.
         """
+        temperature: float
+        voltage: float
         with self.lock:
-            temperature: float = self.keithley2182.temperature
-            voltage: float = self.keithley182.voltage
+            try:
+                temperature = self.keithley2182.temperature
+            except Exception as e:
+                raise NupylabError(
+                    f"Keithley 2182 on {self._nanovoltmeter_port}: {e}"
+                ) from e
+            try:
+                voltage = self.keithley182.voltage
+            except Exception as e:
+                raise NupylabError(
+                    f"Keithley 182 on {self._voltmeter_port}: {e}"
+                ) from e
         if self._invert_voltage:
             voltage = -voltage
         po2: float = self.calculate_po2(voltage, temperature)
@@ -431,10 +446,21 @@ class Keithley2182And182(NupylabInstrument):
                 self._last_error = None
                 # Last status shown, so a steady state is not rewritten
                 self._status = None
-                self.live_plot = LivePlotWidget(
-                    "pO2", "pO2 (atm)", n_traces=1
-                )
+                # One tab each, since pO2 spans decades while the sensor
+                # temperature and potential do not share a scale with it
+                self.live_plot = LivePlotWidget("pO2", "pO2 (atm)", n_traces=1)
                 self.live_plot.set_log_y(True)
+                self.temp_plot = LivePlotWidget(
+                    "pO2 Sensor Temperature", "Temperature (°C)", n_traces=1
+                )
+                self.voltage_plot = LivePlotWidget(
+                    "pO2 Sensor Voltage", "Sensor Voltage (mV)", n_traces=1
+                )
+                self.live_plots = {
+                    "pO2": self.live_plot,
+                    "pO2 Sensor T": self.temp_plot,
+                    "pO2 Sensor V": self.voltage_plot,
+                }
                 self._setup_ui()
                 self.timer = QtCore.QTimer()
                 self.timer.timeout.connect(self.update_readings)
@@ -556,7 +582,8 @@ class Keithley2182And182(NupylabInstrument):
                     self.status_label.setText("Status: Connected")
                     self._status = "Connected"
                     self._last_error = None
-                    self.live_plot.clear()
+                    for plot in self.live_plots.values():
+                        plot.clear()
                     self.timer.start(self.READ_INTERVAL_MS)
                     _control_log.info(
                         "pO2 sensor connected: Keithley 2182 on %s, "
@@ -606,6 +633,10 @@ class Keithley2182And182(NupylabInstrument):
                     # A log axis cannot show a non-positive or non-finite point
                     if math.isfinite(po2) and po2 > 0:
                         self.live_plot.add_point(po2)
+                    if math.isfinite(temperature):
+                        self.temp_plot.add_point(temperature)
+                    if math.isfinite(voltage):
+                        self.voltage_plot.add_point(voltage * 1e3)
                     self.data_recorded.emit([temperature, po2, voltage])
                     self._last_error = None
                     if status != self._status:
