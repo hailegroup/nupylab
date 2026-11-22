@@ -338,7 +338,13 @@ class Biologic(NupylabInstrument):
     def control_widget(self, abort_callback=None):
         """Return a Qt control panel for this instrument."""
         from pymeasure.display.Qt import QtWidgets, QtCore
-        from nupylab.utilities.instrument_control import LivePlotWidget
+        from nupylab.utilities.instrument_control import (
+            CURRENT_UNITS,
+            FREQUENCY_UNITS,
+            POTENTIAL_UNITS,
+            LivePlotWidget,
+            UnitEntry,
+        )
 
         instrument = self
 
@@ -424,38 +430,32 @@ class Biologic(NupylabInstrument):
                 self.technique.currentTextChanged.connect(self._on_technique_changed)
                 layout.addRow("Technique:", self.technique)
 
-                self.initial_step = QtWidgets.QDoubleSpinBox()
-                self.initial_step.setRange(-10, 10)
-                self.initial_step.setDecimals(4)
-                self.initial_step.setSuffix(" V")
-                self.initial_step.setValue(0)
+                # Every value is held in the unit the instrument is given it
+                # in, whichever unit it is read in on screen: volts, hertz,
+                # minutes and seconds, as before
+                self.initial_step = UnitEntry(
+                    POTENTIAL_UNITS, -10, 10, 0, decimals=4, default="mV"
+                )
                 layout.addRow("Initial Ewe or I:", self.initial_step)
 
-                self.duration_step = QtWidgets.QDoubleSpinBox()
-                self.duration_step.setRange(0, 9999)
-                self.duration_step.setSuffix(" min")
-                self.duration_step.setValue(0)
+                self.duration_step = UnitEntry(
+                    (("min", 1.0),), 0, 9999, 0, decimals=2
+                )
                 layout.addRow("Hold before EIS:", self.duration_step)
 
-                self.max_freq = QtWidgets.QDoubleSpinBox()
-                self.max_freq.setRange(1e-5, 7e6)
-                self.max_freq.setDecimals(5)
-                self.max_freq.setSuffix(" Hz")
-                self.max_freq.setValue(1e6)
+                self.max_freq = UnitEntry(
+                    FREQUENCY_UNITS, 1e-5, 7e6, 1e6, decimals=5, default="Hz"
+                )
                 layout.addRow("Max Frequency:", self.max_freq)
 
-                self.min_freq = QtWidgets.QDoubleSpinBox()
-                self.min_freq.setRange(1e-5, 7e6)
-                self.min_freq.setDecimals(5)
-                self.min_freq.setSuffix(" Hz")
-                self.min_freq.setValue(1)
+                self.min_freq = UnitEntry(
+                    FREQUENCY_UNITS, 1e-5, 7e6, 1, decimals=5, default="Hz"
+                )
                 layout.addRow("Min Frequency:", self.min_freq)
 
-                self.amplitude = QtWidgets.QDoubleSpinBox()
-                self.amplitude.setRange(0.0001, 1.0)
-                self.amplitude.setDecimals(4)
-                self.amplitude.setSuffix(" V")
-                self.amplitude.setValue(0.01)
+                self.amplitude = UnitEntry(
+                    POTENTIAL_UNITS, 0.0001, 1.0, 0.01, decimals=4, default="mV"
+                )
                 layout.addRow("Amplitude:", self.amplitude)
 
                 self.ppd = QtWidgets.QSpinBox()
@@ -463,10 +463,9 @@ class Biologic(NupylabInstrument):
                 self.ppd.setValue(10)
                 layout.addRow("Points per Decade:", self.ppd)
 
-                self.record_time = QtWidgets.QDoubleSpinBox()
-                self.record_time.setRange(0.01, 3600)
-                self.record_time.setSuffix(" s")
-                self.record_time.setValue(1)
+                self.record_time = UnitEntry(
+                    (("s", 1.0),), 0.01, 3600, 1, decimals=2
+                )
                 layout.addRow("Record Time:", self.record_time)
 
                 btn_layout = QtWidgets.QHBoxLayout()
@@ -491,10 +490,16 @@ class Biologic(NupylabInstrument):
                 self.setLayout(layout)
 
             def _on_technique_changed(self, technique):
-                # PEIS/SPEIS are potential controlled, GEIS/SGEIS current controlled
-                suffix = " V" if technique in ("PEIS", "SPEIS") else " A"
-                self.initial_step.setSuffix(suffix)
-                self.amplitude.setSuffix(suffix)
+                # PEIS/SPEIS are potential controlled, GEIS/SGEIS current
+                # controlled. The entry stays on the same step of the set it
+                # is given, so mV becomes mA rather than A.
+                units = (
+                    POTENTIAL_UNITS
+                    if technique in ("PEIS", "SPEIS")
+                    else CURRENT_UNITS
+                )
+                self.initial_step.set_units(units)
+                self.amplitude.set_units(units)
 
             def _abort_if_needed(self):
                 if self._abort_callback:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import os
 from datetime import datetime
 from typing import List, Callable, Optional
@@ -15,6 +16,199 @@ log.addHandler(logging.NullHandler())
 
 # Separate logger for instrument control only
 _control_log = logging.getLogger('nupylab.instrument_control')
+
+
+#: How many of a base unit one of each offered unit is, e.g. one kHz is a
+#: thousand Hz. An entry holds what it is given in the base unit, whichever
+#: of these it is read in.
+FREQUENCY_UNITS = (("MHz", 1e6), ("kHz", 1e3), ("Hz", 1.0), ("mHz", 1e-3))
+POTENTIAL_UNITS = (("V", 1.0), ("mV", 1e-3))
+CURRENT_UNITS = (("A", 1.0), ("mA", 1e-3))
+
+
+class UnitEntry(QtWidgets.QWidget):
+    """A number and the unit it is read in, drawn side by side.
+
+    The unit sits to the right of the box rather than inside it. Where a
+    quantity is worth giving in more than one unit it is a drop-down, and
+    where there is only one it is a plain label, so that every row of a panel
+    reads the same way whether or not there is a choice to make.
+
+    What the entry holds is the quantity itself, in the base unit, and that is
+    what :meth:`value` gives back: choosing a different unit redraws the same
+    quantity in it rather than changing what was asked for. The range is kept
+    in the base unit too, so it means the same under every unit, and the
+    number of decimal places follows the unit, since a frequency read in MHz
+    needs places that the same frequency read in mHz does not.
+    """
+
+    #: Fewest and most decimal places to draw a value with, whatever unit it
+    #: is read in: enough to be worth typing, few enough to read at a glance.
+    MIN_DECIMALS = 2
+    MAX_DECIMALS = 6
+
+    #: Emitted when the number or the unit changes, with the value in the
+    #: base unit.
+    value_changed = QtCore.Signal(float)
+
+    def __init__(
+        self,
+        units,
+        minimum: float,
+        maximum: float,
+        value: float = 0.0,
+        decimals: int = 4,
+        default: Optional[str] = None,
+        parent=None,
+    ) -> None:
+        """Build the entry.
+
+        Args:
+            units: the units on offer, as `(name, size in base units)` pairs.
+                One pair gives a label rather than a drop-down.
+            minimum: least value the entry takes, in the base unit.
+            maximum: most it takes, in the base unit.
+            value: what it opens holding, in the base unit.
+            decimals: decimal places to draw the base unit with. Another unit
+                is given the places that match it, within `MIN_DECIMALS` and
+                `MAX_DECIMALS`.
+            default: name of the unit to open on. Defaults to the first.
+            parent: parent widget.
+        """
+        super().__init__(parent)
+        self._units = tuple(units)
+        self._minimum = float(minimum)
+        self._maximum = float(maximum)
+        self._decimals = int(decimals)
+        self._value = float(value)
+        self._factor = 1.0
+        # Set while the entry is redrawing itself, so that the boxes changing
+        # under it are not taken for the user changing what was asked for
+        self._redrawing = False
+
+        # Keyboard tracking is left as a plain spin box has it, so that a
+        # value typed and not entered is still the value when Run is pressed
+        self.spinbox = QtWidgets.QDoubleSpinBox()
+        self.spinbox.valueChanged.connect(self._on_number_changed)
+
+        if len(self._units) > 1:
+            self.unit = QtWidgets.QComboBox()
+            self.unit.setSizeAdjustPolicy(
+                QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents
+            )
+            self.unit.currentIndexChanged.connect(self._on_unit_changed)
+        else:
+            self.unit = QtWidgets.QLabel()
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self.spinbox, 1)
+        layout.addWidget(self.unit, 0)
+
+        self.set_units(self._units, default)
+
+    # What unit the number is read in #
+
+    def set_units(self, units, default: Optional[str] = None) -> None:
+        """Offer a different set of units, keeping the quantity as it stands.
+
+        A panel whose technique decides whether an entry is a potential or a
+        current swaps one set for the other this way. Where the new set is as
+        long as the old one and no default is named, the entry stays on the
+        unit at the same place in it, so a user reading in mV goes on reading
+        in mA rather than being moved back to A.
+
+        Args:
+            units: the units on offer, as `(name, size in base units)` pairs.
+            default: name of the unit to show. Defaults to the one at the
+                place the current unit holds, or the first.
+        """
+        previous = self.unit.currentIndex() if self._is_choice else 0
+        self._units = tuple(units)
+        index = previous if previous < len(self._units) else 0
+        if default is not None:
+            for i, (name, _) in enumerate(self._units):
+                if name == default:
+                    index = i
+                    break
+        if self._is_choice:
+            self._redrawing = True
+            try:
+                self.unit.clear()
+                self.unit.addItems([name for name, _ in self._units])
+                self.unit.setCurrentIndex(index)
+            finally:
+                self._redrawing = False
+        else:
+            self.unit.setText(self._units[index][0])
+        self._redraw()
+
+    @property
+    def _is_choice(self) -> bool:
+        """Whether the unit is chosen from a drop-down rather than fixed."""
+        return isinstance(self.unit, QtWidgets.QComboBox)
+
+    @property
+    def unit_name(self) -> str:
+        """Name of the unit the entry is being read in."""
+        return self._units[self._index][0]
+
+    @property
+    def _index(self) -> int:
+        """Which unit of the set is in use."""
+        if not self._is_choice:
+            return 0
+        return max(self.unit.currentIndex(), 0)
+
+    def _redraw(self) -> None:
+        """Draw the quantity in the unit now chosen."""
+        _, factor = self._units[self._index]
+        # A unit larger than the base needs the decimal places the base does
+        # not, and a smaller one needs fewer
+        decimals = self._decimals + int(round(math.log10(factor)))
+        decimals = max(self.MIN_DECIMALS, min(self.MAX_DECIMALS, decimals))
+        smallest = 10.0 ** -decimals
+        low = self._minimum / factor
+        high = self._maximum / factor
+        # A range that starts above zero must go on doing so once it is drawn
+        # in a unit too large to show how little it starts at
+        if low > 0:
+            low = max(low, smallest)
+        self._redrawing = True
+        try:
+            self.spinbox.setDecimals(decimals)
+            self.spinbox.setRange(low, high)
+            self.spinbox.setValue(self._value / factor)
+        finally:
+            self._redrawing = False
+        self._factor = factor
+        # What the box can show is what the entry holds, so that the quantity
+        # and the number drawn never part company
+        self._value = self.spinbox.value() * factor
+
+    def _on_unit_changed(self, *_) -> None:
+        if self._redrawing:
+            return
+        self._redraw()
+        self.value_changed.emit(self._value)
+
+    def _on_number_changed(self, *_) -> None:
+        if self._redrawing:
+            return
+        self._value = self.spinbox.value() * self._factor
+        self.value_changed.emit(self._value)
+
+    # The interface a plain spin box offers #
+
+    def value(self) -> float:
+        """Get what the entry holds, in the base unit."""
+        return self._value
+
+    def setValue(self, value) -> None:
+        """Set what the entry holds, in the base unit."""
+        self._value = float(value)
+        self._redraw()
 
 
 class QtLogHandler(logging.Handler):
