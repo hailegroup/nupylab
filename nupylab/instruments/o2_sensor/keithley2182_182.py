@@ -439,6 +439,10 @@ class Keithley2182And182(NupylabInstrument):
         self.keithley2182: Optional[keithley2182.Keithley2182] = None
         self.keithley182: Optional[keithley182.Keithley182] = None
         self._panel = None
+        # Set by the control panel, so that a disconnection from elsewhere,
+        # e.g. when an experiment is queued, reaches its button. Emitting a Qt
+        # signal is safe from any thread; touching widgets is not.
+        self._disconnected = None
         self._nanovoltmeter_port: str = nanovoltmeter_port
         self._voltmeter_port: str = voltmeter_port
         self._port = f"{nanovoltmeter_port}, {voltmeter_port}"  # For __repr__
@@ -635,6 +639,11 @@ class Keithley2182And182(NupylabInstrument):
                 pass
         with self.lock:
             self._close_meters()
+        if self._disconnected is not None:
+            try:
+                self._disconnected()
+            except Exception:
+                pass
         time.sleep(0.3)
 
     # Measurement #
@@ -730,14 +739,26 @@ class Keithley2182And182(NupylabInstrument):
                 "pO2 Sensor Voltage (V)",
             ]
             data_recorded = QtCore.Signal(list)
+            #: Emitted when the sensor is disconnected from anywhere, so that
+            #: the button says so even when the tab did not do it
+            monitoring_stopped = QtCore.Signal()
             READ_INTERVAL_MS = 2000
             NO_READING = "—"
+            START_TEXT = "Start Monitoring"
+            STOP_TEXT = "Stop Monitoring"
+            # A double click would otherwise start monitoring and stop it
+            # again; a second toggle this soon after one lands is ignored.
+            # The window is measured from the end of the previous action,
+            # since connecting blocks the event loop while it runs.
+            TOGGLE_GUARD_S = 1.0
 
             def __init__(self):
                 super().__init__("pO2 Sensor — Keithley 2182 + 182")
                 self._worker = None
                 self._abort_callback = abort_callback
                 self._last_error = None
+                self._monitoring = False
+                self._last_toggle = 0.0
                 # Last status shown, so a steady state is not rewritten
                 self._status = None
                 # One tab each, since pO2 spans decades while the sensor
@@ -758,19 +779,18 @@ class Keithley2182And182(NupylabInstrument):
                 self._setup_ui()
                 self.timer = QtCore.QTimer()
                 self.timer.timeout.connect(self.update_readings)
+                self.monitoring_stopped.connect(
+                    lambda: self._set_monitoring(False)
+                )
                 instrument._panel = self
+                instrument._disconnected = self.monitoring_stopped.emit
 
             def _setup_ui(self):
                 layout = QtWidgets.QFormLayout()
 
-                btn_layout = QtWidgets.QHBoxLayout()
-                self.connect_btn = QtWidgets.QPushButton("Connect")
-                self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
-                self.connect_btn.clicked.connect(self.connect_instrument)
-                self.disconnect_btn.clicked.connect(self.disconnect_instrument)
-                btn_layout.addWidget(self.connect_btn)
-                btn_layout.addWidget(self.disconnect_btn)
-                layout.addRow(btn_layout)
+                self.monitor_btn = QtWidgets.QPushButton(self.START_TEXT)
+                self.monitor_btn.clicked.connect(self.toggle_monitoring)
+                layout.addRow(self.monitor_btn)
 
                 # Temperature, pO2 and sensor voltage, the three live readings
                 self.temp_label = QtWidgets.QLabel(self.NO_READING)
@@ -808,12 +828,41 @@ class Keithley2182And182(NupylabInstrument):
                 if self._abort_callback:
                     self._abort_callback()
 
+            def _set_monitoring(self, monitoring):
+                """Keep the single button in step with the instrument."""
+                self._monitoring = monitoring
+                self.monitor_btn.setText(
+                    self.STOP_TEXT if monitoring else self.START_TEXT
+                )
+
+            def toggle_monitoring(self):
+                """Start reading the sensor, or stop if it already is.
+
+                Ignores a repeat click that lands within
+                :attr:`TOGGLE_GUARD_S` of the previous one finishing, so that
+                a double click cannot start monitoring and stop it again.
+                """
+                now = time.monotonic()
+                if now - self._last_toggle < self.TOGGLE_GUARD_S:
+                    _control_log.info(
+                        "Ignoring repeat click on the pO2 monitoring button"
+                    )
+                    return
+                try:
+                    if self._monitoring:
+                        self.disconnect_instrument()
+                    else:
+                        self.connect_instrument()
+                finally:
+                    self._last_toggle = time.monotonic()
+
             def connect_instrument(self):
                 self._abort_if_needed()
                 try:
                     instrument.connect()
-                    self.status_label.setText("Status: Connected")
-                    self._status = "Connected"
+                    self._set_monitoring(True)
+                    self.status_label.setText("Status: Monitoring")
+                    self._status = "Monitoring"
                     self._last_error = None
                     for plot in self.live_plots.values():
                         plot.clear()
@@ -825,6 +874,7 @@ class Keithley2182And182(NupylabInstrument):
                         instrument._voltmeter_port,
                     )
                 except Exception as e:
+                    self._set_monitoring(False)
                     self.status_label.setText(f"Status: Error — {e}")
                     self._status = None
                     _control_log.error("pO2 sensor connect failed: %s", e)
@@ -836,7 +886,8 @@ class Keithley2182And182(NupylabInstrument):
                     if self._worker and self._worker.isRunning():
                         self._worker.wait(2000)
                     instrument.disconnect()
-                    self.status_label.setText("Status: Disconnected")
+                    self._set_monitoring(False)
+                    self.status_label.setText("Status: Not monitoring")
                     self._status = None
                     self._clear_readouts()
                     _control_log.info("pO2 sensor disconnected")
@@ -862,7 +913,7 @@ class Keithley2182And182(NupylabInstrument):
                     else:
                         self.voltage_label.setText(f"{voltage*1e3:.4f} mV")
                         self.po2_label.setText(f"{po2:.4g} atm")
-                        status = "Connected"
+                        status = "Monitoring"
                     # A log axis cannot show a non-positive or non-finite point
                     if math.isfinite(po2) and po2 > 0:
                         self.live_plot.add_point(po2)
