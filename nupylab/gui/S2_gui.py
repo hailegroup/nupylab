@@ -49,10 +49,10 @@ guessed. Closing an MFC never needs a calibration.
 Each MFC records four columns, its setpoint and its flow, each in percent and
 in sccm. The sccm columns are named `cc/min`, which is the same number under a
 name PyMeasure's unit parser knows, and is what S4's ROD-4 records its flows
-under as well. The Dock Tab plots them in percent, two MFCs to a dock, MFC 1
-and MFC 3 on the left axis and MFC 2 and MFC 4 on the right, each with its
-setpoint drawn beside it in the same colour: solid for MFC 1 and MFC 3, dashed
-for their setpoints, dash-dotted for MFC 2 and MFC 4, and dotted for theirs.
+under as well. The Dock Tab plots all four in percent on one dock, a colour
+per MFC, each flow solid and its setpoint dashed in the same colour, with a
+legend naming the colours. That dock has no x and y selectors above it, since
+what it plots never changes.
 
 The solenoid valve selects between two gas mixes and is driven from the LabJack
 U12's AO1 output. It appears in the Manual Control tab only, not in queued
@@ -811,11 +811,12 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "Furnace Temperature (degC)",
         "pO2 (atm)",
         ("pO2 Sensor Temperature (degC)", "pO2 Sensor Voltage (V)"),
-        ("MFC 1 Flow (%)", "MFC 2 Flow (%)"),
-        ("MFC 3 Flow (%)", "MFC 4 Flow (%)"),
+        # Three or more columns: one dock, one axis, a colour each, and no
+        # column selectors above it
+        tuple("{} Flow (%)".format(name) for name in MFC_NAMES),
     ]
     # A measured column drawn beside what was asked for, dashed and in the
-    # same colour. The MFC docks plot percent rather than sccm, so that an
+    # same colour. The MFC dock plots percent rather than sccm, so that an
     # uncalibrated MFC still shows.
     Y_AXIS_SETPOINTS: Dict[str, str] = {
         "{} Flow (%)".format(name): "{} Setpoint (%)".format(name)

@@ -40,6 +40,20 @@ Right setpoint      dotted
 
 A dock with no setpoints keeps the two styles it has always had, solid on the
 left and dashed on the right.
+
+An entry naming three or more columns means something else again: one dock
+carrying all of them on a single axis, a color each, with no x and y
+selectors above it. That suits a set of columns that belong together and are
+never swapped for anything else, four mass flow controllers say::
+
+    Y_AXIS = [("MFC 1 Flow (%)", "MFC 2 Flow (%)",
+               "MFC 3 Flow (%)", "MFC 4 Flow (%)")]
+
+Color there means the column rather than the experiment, which is the one
+place in this module where it does, so two queued steps draw over each other
+in the same colors. The browser's checkboxes show one at a time where that
+matters. Each column still carries its setpoint, dashed and in the column's
+own color.
 """
 
 from __future__ import annotations
@@ -56,6 +70,11 @@ from pymeasure.display.widgets.plot_frame import PlotFrame
 from pymeasure.display.widgets.plot_widget import PlotWidget
 from pymeasure.experiment import Procedure
 
+try:
+    from pyqtgraph.graphicsItems.LegendItem import ItemSample
+except ImportError:  # A PyQtGraph that keeps it somewhere else
+    ItemSample = None
+
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
@@ -68,43 +87,160 @@ SETPOINT_ATTR = "nupylab_setpoint_axis"
 
 YAxisEntry = Union[str, Sequence[str]]
 
+#: Colors for the traces of a dock that plots several columns on one axis,
+#: taken in order and repeated if a dock asks for more than there are. Chosen
+#: to stay apart for the common forms of color blindness.
+TRACE_COLORS: Tuple[str, ...] = (
+    "#0072B2",  # blue
+    "#E69F00",  # orange
+    "#009E73",  # bluish green
+    "#CC79A7",  # reddish purple
+    "#56B4E9",  # sky blue
+    "#D55E00",  # vermillion
+)
+
+
+if ItemSample is not None:
+
+    class FixedLegendSample(ItemSample):
+        """Legend swatch that names a color rather than switching a curve.
+
+        A legend built from the curves themselves hides one when its entry is
+        clicked. The multi-column legend is built from samples of its own, so
+        that it reads the same however many experiments are loaded, and a
+        click on one would hide nothing but the swatch. This takes the click
+        instead.
+        """
+
+        def mouseClickEvent(self, event):
+            """Leave the swatch as it is, and let the click pass."""
+            event.ignore()
+
+else:  # pragma: no cover - only on a PyQtGraph that moved ItemSample
+    FixedLegendSample = None
+
+
+def legend_sample(item):
+    """Get what to hand a legend as the swatch for `item`.
+
+    Args:
+        item: a plot item carrying the pen the swatch should show.
+
+    Returns:
+        A sample that ignores clicks, or the item itself where this
+        PyQtGraph does not offer the class to build one from.
+    """
+    return item if FixedLegendSample is None else FixedLegendSample(item)
+
+
+def label_columns(columns: Sequence[str]) -> Tuple[List[str], str]:
+    """Split column names into a name per trace and one label for the axis.
+
+    Columns that belong on one axis are usually named alike, e.g.
+    `MFC 1 Flow (%)` through `MFC 4 Flow (%)`. What they share is what the
+    axis measures, and what is left tells the traces apart.
+
+    Args:
+        columns: the column names, in the order they are plotted.
+
+    Returns:
+        A name for each trace, and the axis label. Columns with nothing in
+        common keep their full names and the axis takes the first of them.
+    """
+    columns = list(columns)
+    if not columns:
+        return [], ""
+    if len(columns) == 1:
+        return [columns[0]], columns[0]
+    shared = columns[0]
+    for column in columns[1:]:
+        matched = 0
+        limit = min(len(shared), len(column))
+        while matched < limit and shared[-1 - matched] == column[-1 - matched]:
+            matched += 1
+        shared = shared[len(shared) - matched:] if matched else ""
+    # Only whole words are shared: `Ewe (V)` and `I (A)` have a bracket in
+    # common and nothing else, which is not an axis label
+    space = shared.find(" ")
+    shared = shared[space:] if space >= 0 else ""
+    if not shared.strip():
+        return list(columns), columns[0]
+    names = [column[: len(column) - len(shared)].strip() or column
+             for column in columns]
+    return names, shared.strip()
+
+
+def narrow_column_selectors(plot_widget, length: int = 12) -> None:
+    """Stop a dock's column selectors from setting how wide it must be.
+
+    A selector holding names as long as `pO2 Sensor Temperature (degC)` asks
+    for a width the plot itself never needs, and a row of docks is then wider
+    than the data in it. This lets them shrink, since the full name is still
+    shown when one is opened.
+
+    Args:
+        plot_widget: the dock's plot widget.
+        length: how many characters wide to leave a selector at least.
+    """
+    policy = getattr(
+        QtWidgets.QComboBox, "AdjustToMinimumContentsLengthWithIcon", None
+    )
+    for name in ("columns_x", "columns_y", "columns_y_right"):
+        combo = getattr(plot_widget, name, None)
+        if combo is None:
+            continue
+        if policy is not None:
+            combo.setSizeAdjustPolicy(policy)
+        combo.setMinimumContentsLength(length)
+        combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, combo.sizePolicy().verticalPolicy()
+        )
+
 
 def split_y_axis(
     y_axis: Sequence[YAxisEntry],
-) -> Tuple[List[str], List[Optional[str]]]:
-    """Split procedure `Y_AXIS` entries into left- and right-axis labels.
+) -> Tuple[List[str], List[Optional[str]], List[List[str]]]:
+    """Split procedure `Y_AXIS` entries into the columns each dock plots.
 
     Args:
-        y_axis: entries are either a single column name, plotted on the left axis,
-            or a two-item sequence of ``(left, right)`` column names.
+        y_axis: entries are a single column name, plotted on the left axis; a
+            two-item sequence of ``(left, right)`` column names, one per axis;
+            or three or more column names, all plotted on one axis with a
+            color each.
 
     Returns:
-        Two equal-length lists: the left-axis label of every dock, and the
-        right-axis label of every dock, `None` where a dock has no right axis.
+        Three equal-length lists: the left-axis label of every dock, the
+        right-axis label of every dock, `None` where a dock has no right axis,
+        and the further columns every dock plots beside its left-axis one,
+        empty for a dock that plots only the one.
 
     Raises:
-        ValueError: if an entry is a sequence of more than two column names.
+        ValueError: if an entry names no columns at all.
     """
     left_labels: List[str] = []
     right_labels: List[Optional[str]] = []
+    extra_labels: List[List[str]] = []
     for entry in y_axis:
         if isinstance(entry, str):
             left_labels.append(entry)
             right_labels.append(None)
+            extra_labels.append([])
             continue
         labels = list(entry)
-        if len(labels) == 1:
-            left_labels.append(labels[0])
-            right_labels.append(None)
-        elif len(labels) == 2:
-            left_labels.append(labels[0])
-            right_labels.append(labels[1])
-        else:
+        if not labels:
             raise ValueError(
-                "`Y_AXIS` entries may name at most two columns, one per y axis, "
+                "`Y_AXIS` entries must name at least one column, "
                 f"but got {entry!r}."
             )
-    return left_labels, right_labels
+        left_labels.append(labels[0])
+        if len(labels) == 2:
+            right_labels.append(labels[1])
+            extra_labels.append([])
+        else:
+            # One column, or three and more, all go on the left axis
+            right_labels.append(None)
+            extra_labels.append(labels[1:])
+    return left_labels, right_labels, extra_labels
 
 
 class SetpointPlotWidget(PlotWidget):
@@ -269,6 +405,192 @@ class SetpointPlotWidget(PlotWidget):
             self.plot_frame.y_axis,
             parent=parent,
             setpoint_labels=self.setpoint_labels,
+        )
+
+
+class MultiColumnPlotWidget(PlotWidget):
+    """Plot widget that draws several columns on one axis, a color each.
+
+    For a set of columns that belong together and are never swapped for
+    anything else. The x and y selectors are still built, so that everything
+    inherited from
+    :class:`~pymeasure.display.widgets.plot_widget.PlotWidget` keeps working,
+    but they are hidden and left out of the layout: they cannot be used, and
+    they no longer set how wide the dock has to be.
+
+    Color here means the column, not the experiment, so the color an
+    experiment was given is ignored. Two experiments therefore draw over each
+    other in the same colors, and are told apart by showing one at a time in
+    the browser.
+
+    A column named in `setpoint_labels` is drawn twice, the measurement solid
+    and its setpoint dashed, both in the column's color.
+
+    Args:
+        name: name of the widget.
+        columns: every data column, which is what the hidden selectors hold.
+        x_axis: column plotted on the x axis.
+        traced_columns: the columns to plot, in order.
+        refresh_time: seconds between plot refreshes.
+        check_status: refresh curves only while their procedure is running.
+        linewidth: width of plotted curves.
+        parent: parent widget.
+        setpoint_labels: measured column to the column holding its setpoint.
+        palette: colors to take in turn, :data:`TRACE_COLORS` by default.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        columns: Sequence[str],
+        x_axis: Optional[str] = None,
+        traced_columns: Sequence[str] = (),
+        refresh_time: float = 0.2,
+        check_status: bool = True,
+        linewidth: int = 1,
+        parent=None,
+        setpoint_labels: Optional[Dict[str, str]] = None,
+        palette: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Initialize the plot widget, then label it and name its colors."""
+        # All read by `_layout`, which the base class calls from its
+        # initializer, or by `new_curve` afterwards
+        self.traced_columns: List[str] = list(traced_columns)
+        self.setpoint_labels: Dict[str, str] = dict(setpoint_labels or {})
+        self.palette: List[str] = list(palette or TRACE_COLORS)
+        self._curves: List[ResultsCurve] = []
+        super().__init__(
+            name,
+            columns,
+            x_axis,
+            self.traced_columns[0] if self.traced_columns else None,
+            refresh_time,
+            check_status,
+            linewidth,
+            parent,
+        )
+        self._label_axis()
+        self._add_legend()
+
+    def _layout(self) -> None:
+        """Lay the dock out as the plot alone, with no selectors above it."""
+        vbox = QtWidgets.QVBoxLayout(self)
+        vbox.setSpacing(0)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.addWidget(self.plot_frame)
+        self.setLayout(vbox)
+        # Built by the base class, and still answered to by everything
+        # inherited from it, but never shown and never given room
+        for widget in (
+            self.columns_x_label,
+            self.columns_x,
+            self.columns_y_label,
+            self.columns_y,
+        ):
+            widget.hide()
+
+    def _label_axis(self) -> None:
+        """Label the y axis with whatever the columns have in common."""
+        _, axis = label_columns(self.traced_columns)
+        label, units = self.plot_frame.parse_axis(axis)
+        self.plot_frame.plot.setLabel(
+            "left", label, units=units, **PlotFrame.LABEL_STYLE
+        )
+
+    def _add_legend(self) -> None:
+        """Name each color, since the columns no longer name themselves.
+
+        The samples are items of their own rather than the curves, so that the
+        legend says the same thing however many experiments are loaded.
+        """
+        names, _ = label_columns(self.traced_columns)
+        legend = self.plot_frame.plot.addLegend(offset=(-10, 10))
+        for index, name in enumerate(names):
+            sample = pg.PlotDataItem(
+                pen=pg.mkPen(
+                    color=self.palette[index % len(self.palette)],
+                    width=self.linewidth,
+                )
+            )
+            legend.addItem(legend_sample(sample), name)
+        if any(self.setpoint_labels.get(c) for c in self.traced_columns):
+            sample = pg.PlotDataItem(
+                pen=pg.mkPen(
+                    color="#808080",
+                    width=self.linewidth,
+                    style=QtCore.Qt.PenStyle.DashLine,
+                )
+            )
+            legend.addItem(legend_sample(sample), "setpoint")
+
+    def new_curve(self, results, color=pg.intColor(0), **kwargs) -> List[ResultsCurve]:
+        """Return one curve per column, and one per setpoint, color by color.
+
+        The `color` an experiment was given is ignored, see the class
+        docstring.
+        """
+        curves: List[ResultsCurve] = []
+        for index, column in enumerate(self.traced_columns):
+            trace_color = self.palette[index % len(self.palette)]
+            for y_column, style in (
+                (column, QtCore.Qt.PenStyle.SolidLine),
+                (self.setpoint_labels.get(column), QtCore.Qt.PenStyle.DashLine),
+            ):
+                if not y_column:
+                    continue
+                curve_kwargs = dict(kwargs)
+                curve_kwargs["antialias"] = False
+                curve_kwargs["pen"] = pg.mkPen(
+                    color=trace_color, width=self.linewidth, style=style
+                )
+                curve = ResultsCurve(
+                    results,
+                    wdg=self,
+                    x=self.plot_frame.x_axis,
+                    y=y_column,
+                    **curve_kwargs,
+                )
+                curve.setSymbol(None)
+                curve.setSymbolBrush(None)
+                curves.append(curve)
+        return curves
+
+    def update_y_column(self, index: int) -> None:
+        """Ignore the hidden y selector, which would repoint every curve."""
+
+    def update_x_column(self, index: int) -> None:
+        """Ignore the hidden x selector, which would repoint every curve."""
+
+    def load(self, curve) -> None:
+        """Add `curve` to the plot, on the column it was made for."""
+        curve.x = self.plot_frame.x_axis
+        curve.update_data()
+        if curve in self._curves:
+            return
+        self.plot.addItem(curve)
+        self._curves.append(curve)
+
+    def remove(self, curve) -> None:
+        """Remove `curve` from the plot."""
+        self.plot.removeItem(curve)
+        if curve in self._curves:
+            self._curves.remove(curve)
+
+    def clear_widget(self) -> None:
+        """Remove every curve, leaving the legend as it is."""
+        super().clear_widget()
+        self._curves.clear()
+
+    def preview_widget(self, parent=None) -> "MultiColumnPlotWidget":
+        """Return a widget suitable for preview during loading."""
+        return MultiColumnPlotWidget(
+            "Plot preview",
+            self.columns,
+            self.plot_frame.x_axis,
+            self.traced_columns,
+            parent=parent,
+            setpoint_labels=self.setpoint_labels,
+            palette=self.palette,
         )
 
 
@@ -529,6 +851,10 @@ class NupylabDockWidget(DockWidget):
         y_axis_labels: left y-axis column of each dock.
         y_axis_right_labels: right y-axis column of each dock, `None` entries
             giving a dock with a single y axis. Defaults to no right axes.
+        y_axis_extra_labels: further columns each dock plots beside its
+            left-axis one, empty entries giving a dock that plots only the
+            one. A dock with any of these takes a color per column and loses
+            its selectors, see :class:`MultiColumnPlotWidget`.
         setpoint_labels: measured column to the column holding its setpoint. A
             dock opening on such a column also draws the setpoint, dashed.
         linewidth: width of plotted curves.
@@ -544,6 +870,7 @@ class NupylabDockWidget(DockWidget):
         x_axis_labels: Optional[Sequence[str]] = None,
         y_axis_labels: Optional[Sequence[str]] = None,
         y_axis_right_labels: Optional[Sequence[Optional[str]]] = None,
+        y_axis_extra_labels: Optional[Sequence[Sequence[str]]] = None,
         setpoint_labels: Optional[Dict[str, str]] = None,
         linewidth: int = 1,
         layout_path: str = "./",
@@ -553,6 +880,9 @@ class NupylabDockWidget(DockWidget):
         """Initialize the dock area, adding a right axis where one is requested."""
         # Read by `_setup_ui`, which the base class calls from its initializer.
         self.y_axis_right_labels: List[Optional[str]] = list(y_axis_right_labels or ())
+        self.y_axis_extra_labels: List[List[str]] = [
+            list(entry) for entry in (y_axis_extra_labels or ())
+        ]
         self.setpoint_labels: Dict[str, str] = dict(setpoint_labels or {})
         super().__init__(
             name,
@@ -570,12 +900,18 @@ class NupylabDockWidget(DockWidget):
             return self.y_axis_right_labels[index]
         return None
 
+    def _extra_labels(self, index: int) -> List[str]:
+        if index < len(self.y_axis_extra_labels):
+            return self.y_axis_extra_labels[index]
+        return []
+
     def _setup_ui(self) -> None:
         for i in range(self.num_plots):
             # Repeat the last entry of a list shorter than the number of docks.
             x_label = self.x_axis_labels[min(i, len(self.x_axis_labels) - 1)]
             y_label = self.y_axis_labels[min(i, len(self.y_axis_labels) - 1)]
             y_right_label = self._right_label(i)
+            extra_labels = self._extra_labels(i)
             wants_setpoints = bool(
                 self.setpoint_labels.get(y_label)
                 or (y_right_label and self.setpoint_labels.get(y_right_label))
@@ -583,8 +919,17 @@ class NupylabDockWidget(DockWidget):
 
             dock = Dock("Dock " + str(i + 1), closable=False, size=(200, 50))
             self.dock_area.addDock(dock)
-            if y_right_label is not None:
-                plot_widget: PlotWidget = DualAxisPlotWidget(
+            if extra_labels:
+                plot_widget: PlotWidget = MultiColumnPlotWidget(
+                    "Results Graph",
+                    self.procedure_class.DATA_COLUMNS,
+                    x_label,
+                    [y_label] + extra_labels,
+                    linewidth=self.linewidth,
+                    setpoint_labels=self.setpoint_labels,
+                )
+            elif y_right_label is not None:
+                plot_widget = DualAxisPlotWidget(
                     "Results Graph",
                     self.procedure_class.DATA_COLUMNS,
                     x_label,
@@ -612,6 +957,7 @@ class NupylabDockWidget(DockWidget):
                     y_label,
                     linewidth=self.linewidth,
                 )
+            narrow_column_selectors(plot_widget)
             self.plot_frames.append(plot_widget)
             plot_widget.plot_frame.plot_widget.scene().contextMenu.append(
                 self.save_dock_action()
@@ -639,6 +985,8 @@ class NupylabDockWidget(DockWidget):
         """Remove the curves of every dock."""
         for plot_widget in self.plot_frames:
             plot_widget.plot.clear()
+            if isinstance(plot_widget, MultiColumnPlotWidget):
+                plot_widget._curves.clear()
             if isinstance(plot_widget, SetpointPlotWidget):
                 plot_widget._setpoint_curves.clear()
             if isinstance(plot_widget, DualAxisPlotWidget):

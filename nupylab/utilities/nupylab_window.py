@@ -35,6 +35,7 @@ log.addHandler(logging.NullHandler())
 @contextlib.contextmanager
 def _dock_widget_class(
     y_axis_right_labels: Sequence[Optional[str]],
+    y_axis_extra_labels: Optional[Sequence[Sequence[str]]] = None,
     setpoint_labels: Optional[Dict[str, str]] = None,
 ) -> Iterator[None]:
     """Build the Dock Tab with right-hand y axes for the duration of the context.
@@ -47,6 +48,8 @@ def _dock_widget_class(
     Args:
         y_axis_right_labels: right y-axis column of each dock, `None` entries
             giving a dock with a single y axis.
+        y_axis_extra_labels: further columns each dock plots beside its
+            left-axis one, which gives that dock a color per column.
         setpoint_labels: measured column to the column holding its setpoint, so
             that a dock opening on such a column draws the setpoint dashed
             beside it.
@@ -55,6 +58,7 @@ def _dock_widget_class(
     managed_dock_window.DockWidget = functools.partial(
         NupylabDockWidget,
         y_axis_right_labels=y_axis_right_labels,
+        y_axis_extra_labels=[list(entry) for entry in (y_axis_extra_labels or ())],
         setpoint_labels=dict(setpoint_labels or {}),
     )
     try:
@@ -69,6 +73,8 @@ class NupylabWindow(ManagedDockWindow):
     Each entry of the procedure class attribute `Y_AXIS` gets its own dock. An
     entry naming two columns, e.g. ``("Ewe (V)", "I (A)")``, gives one dock whose
     plot carries the first column on its left y axis and the second on its right.
+    An entry naming three or more gives one dock carrying all of them on one
+    axis, a color each, with no column selectors above it.
 
     A procedure may also define `Y_AXIS_SETPOINTS`, a mapping of a measured
     column to the column holding what was asked for. A dock that opens on such
@@ -110,11 +116,15 @@ class NupylabWindow(ManagedDockWindow):
             kwargs.setdefault("y_axis", procedure_class.Y_AXIS)
         # A two-item `Y_AXIS` entry asks for one dock with left and right y axes
         y_axis_right_labels: List[Optional[str]] = []
+        y_axis_extra_labels: List[List[str]] = []
         if isinstance(kwargs.get("y_axis"), (list, tuple)):
-            y_axis_labels, right_labels = split_y_axis(kwargs["y_axis"])
-            if any(right_labels):
+            y_axis_labels, right_labels, extra_labels = split_y_axis(
+                kwargs["y_axis"]
+            )
+            if any(right_labels) or any(extra_labels):
                 kwargs["y_axis"] = y_axis_labels
                 y_axis_right_labels = right_labels
+                y_axis_extra_labels = extra_labels
         # Columns a dock should draw the setpoint of, dashed, see
         # :mod:`nupylab.utilities.dock_widgets`
         setpoint_labels: Dict[str, str] = dict(
@@ -143,9 +153,11 @@ class NupylabWindow(ManagedDockWindow):
                         if name in name_to_label}
 
         with contextlib.ExitStack() as stack:
-            if y_axis_right_labels or setpoint_labels:
+            if y_axis_right_labels or y_axis_extra_labels or setpoint_labels:
                 stack.enter_context(
-                    _dock_widget_class(y_axis_right_labels, setpoint_labels)
+                    _dock_widget_class(
+                        y_axis_right_labels, y_axis_extra_labels, setpoint_labels
+                    )
                 )
             super().__init__(
                 procedure_class,
@@ -159,6 +171,9 @@ class NupylabWindow(ManagedDockWindow):
         # expect them
         self.browser_widget.browser.measured_quantities.update(
             label for label in y_axis_right_labels if label
+        )
+        self.browser_widget.browser.measured_quantities.update(
+            label for entry in y_axis_extra_labels for label in entry
         )
         self.browser_widget.browser.measured_quantities.update(
             label for label in setpoint_labels.values() if label
