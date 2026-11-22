@@ -1,9 +1,14 @@
-"""Dialogs for choosing a pO2 sensor calibration, or adding a new one.
+"""Choosing a pO2 sensor calibration, from the GUI's inputs panel.
 
-The pO2 control panel opens :func:`choose_calibration`, which lists every
-calibration in the station's calibration file, newest first, and lets the user
-take one into use or record a new one. A calibration added here is appended to
-that file, so it is there the next time the GUI starts.
+:class:`CalibrationInput` is the inputs panel entry: it shows the coefficients
+and date of the calibration in use, says in red when there is none or when the
+one in use has gone stale, and opens :func:`choose_calibration` to change it.
+That lists every calibration in the station's calibration file, newest first,
+to take one into use, record a new one, or point at a different file. A
+calibration added here is appended to the file, so it is there next time.
+
+One selection serves the whole GUI, so a queued experiment and the Manual
+Control tab measure pO2 the same way.
 
 Kept apart from the instrument module so that importing the instrument does not
 pull in Qt.
@@ -18,14 +23,18 @@ from typing import List, Optional, Sequence
 from pymeasure.display.Qt import QtCore, QtWidgets
 
 import os
-import shutil
+
+from pymeasure.display.inputs import Input
 
 from nupylab.instruments.o2_sensor.keithley2182_182 import (
     CALIBRATION_FILE,
+    CALIBRATION_WARNING_DAYS,
     PO2Calibration,
     append_calibration,
-    create_calibration_file,
+    decode_selection,
+    encode_selection,
     load_calibrations,
+    load_selection,
 )
 
 log = logging.getLogger(__name__)
@@ -209,12 +218,15 @@ class SelectCalibrationDialog(QtWidgets.QDialog):
         button_layout = QtWidgets.QHBoxLayout()
         self.add_btn = QtWidgets.QPushButton("Add New Calibration...")
         self.add_btn.clicked.connect(self._on_add)
+        self.open_btn = QtWidgets.QPushButton("Open Another File...")
+        self.open_btn.clicked.connect(self._on_open)
         self.use_btn = QtWidgets.QPushButton("Use Selected")
         self.use_btn.setDefault(True)
         self.use_btn.clicked.connect(self._on_use)
         self.cancel_btn = QtWidgets.QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.add_btn)
+        button_layout.addWidget(self.open_btn)
         button_layout.addStretch()
         button_layout.addWidget(self.use_btn)
         button_layout.addWidget(self.cancel_btn)
@@ -226,6 +238,24 @@ class SelectCalibrationDialog(QtWidgets.QDialog):
     def chosen(self) -> Optional[PO2Calibration]:
         """Get the calibration the user took into use, if they did."""
         return self._chosen
+
+    @property
+    def path(self) -> str:
+        """Get the calibration file the dialog ended on."""
+        return self._path
+
+    def _on_open(self) -> None:
+        """Point the dialog at a different calibration file."""
+        chosen, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select pO2 Calibration File",
+            os.path.dirname(self._path) or os.getcwd(),
+            "Calibration files (*.csv);;All files (*)",
+        )
+        if not chosen:
+            return
+        self._path = chosen
+        self.refresh()
 
     def refresh(self, select: Optional[PO2Calibration] = None) -> None:
         """Re-read the calibration file and fill the table, newest first.
@@ -312,96 +342,9 @@ class SelectCalibrationDialog(QtWidgets.QDialog):
         self.refresh(select=calibration)
 
 
-def ensure_calibration_file(
-    path: str = CALIBRATION_FILE, parent=None
-) -> Optional[str]:
-    """Make sure the station has a calibration file, asking for one if not.
-
-    Called when the GUI starts. A station that already has its calibrations
-    is not asked anything. One that does not, because it has just been set up
-    or because the file is not kept in version control, is offered the chance
-    to point at calibrations taken elsewhere, which are then copied into
-    place; closing that dialog starts an empty file instead.
-
-    A file that is there but cannot be read is never written over, since it
-    may hold calibrations that only need a correction by hand.
-
-    Args:
-        path: where the station's calibration file belongs.
-        parent: parent widget.
-
-    Returns:
-        The path, or `None` if there is no usable file there and the user
-        did not supply one, which leaves the sensor uncalibrated.
-    """
-    problem = ""
-    if os.path.exists(path):
-        try:
-            load_calibrations(path)
-            return path
-        except Exception as e:
-            problem = str(e)
-
-    if problem:
-        message = (
-            "{}\n\nSelect a calibration file to use instead, or close this to "
-            "carry on without one. The file above is left as it is.".format(
-                problem
-            )
-        )
-    else:
-        message = (
-            "This station has no pO2 calibration file yet.\n\nSelect "
-            "calibrations taken elsewhere to copy into place, or close this "
-            "to start an empty file at\n{}".format(path)
-        )
-    QtWidgets.QMessageBox.information(parent, "pO2 Calibrations", message)
-    chosen, _ = QtWidgets.QFileDialog.getOpenFileName(
-        parent,
-        "Select pO2 Calibration File",
-        os.path.dirname(path),
-        "Calibration files (*.csv);;All files (*)",
-    )
-
-    if chosen:
-        try:
-            load_calibrations(chosen)
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(
-                parent,
-                "pO2 Calibrations",
-                "That file cannot be read as calibrations:\n\n{}".format(e),
-            )
-            return None
-        if os.path.abspath(chosen) != os.path.abspath(path):
-            try:
-                shutil.copyfile(chosen, path)
-            except OSError as e:
-                QtWidgets.QMessageBox.warning(
-                    parent,
-                    "pO2 Calibrations",
-                    "Could not copy that file to {}:\n\n{}".format(path, e),
-                )
-                return chosen  # Usable where it is, just not copied
-            log.info("Copied pO2 calibrations from %s to %s", chosen, path)
-        return path
-
-    if problem:
-        return None  # Leave an unreadable file alone rather than replace it
-    try:
-        return create_calibration_file(path)
-    except Exception as e:
-        QtWidgets.QMessageBox.warning(
-            parent,
-            "pO2 Calibrations",
-            "Could not start a calibration file:\n\n{}".format(e),
-        )
-        return None
-
-
 def choose_calibration(
     path: str = CALIBRATION_FILE, parent=None
-) -> Optional[PO2Calibration]:
+) -> Optional[str]:
     """Open the calibration list, and return whichever one the user takes.
 
     Args:
@@ -409,11 +352,141 @@ def choose_calibration(
         parent: parent widget.
 
     Returns:
-        The calibration to use, or `None` if the user cancelled. A calibration
-        the user adds is written to the file whether or not they then take it
-        into use.
+        The selection, as :func:`encode_selection` writes it, naming both the
+        file and the calibration taken from it, or `None` if the user
+        cancelled. A calibration the user adds is written to the file whether
+        or not they then take it into use.
     """
     dialog = SelectCalibrationDialog(path, parent)
-    if dialog.exec():
-        return dialog.chosen
+    if dialog.exec() and dialog.chosen is not None:
+        return encode_selection(dialog.path, dialog.chosen.date)
     return None
+
+
+class CalibrationInput(Input, QtWidgets.QWidget):
+    """Inputs panel entry for choosing the pO2 sensor calibration.
+
+    Shows the coefficients and date of the calibration in use, and opens
+    :func:`choose_calibration` to change it. Its value is the selection that
+    :func:`encode_selection` writes, so the procedure a queued experiment runs
+    reads the same calibration the panel shows.
+
+    Says in red, rather than refusing anything, when there is no calibration
+    to be had or when the one in use is more than
+    :data:`CALIBRATION_WARNING_DAYS` old: an old calibration still measures.
+    """
+
+    #: Emitted when the user takes a different calibration into use.
+    calibration_changed = QtCore.Signal()
+
+    def __init__(self, parameter, parent=None, **kwargs):
+        """Build the entry.
+
+        Args:
+            parameter: the parameter this entry sets, whose value is a
+                selection. PyMeasure passes this and nothing else.
+            parent: parent widget.
+        """
+        self._value = ""
+        self._built = False
+        super().__init__(parameter=parameter, parent=parent, **kwargs)
+        self._setup_ui()
+        self._built = True
+        self._refresh()
+
+    def _setup_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        self.select_btn = QtWidgets.QPushButton("Add/Select Calibration")
+        self.select_btn.clicked.connect(self.select_calibration)
+        layout.addWidget(self.select_btn)
+
+        self.coefficients_label = QtWidgets.QLabel()
+        self.coefficients_label.setWordWrap(True)
+        layout.addWidget(self.coefficients_label)
+
+        self.date_label = QtWidgets.QLabel()
+        self.date_label.setWordWrap(True)
+        layout.addWidget(self.date_label)
+
+        self.warning_label = QtWidgets.QLabel()
+        self.warning_label.setStyleSheet("color: red;")
+        self.warning_label.setWordWrap(True)
+        layout.addWidget(self.warning_label)
+
+        self.setLayout(layout)
+
+    # The interface PyMeasure's Input mixin expects #
+
+    def setValue(self, value) -> None:
+        """Set the selection this entry holds."""
+        self._value = "" if value is None else str(value)
+        if self._built:
+            self._refresh()
+
+    def value(self) -> str:
+        """Get the selection this entry holds."""
+        return self._value
+
+    def setSuffix(self, value) -> None:
+        """Ignore units, which a selection does not have."""
+
+    # Showing what is in use #
+
+    @property
+    def calibration(self) -> Optional[PO2Calibration]:
+        """Get the calibration in use, or `None` if there is none to be had."""
+        try:
+            return load_selection(self._value)
+        except Exception as e:
+            log.warning("Could not read the pO2 calibrations: %s", e)
+            return None
+
+    def _refresh(self) -> None:
+        """Show the calibration in use, or say why there is none."""
+        path, _ = decode_selection(self._value)
+        try:
+            calibration = load_selection(self._value)
+            problem = ""
+        except Exception as e:
+            calibration = None
+            problem = str(e)
+
+        if calibration is None:
+            self.coefficients_label.setText("")
+            self.date_label.setText("")
+            self.warning_label.setText(
+                problem
+                if problem
+                else "No calibration file found! Please select calibration!"
+            )
+            self.setToolTip(
+                "pO2 is the ideal Nernst response until a calibration is "
+                "chosen. Looked in {}".format(path or "nowhere")
+            )
+            return
+
+        self.coefficients_label.setText(
+            "a = {:.6g} V/K\nb = {:.6g} V".format(calibration.a, calibration.b)
+        )
+        self.date_label.setText("Calibrated {}".format(calibration.date_text))
+        if calibration.older_than():
+            self.warning_label.setText(
+                "Warning! It has been more than 1 year since the last "
+                "calibration"
+            )
+        else:
+            self.warning_label.setText("")
+        self.setToolTip("{}\nfrom {}".format(calibration.describe(), path))
+
+    def select_calibration(self) -> None:
+        """Open the calibrations, and take up whichever the user chooses."""
+        path, _ = decode_selection(self._value)
+        selection = choose_calibration(path or CALIBRATION_FILE, self)
+        if selection is None:
+            self._refresh()  # A calibration may have been added without use
+            return
+        self.setValue(selection)
+        self.calibration_changed.emit()

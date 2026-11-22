@@ -35,13 +35,21 @@ LabVIEW drives the same output.
 
 Every pO2 calibration the station has taken lives in one file,
 `nupylab/instruments/o2_sensor/po2_calibrations.csv`, a row per calibration of
-its date, who took it, the gas, and the coefficients `a` and `b`. The newest is
-loaded at startup and is the one a queued experiment uses. The Manual Control
-tab shows which is in use, with its date, gas and calibrator, and its
-`Add/Select Calibration` button lists them all to pick an older one or record a
-new one.
+its date, who took it, the gas, and the coefficients `a` and `b`. The inputs
+panel loads the newest at startup, shows its coefficients and date, and its
+`Add/Select Calibration` button lists them all to take an older one, record a
+new one, or point at another file. That one choice is what the Manual Control
+tab and a queued experiment both measure with. The panel says in red when the
+station has no calibration, and when the one in use is over a year old;
+neither stops an experiment running.
+
+The Keithley ports are chosen in the inputs panel too, and default to the
+addresses S2 has them at. A station that picks others has them remembered in
+`nupylab/gui/s2_settings.json`, which, like the calibrations, is the station's
+own and not kept in version control.
 """
 
+import json
 import logging
 import os
 import sys
@@ -57,7 +65,12 @@ from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216
 from nupylab.instruments.o2_sensor.keithley2182_182 import (
     Keithley2182And182 as PO2_Sensor,
 )
-from nupylab.instruments.o2_sensor.keithley2182_182 import CALIBRATION_FILE
+from nupylab.instruments.o2_sensor.keithley2182_182 import (
+    CALIBRATION_FILE,
+    encode_selection,
+    load_selection,
+)
+from nupylab.instruments.o2_sensor.po2_calibration_dialog import CalibrationInput
 from nupylab.instruments.valve.labjack_u12 import LabJackSolenoid
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
@@ -91,9 +104,57 @@ PO2_DATA_LABELS = (
     "pO2 Sensor Voltage (V)",
 )
 
-# S2's pO2 sensor is read by two GPIB meters at these addresses
+# S2's pO2 sensor is read by two GPIB meters at these addresses, which stand
+# until the station picks others, which are then remembered in its settings
 PO2_NANOVOLTMETER_PORT = "GPIB0::7::INSTR"  # Keithley 2182A, sensor thermocouple
 PO2_VOLTMETER_PORT = "GPIB0::8::INSTR"  # Keithley 182, sensor potential
+
+#: Where this station keeps what it has been set to, beside this module. Like
+#: the calibrations, it belongs to the station rather than to the source, so it
+#: is not kept in version control.
+SETTINGS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "s2_settings.json"
+)
+
+
+def load_settings(path=SETTINGS_FILE):
+    """Read this station's settings.
+
+    Args:
+        path: path to the settings file.
+
+    Returns:
+        What the file holds, or an empty dict if there is none or it cannot
+        be read. Settings are a convenience, so a broken file is worth a
+        warning rather than a failure to start.
+    """
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as settings_file:
+            settings = json.load(settings_file)
+    except (OSError, ValueError) as e:
+        log.warning("Could not read %s, using defaults: %s", path, e)
+        return {}
+    return settings if isinstance(settings, dict) else {}
+
+
+def save_settings(settings, path=SETTINGS_FILE):
+    """Write this station's settings.
+
+    Args:
+        settings: what to remember.
+        path: path to the settings file.
+    """
+    try:
+        with open(path, "w") as settings_file:
+            json.dump(settings, settings_file, indent=2, sort_keys=True)
+    except OSError as e:
+        log.warning("Could not write %s: %s", path, e)
+
+
+#: What this station was last set to, read once as the GUI is imported.
+SETTINGS = load_settings()
 
 
 def resource_choices(resources, *expected):
@@ -112,7 +173,7 @@ def resource_choices(resources, *expected):
     """
     choices = list(resources)
     for resource in expected:
-        if resource not in choices:
+        if resource and resource not in choices:
             choices.append(resource)
     return tuple(choices)
 
@@ -154,9 +215,15 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     _default_furnace = (
         "ASRL1::INSTR" if "ASRL1::INSTR" in resources else resources[0]
     )
-    # The pO2 meters sit at fixed GPIB addresses on S2
+    # The pO2 meters sit at fixed GPIB addresses on S2. A port this station
+    # was set to is offered as well, or it could not be the default below when
+    # the instrument happens to be switched off.
     po2_resources = resource_choices(
-        resources, PO2_NANOVOLTMETER_PORT, PO2_VOLTMETER_PORT
+        resources,
+        PO2_NANOVOLTMETER_PORT,
+        PO2_VOLTMETER_PORT,
+        SETTINGS.get("nanovoltmeter_port", ""),
+        SETTINGS.get("voltmeter_port", ""),
     )
 
     #Furnace parameters
@@ -190,19 +257,23 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     po2_nanovoltmeter_port: ListParameter = ListParameter(
         "Keithley 2182 Port",
         choices=po2_resources,
-        default=PO2_NANOVOLTMETER_PORT,
+        default=SETTINGS.get("nanovoltmeter_port", PO2_NANOVOLTMETER_PORT),
         ui_class=None,
     )
     po2_voltmeter_port: ListParameter = ListParameter(
         "Keithley 182 Port",
         choices=po2_resources,
-        default=PO2_VOLTMETER_PORT,
+        default=SETTINGS.get("voltmeter_port", PO2_VOLTMETER_PORT),
         ui_class=None,
     )
-    # Every calibration the station has taken lives in this one file, and a
-    # queued experiment uses the newest of them
-    po2_calibration_file: Parameter = Parameter(
-        "pO2 Calibration File", default=CALIBRATION_FILE, ui_class=None
+    # Which calibration to measure pO2 with, chosen in the inputs panel and
+    # used by the Manual Control tab and by queued experiments alike. The value
+    # names the calibration file and, once one has been picked out of it, the
+    # calibration itself; on its own the file means whichever is newest.
+    po2_calibration: Parameter = Parameter(
+        "pO2 Calibration",
+        default=encode_selection(CALIBRATION_FILE),
+        ui_class=CalibrationInput,
     )
 
     eis_toggle: ListParameter = ListParameter(
@@ -271,7 +342,7 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "potentiostat_port",
         "po2_nanovoltmeter_port",
         "po2_voltmeter_port",
-        "po2_calibration_file",
+        "po2_calibration",
     ]
 
     @classmethod
@@ -359,13 +430,17 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         # measurement whenever its two meters answer. Connecting here rather
         # than leaving it to `startup` keeps a station whose Keithleys are off
         # from failing every queued step.
-        if self.po2_calibration_file:
-            try:
-                po2_sensor.set_calibration_file(self.po2_calibration_file)
-            except Exception as e:
-                # An empty calibration file is ordinary on a station that has
-                # not calibrated its sensor yet
-                log.warning("pO2 sensor is uncalibrated: %s", e)
+        try:
+            calibration = load_selection(self.po2_calibration)
+        except Exception as e:
+            calibration = None
+            log.warning("Could not read the pO2 calibrations: %s", e)
+        if calibration is None:
+            # Ordinary on a station that has not calibrated its sensor yet
+            log.warning("pO2 sensor is uncalibrated: pO2 is the ideal "
+                        "Nernst response")
+        else:
+            po2_sensor.set_calibration(calibration)
         try:
             if not po2_sensor.connected:
                 po2_sensor.connect()
@@ -377,15 +452,6 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
 def main(*args):
     """Run S2 procedure."""
     app = QtWidgets.QApplication(*args)
-
-    # The calibration file is not kept in version control, so a station set up
-    # from a fresh clone has none until it is pointed at one or starts its own
-    from nupylab.instruments.o2_sensor.po2_calibration_dialog import (
-        ensure_calibration_file,
-    )
-
-    calibration_file = ensure_calibration_file()
-
     window = nupylab_window.NupylabWindow(S2Procedure)
     inputs = window.inputs
 
@@ -486,18 +552,8 @@ def main(*args):
         )
         current["control"] = control
         window.tabs.addTab(control, "Manual Control")
-
-        # A calibration file picked in the pO2 panel also belongs in the inputs
-        # panel, since queued experiments build their own pO2 sensor from it.
-        panel = getattr(po2_sensor, "_panel", None)
-        if panel is not None:
-            panel.calibration_changed.connect(mirror_po2_calibration)
-
-    def mirror_po2_calibration():
-        """Show the loaded calibration file path in the inputs panel."""
-        path = po2_sensor.calibration_file
-        if path and path != inputs.po2_calibration_file.value():
-            inputs.po2_calibration_file.setValue(path)
+        # The rebuilt panel starts from whatever the inputs panel has chosen
+        sync_po2_calibration()
 
     def sync_connection_settings(*_):
         """Apply inputs panel connection settings on next control tab connect."""
@@ -512,35 +568,40 @@ def main(*args):
                     inputs.potentiostat_port.value(),
                     inputs.potentiostat_model.value(),
                 )
-            po2_sensor.set_connection(
-                inputs.po2_nanovoltmeter_port.value(),
-                inputs.po2_voltmeter_port.value(),
-            )
+            nanovoltmeter = inputs.po2_nanovoltmeter_port.value()
+            voltmeter = inputs.po2_voltmeter_port.value()
+            po2_sensor.set_connection(nanovoltmeter, voltmeter)
+            # Remembered, so the station opens on its own ports next time
+            if (
+                SETTINGS.get("nanovoltmeter_port") != nanovoltmeter
+                or SETTINGS.get("voltmeter_port") != voltmeter
+            ):
+                SETTINGS["nanovoltmeter_port"] = nanovoltmeter
+                SETTINGS["voltmeter_port"] = voltmeter
+                save_settings(SETTINGS)
         except Exception as e:
             _control_log.warning("Could not read connection settings: %s", e)
 
     def sync_po2_calibration(*_):
-        """Load the calibration file named in the inputs panel, if any.
+        """Give the Manual Control sensor the calibration the panel shows.
 
-        Runs once at startup, where the input holds the newest calibration in
-        the station's folder, and again whenever the entry is edited. The
-        Manual Control panel has its own file picker, and this does not
-        override that choice, since it only acts on a path it has not loaded.
+        Runs at startup and whenever the user takes a different calibration
+        into use, so the tab and a queued experiment measure pO2 the same way.
         """
-        path = inputs.po2_calibration_file.value().strip()
-        if not path or path == po2_sensor.calibration_file:
-            return
         try:
-            calibration = po2_sensor.set_calibration_file(path)
-            _control_log.info(
-                "pO2 calibration loaded from %s: a = %.6g, b = %.6g, %s",
-                os.path.basename(path),
-                calibration.a,
-                calibration.b,
-                calibration.describe(),
-            )
+            calibration = load_selection(inputs.po2_calibration.value())
         except Exception as e:
-            _control_log.error("pO2 calibration file failed: %s", e)
+            _control_log.error("Could not read the pO2 calibrations: %s", e)
+            return
+        if calibration is None or calibration == po2_sensor.calibration:
+            return
+        po2_sensor.set_calibration(calibration)
+        _control_log.info(
+            "pO2 calibration in use: a = %.6g V/K, b = %.6g V, %s",
+            calibration.a,
+            calibration.b,
+            calibration.describe(),
+        )
 
     def on_furnace_type_changed(*_):
         """Swap the control tab over when a different controller is selected."""
@@ -571,16 +632,7 @@ def main(*args):
     ):
         connect_input(name, sync_connection_settings)
     connect_input("furnace_type", on_furnace_type_changed)
-    # Wait for the whole path rather than loading on every keystroke
-    connect_input(
-        "po2_calibration_file",
-        sync_po2_calibration,
-        ("editingFinished", "textChanged"),
-    )
-    # A calibration file taken from elsewhere at startup may not be the one
-    # the inputs panel defaults to
-    if calibration_file and calibration_file != inputs.po2_calibration_file.value():
-        inputs.po2_calibration_file.setValue(calibration_file)
+    inputs.po2_calibration.calibration_changed.connect(sync_po2_calibration)
     sync_po2_calibration()
 
     window.manager.queued.connect(disconnect_control_instruments)

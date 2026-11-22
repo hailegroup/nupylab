@@ -164,3 +164,4 @@ cython_debug/
 
 # S2 keeps its pO2 calibrations on the station, not in version control
 nupylab/instruments/o2_sensor/po2_calibrations.csv
+nupylab/gui/s2_settings.json

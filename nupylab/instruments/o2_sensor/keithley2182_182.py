@@ -56,6 +56,10 @@ CALIBRATION_FILE: str = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "po2_calibrations.csv"
 )
 
+#: How old a calibration may be before the GUI says so, in days. Saying so is
+#: all it does: an old calibration still measures, just less well.
+CALIBRATION_WARNING_DAYS: int = 365
+
 #: Columns of the calibration file, in order.
 CALIBRATION_FIELDS: Tuple[str, ...] = ("date", "calibrator", "gas", "a", "b")
 
@@ -86,6 +90,20 @@ class PO2Calibration(NamedTuple):
             self.calibrated_by or "unknown",
             self.gas or "unknown gas",
         )
+
+    def older_than(self, days: int = CALIBRATION_WARNING_DAYS) -> bool:
+        """Get whether the calibration was taken more than `days` ago.
+
+        Args:
+            days: how long a calibration is trusted for.
+
+        Returns:
+            Whether it is older than that. A calibration with no date is not
+            taken to be stale, since nothing is known about when it was taken.
+        """
+        if self.date is None:
+            return False
+        return (date.today() - self.date).days > days
 
     def as_row(self) -> List[str]:
         """Get this calibration as a row of the calibration file."""
@@ -214,6 +232,80 @@ def latest_calibration(path: str = CALIBRATION_FILE) -> Optional[PO2Calibration]
     """
     calibrations = load_calibrations(path)
     return calibrations[0] if calibrations else None
+
+
+#: Separates a calibration file from the date of the calibration chosen in it
+SELECTION_SEPARATOR: str = "|"
+
+
+def encode_selection(path: str, when: Optional[date] = None) -> str:
+    """Write down which calibration is in use, as one string.
+
+    A GUI parameter holds a single value, so the file and the calibration
+    chosen within it travel together.
+
+    Args:
+        path: path of the calibration file.
+        when: date of the chosen calibration. `None` means whichever is
+            newest, which is what a station wants unless it says otherwise.
+
+    Returns:
+        The selection, e.g. `C:/.../po2_calibrations.csv|20261121`.
+    """
+    if when is None:
+        return path
+    return "{}{}{}".format(path, SELECTION_SEPARATOR, when.strftime("%Y%m%d"))
+
+
+def decode_selection(value: str) -> Tuple[str, Optional[date]]:
+    """Read back a selection written by :func:`encode_selection`.
+
+    Args:
+        value: the selection, or a bare path.
+
+    Returns:
+        The calibration file, and the date chosen in it if one was.
+    """
+    value = (value or "").strip()
+    if SELECTION_SEPARATOR not in value:
+        return value, None
+    path, _, chosen = value.rpartition(SELECTION_SEPARATOR)
+    try:
+        return path, _parse_date(chosen)
+    except ValueError:
+        return value, None  # A path that happens to hold the separator
+
+
+def load_selection(value: str) -> Optional[PO2Calibration]:
+    """Read the calibration a selection points at.
+
+    Args:
+        value: the selection, see :func:`encode_selection`.
+
+    Returns:
+        The chosen calibration, the newest if none was chosen, or `None` if
+        the file holds none. A chosen calibration that is no longer in the
+        file, because it was edited out, also gives the newest.
+
+    Raises:
+        NupylabError: if the file cannot be read.
+    """
+    path, chosen = decode_selection(value)
+    if not path:
+        return None
+    calibrations = load_calibrations(path)
+    if not calibrations:
+        return None
+    if chosen is not None:
+        for calibration in calibrations:
+            if calibration.date == chosen:
+                return calibration
+        log.warning(
+            "No pO2 calibration dated %s in %s, using the newest instead",
+            chosen.strftime("%Y%m%d"),
+            path,
+        )
+    return calibrations[0]
 
 
 def create_calibration_file(path: str = CALIBRATION_FILE) -> str:
@@ -347,10 +439,6 @@ class Keithley2182And182(NupylabInstrument):
         self.keithley2182: Optional[keithley2182.Keithley2182] = None
         self.keithley182: Optional[keithley182.Keithley182] = None
         self._panel = None
-        # Set by the control panel so that a calibration loaded elsewhere, e.g.
-        # from the inputs panel, reaches the panel labels. Emitting a Qt signal
-        # is safe from the procedure thread; touching widgets is not.
-        self._calibration_changed = None
         self._nanovoltmeter_port: str = nanovoltmeter_port
         self._voltmeter_port: str = voltmeter_port
         self._port = f"{nanovoltmeter_port}, {voltmeter_port}"  # For __repr__
@@ -396,7 +484,6 @@ class Keithley2182And182(NupylabInstrument):
         """
         self._calibration = calibration
         self._calibration_source = source
-        self._notify_calibration_changed()
 
     def set_coefficients(self, po2_a: float, po2_b: float) -> None:
         """Set the calibration coefficients directly, without provenance.
@@ -429,14 +516,6 @@ class Keithley2182And182(NupylabInstrument):
             )
         self.set_calibration(calibration, path)
         return calibration
-
-    def _notify_calibration_changed(self) -> None:
-        """Tell the control panel, if any, that the coefficients changed."""
-        if self._calibration_changed is not None:
-            try:
-                self._calibration_changed()
-            except Exception:
-                pass
 
     @property
     def invert_voltage(self) -> bool:
@@ -651,7 +730,6 @@ class Keithley2182And182(NupylabInstrument):
                 "pO2 Sensor Voltage (V)",
             ]
             data_recorded = QtCore.Signal(list)
-            calibration_changed = QtCore.Signal()
             READ_INTERVAL_MS = 2000
             NO_READING = "—"
 
@@ -680,25 +758,10 @@ class Keithley2182And182(NupylabInstrument):
                 self._setup_ui()
                 self.timer = QtCore.QTimer()
                 self.timer.timeout.connect(self.update_readings)
-                # A calibration loaded from the inputs panel, possibly from the
-                # procedure thread, refreshes these labels through the signal
-                self.calibration_changed.connect(self.refresh_calibration)
                 instrument._panel = self
-                instrument._calibration_changed = self.calibration_changed.emit
 
             def _setup_ui(self):
                 layout = QtWidgets.QFormLayout()
-
-                self.cal_btn = QtWidgets.QPushButton("Add/Select Calibration")
-                self.cal_btn.clicked.connect(self.select_calibration)
-                layout.addRow(self.cal_btn)
-
-                self.cal_label = QtWidgets.QLabel()
-                self.cal_detail_label = QtWidgets.QLabel()
-                self.cal_detail_label.setStyleSheet("color: gray;")
-                self.refresh_calibration()
-                layout.addRow(self.cal_label)
-                layout.addRow(self.cal_detail_label)
 
                 btn_layout = QtWidgets.QHBoxLayout()
                 self.connect_btn = QtWidgets.QPushButton("Connect")
@@ -741,55 +804,9 @@ class Keithley2182And182(NupylabInstrument):
                 self.po2_label.setText(self.NO_READING)
                 self.voltage_label.setText(self.NO_READING)
 
-            def _update_calibration_label(self):
-                self.cal_label.setText(
-                    "a = %.6g V/K, b = %.6g V" % (instrument.a, instrument.b)
-                )
-
-            def refresh_calibration(self):
-                """Show the calibration the instrument now holds."""
-                calibration = instrument.calibration
-                if calibration.date is None and not calibration.calibrated_by:
-                    self.cal_detail_label.setText(
-                        "Uncalibrated: pO2 is the ideal Nernst response"
-                    )
-                else:
-                    self.cal_detail_label.setText(
-                        "Calibrated {}, in {}, by {}".format(
-                            calibration.date_text,
-                            calibration.gas or "an unrecorded gas",
-                            calibration.calibrated_by or "an unrecorded user",
-                        )
-                    )
-                self._update_calibration_label()
-
             def _abort_if_needed(self):
                 if self._abort_callback:
                     self._abort_callback()
-
-            def select_calibration(self):
-                """List the calibrations on file, to use one or add one."""
-                from nupylab.instruments.o2_sensor.po2_calibration_dialog import (
-                    choose_calibration,
-                )
-
-                path = instrument.calibration_file or CALIBRATION_FILE
-                try:
-                    calibration = choose_calibration(path, self)
-                except Exception as e:
-                    self.status_label.setText(f"Status: Error — {e}")
-                    _control_log.error("pO2 calibrations unavailable: %s", e)
-                    return
-                if calibration is None:
-                    return  # Cancelled, or only added one without using it
-                instrument.set_calibration(calibration, path)
-                self.refresh_calibration()
-                _control_log.info(
-                    "pO2 calibration in use: a = %.6g V/K, b = %.6g V, %s",
-                    calibration.a,
-                    calibration.b,
-                    calibration.describe(),
-                )
 
             def connect_instrument(self):
                 self._abort_if_needed()
