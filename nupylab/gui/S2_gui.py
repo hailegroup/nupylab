@@ -43,6 +43,11 @@ tab and a queued experiment both measure with. The panel says in red when the
 station has no calibration, and when the one in use is over a year old;
 neither stops an experiment running.
 
+`Record pO2 Data`, on the pO2 heading, says whether a queued experiment
+reads the sensor at all. Unchecked, the sensor is left out of the measurement
+and its three columns stay empty, so nothing is read, recorded or plotted for
+them; the Manual Control tab still reads it whenever its panel is connected.
+
 The Keithley ports are chosen in the inputs panel too, and default to the
 addresses S2 has them at. A station that picks others has them remembered in
 `nupylab/gui/s2_settings.json`, which, like the calibrations, is the station's
@@ -75,8 +80,9 @@ from nupylab.instruments.valve.labjack_u12 import LabJackSolenoid
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
-from pymeasure.display.Qt import QtWidgets
+from pymeasure.display.Qt import QtCore, QtWidgets
 from pymeasure.experiment import (
+    BooleanParameter,
     FloatParameter,
     IntegerParameter,
     ListParameter,
@@ -158,11 +164,12 @@ SETTINGS = load_settings()
 
 
 #: Bold headings for the inputs panel, each above the first input of its
-#: group. The groups follow the order `INPUTS` lists them in.
+#: group, and the input to draw on the heading's own row where one belongs
+#: there. The groups follow the order `INPUTS` lists them in.
 INPUT_SECTIONS = (
-    ("furnace_type", "Furnace Controls"),
-    ("potentiostat", "Potentiostat"),
-    ("po2_nanovoltmeter_port", "pO2 Sensor"),
+    ("furnace_type", "Furnace Controls", None),
+    ("potentiostat", "Potentiostat", None),
+    ("po2_nanovoltmeter_port", "pO2 Sensor", "po2_record"),
 )
 
 
@@ -212,10 +219,12 @@ def add_input_sections(inputs, sections=INPUT_SECTIONS):
 
     Args:
         inputs: the window's `InputsWidget`.
-        sections: pairs of the parameter a group starts at and its heading.
+        sections: the parameter a group starts at, its heading, and the
+            parameter to draw on the heading's row rather than below it, or
+            `None` where the heading stands alone.
     """
     labels = getattr(inputs, "labels", {})
-    for name, title in sections:
+    for name, title, on_heading in sections:
         # A parameter drawn without a label, as a checkbox is, is found by the
         # input widget itself
         widget = labels.get(name) or getattr(inputs, name, None)
@@ -224,14 +233,31 @@ def add_input_sections(inputs, sections=INPUT_SECTIONS):
         if layout is None:
             log.warning("No input named %s to head with %r", name, title)
             continue
+        header = QtWidgets.QLabel(title)
+        header.setStyleSheet("font-weight: bold;")
+
+        # Whatever shares the heading's row leaves the run of inputs first, so
+        # that the heading goes in where the group really starts
+        companion = getattr(inputs, on_heading, None) if on_heading else None
+        if companion is not None:
+            layout.removeWidget(companion)
         index = layout.indexOf(widget)
         if index < 0:
             continue
-        header = QtWidgets.QLabel(title)
-        header.setStyleSheet("font-weight: bold;")
         # Space above every heading but the first, to part the groups
-        header.setContentsMargins(0, 0 if index == 0 else 10, 0, 0)
-        layout.insertWidget(index, header)
+        top = 0 if index == 0 else 10
+
+        if companion is None:
+            header.setContentsMargins(0, top, 0, 0)
+            layout.insertWidget(index, header)
+            continue
+        row = QtWidgets.QWidget()
+        row_layout = QtWidgets.QHBoxLayout(row)
+        row_layout.setContentsMargins(0, top, 0, 0)
+        row_layout.addWidget(header)
+        row_layout.addStretch()
+        row_layout.addWidget(companion)
+        layout.insertWidget(index, row)
 
 
 def fit_inputs_panel(window, limit=None):
@@ -390,6 +416,10 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     # used by the Manual Control tab and by queued experiments alike. The value
     # names the calibration file and, once one has been picked out of it, the
     # calibration itself; on its own the file means whichever is newest.
+    # Whether a queued experiment reads the pO2 sensor at all. Drawn on the
+    # pO2 heading, see `INPUT_SECTIONS`. The Manual Control tab is unaffected:
+    # it reads the sensor whenever its panel is connected.
+    po2_record: BooleanParameter = BooleanParameter("Record pO2 Data", default=True)
     po2_calibration: Parameter = Parameter(
         "pO2 Calibration",
         default=encode_selection(CALIBRATION_FILE),
@@ -463,6 +493,7 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "po2_nanovoltmeter_port",
         "po2_voltmeter_port",
         "po2_calibration",
+        "po2_record",
     ]
 
     @classmethod
@@ -546,10 +577,23 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
             )
         else:
             self.active_instruments = [furnace]
-        # There is no pO2 toggle in the inputs panel, so the sensor joins the
-        # measurement whenever its two meters answer. Connecting here rather
-        # than leaving it to `startup` keeps a station whose Keithleys are off
-        # from failing every queued step.
+        if self.po2_record:
+            self._add_po2_sensor(po2_sensor)
+        else:
+            # Left out of the measurement entirely: its three columns stay
+            # empty, so nothing is read, recorded or plotted for them
+            log.info("Not recording pO2 this step")
+
+
+    def _add_po2_sensor(self, po2_sensor) -> None:
+        """Calibrate the pO2 sensor and add it to the measurement.
+
+        Connecting here rather than leaving it to `startup` keeps a station
+        whose Keithleys are off from failing every queued step.
+
+        Args:
+            po2_sensor: the sensor to measure with.
+        """
         try:
             calibration = load_selection(self.po2_calibration)
         except Exception as e:
@@ -771,9 +815,19 @@ def main(*args):
 
     move_input_to_file_block(window)
     add_input_sections(window.inputs)
-    fit_inputs_panel(window, available_height(app))
 
-    window.showMaximized()
+    def fit_and_maximize():
+        """Size the panel and fill the screen, once the window is up."""
+        fit_inputs_panel(window, available_height(app))
+        window.showMaximized()
+
+    # Both of these wait for the window to be shown. A size hint taken before
+    # the widgets are laid out and polished is not the one they end up with,
+    # and a window told to maximize while its layout is still settling comes
+    # up holding the maximized state without the geometry to go with it, which
+    # is why it took a trip through the title bar button to fill the screen.
+    window.show()
+    QtCore.QTimer.singleShot(0, fit_and_maximize)
     sys.exit(app.exec())
 
 
