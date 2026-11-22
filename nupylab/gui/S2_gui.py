@@ -160,11 +160,47 @@ SETTINGS = load_settings()
 #: Bold headings for the inputs panel, each above the first input of its
 #: group. The groups follow the order `INPUTS` lists them in.
 INPUT_SECTIONS = (
-    ("record_time", "Measurement"),
     ("furnace_type", "Furnace Controls"),
     ("potentiostat", "Potentiostat"),
     ("po2_nanovoltmeter_port", "pO2 Sensor"),
 )
+
+
+def move_input_to_file_block(window, name="record_time"):
+    """Move one input down to sit with the filename and directory fields.
+
+    An input that is about the recording rather than about an instrument
+    belongs with them, not among the instrument settings. Only where it is
+    drawn changes: PyMeasure still builds the widget and still reads the
+    value from it, wherever it sits.
+
+    Args:
+        window: the main window.
+        name: the parameter to move.
+    """
+    inputs = window.inputs
+    widget = getattr(inputs, name, None)
+    if widget is None:
+        log.warning("No input named %s to move", name)
+        return
+    label = getattr(inputs, "labels", {}).get(name)
+    field_layout = widget.parentWidget().layout()
+    dock = inputs.parentWidget()
+    dock_layout = dock.layout() if dock is not None else None
+    if field_layout is None or dock_layout is None:
+        log.warning("Could not find the panel layouts to move %s", name)
+        return
+    anchor = getattr(window, "file_input", None)
+    index = dock_layout.indexOf(anchor) if anchor is not None else -1
+    if index < 0:
+        # No filename field: settle for just below the other inputs
+        index = dock_layout.indexOf(inputs) + 1
+    for moving in (label, widget):
+        if moving is None:
+            continue
+        field_layout.removeWidget(moving)
+        dock_layout.insertWidget(index, moving)
+        index += 1
 
 
 def add_input_sections(inputs, sections=INPUT_SECTIONS):
@@ -733,6 +769,7 @@ def main(*args):
         lambda: current["control"].set_enabled_for_experiment(False)
     )
 
+    move_input_to_file_block(window)
     add_input_sections(window.inputs)
     fit_inputs_panel(window, available_height(app))
 
