@@ -157,6 +157,90 @@ def save_settings(settings, path=SETTINGS_FILE):
 SETTINGS = load_settings()
 
 
+#: Bold headings for the inputs panel, each above the first input of its
+#: group. The groups follow the order `INPUTS` lists them in.
+INPUT_SECTIONS = (
+    ("record_time", "Measurement"),
+    ("furnace_type", "Furnace Controls"),
+    ("potentiostat", "Potentiostat"),
+    ("po2_nanovoltmeter_port", "pO2 Sensor"),
+)
+
+
+def add_input_sections(inputs, sections=INPUT_SECTIONS):
+    """Head each group of inputs with a bold title.
+
+    PyMeasure lays the inputs panel out as one run of label and widget pairs,
+    which says nothing about which instrument each belongs to. This puts a
+    heading above the first input of each group, in the panel's own layout.
+
+    Args:
+        inputs: the window's `InputsWidget`.
+        sections: pairs of the parameter a group starts at and its heading.
+    """
+    labels = getattr(inputs, "labels", {})
+    for name, title in sections:
+        # A parameter drawn without a label, as a checkbox is, is found by the
+        # input widget itself
+        widget = labels.get(name) or getattr(inputs, name, None)
+        parent = widget.parentWidget() if widget is not None else None
+        layout = parent.layout() if parent is not None else None
+        if layout is None:
+            log.warning("No input named %s to head with %r", name, title)
+            continue
+        index = layout.indexOf(widget)
+        if index < 0:
+            continue
+        header = QtWidgets.QLabel(title)
+        header.setStyleSheet("font-weight: bold;")
+        # Space above every heading but the first, to part the groups
+        header.setContentsMargins(0, 0 if index == 0 else 10, 0, 0)
+        layout.insertWidget(index, header)
+
+
+def fit_inputs_panel(window, limit=None):
+    """Give the inputs panel the height its inputs need.
+
+    PyMeasure puts the inputs in a scroll area with no minimum height, so a
+    station with many of them has to scroll to reach the last. Call this once
+    the panel holds everything it is going to.
+
+    Args:
+        window: the main window.
+        limit: tallest the panel may be made, in pixels. Beyond this it keeps
+            scrolling, since a panel taller than the screen would push the
+            queue and abort buttons out of reach.
+    """
+    scroll = window.inputs.findChild(QtWidgets.QScrollArea)
+    inner = scroll.widget() if scroll is not None else None
+    if inner is None:
+        log.warning("Could not find the inputs panel to fit it to its inputs")
+        return
+    needed = inner.sizeHint().height() + 2 * scroll.frameWidth()
+    if limit:
+        needed = min(needed, limit)
+    scroll.setMinimumHeight(needed)
+
+
+def available_height(app, leaving=320):
+    """Get the height the inputs panel may take on this screen.
+
+    Args:
+        app: the Qt application.
+        leaving: room to leave for the title bar, the queue and abort buttons
+            and the window's own frame.
+
+    Returns:
+        A height in pixels, or `None` if the screen cannot be measured.
+    """
+    try:
+        screen = app.primaryScreen().availableGeometry().height()
+    except Exception as e:
+        log.warning("Could not measure the screen: %s", e)
+        return None
+    return max(400, screen - leaving)
+
+
 def resource_choices(resources, *expected):
     """Offer the station's known addresses whether or not they answered.
 
@@ -649,7 +733,10 @@ def main(*args):
         lambda: current["control"].set_enabled_for_experiment(False)
     )
 
-    window.show()
+    add_input_sections(window.inputs)
+    fit_inputs_panel(window, available_height(app))
+
+    window.showMaximized()
     sys.exit(app.exec())
 
 
