@@ -31,7 +31,13 @@ its own range, so each one carries the gas it is flowing and a flow
 calibration, `Q = m p + b`, which turns that percent into sccm. Both are chosen
 in the inputs panel, one row per MFC: the gas from a drop-down which also
 offers `Add New Gas...`, and the calibration from the same kind of dialog the
-pO2 sensor uses. The gas last selected for each MFC is remembered in
+pO2 sensor uses. Under each of those rows is one line saying when that MFC
+was last calibrated and in what gas, or, in red, that it has no calibration
+for the gas it is set to. A calibration more than a year old is marked with a
+red exclamation mark beside its button, and the MFCs that carries are named
+in one red line under the last of them.
+
+The gas last selected for each MFC is remembered in
 `nupylab/gui/s2_settings.json`, and the newest calibration recorded for that
 MFC in that gas is loaded at startup. Selecting a different gas looks the
 calibration up again for the new pair, and asks for one when the pair has none.
@@ -52,7 +58,9 @@ name PyMeasure's unit parser knows, and is what S4's ROD-4 records its flows
 under as well. The Dock Tab plots all four in percent on one dock, a colour
 per MFC, each flow solid and its setpoint dashed in the same colour, with a
 legend naming the colours. That dock has no x and y selectors above it, since
-what it plots never changes.
+what it plots never changes, and it keeps only the step that is running: every
+step plots against time from zero, so the one before would otherwise be drawn
+over in the same four colours. The other docks keep their whole history.
 
 The solenoid valve selects between two gas mixes and is driven from the LabJack
 U12's AO1 output. It appears in the Manual Control tab only, not in queued
@@ -128,6 +136,7 @@ from nupylab.instruments.valve.labjack_u12 import LabJackSolenoid
 from nupylab.utilities.instrument_control import InstrumentControlWidget
 ######################
 from nupylab.utilities import list_resources, nupylab_procedure, nupylab_window
+from nupylab.utilities.dock_widgets import MultiColumnPlotWidget
 from pymeasure.display.Qt import QtCore, QtWidgets
 from pymeasure.experiment import (
     BooleanParameter,
@@ -305,9 +314,10 @@ INPUT_PAIRS = (
 )
 
 #: Least width in pixels to leave the inputs panel. It carries a row per MFC,
-#: each holding a gas, a button and a line of calibration coefficients, which
-#: do not fit the width PyMeasure would otherwise settle on.
-INPUTS_PANEL_WIDTH = 540
+#: each holding a gas and a button, which do not fit the width PyMeasure would
+#: otherwise settle on. What each calibration is goes on its own line under
+#: the row, so it is not what sets this.
+INPUTS_PANEL_WIDTH = 430
 
 
 def move_input_to_file_block(window, name="record_time"):
@@ -355,6 +365,10 @@ def pair_inputs(inputs, pairs=INPUT_PAIRS):
     port it is on, say, costs a row and says less than one label would. This
     puts both widgets on the first one's row and labels the row once.
 
+    An input that offers a `caption_widget` has it drawn on a line of its own
+    under the row. What a calibration is runs to half a line of text, and
+    beside the inputs it would set how wide the whole panel has to be.
+
     The row is left on the panel as `<first>_row`, so that
     :func:`add_input_sections` can head the group it starts.
 
@@ -375,11 +389,18 @@ def pair_inputs(inputs, pairs=INPUT_PAIRS):
             log.warning("Could not find the panel layout to pair %s", first)
             continue
 
+        caption = getattr(second_widget, "caption_widget", None)
+
         row = QtWidgets.QWidget()
-        row_layout = QtWidgets.QHBoxLayout(row)
+        row_layout = QtWidgets.QVBoxLayout(row)
         # Space above a heading, to part it from the group before it
         row_layout.setContentsMargins(0, 10 if heading else 0, 0, 0)
-        row_layout.setSpacing(6)
+        row_layout.setSpacing(0)
+
+        line = QtWidgets.QWidget()
+        line_layout = QtWidgets.QHBoxLayout(line)
+        line_layout.setContentsMargins(0, 0, 0, 0)
+        line_layout.setSpacing(6)
 
         label = QtWidgets.QLabel(title)
         if heading:
@@ -404,9 +425,22 @@ def pair_inputs(inputs, pairs=INPUT_PAIRS):
         for widget in (first_widget, second_widget):
             layout.removeWidget(widget)
 
-        row_layout.addWidget(label)
-        row_layout.addWidget(first_widget, 1)
-        row_layout.addWidget(second_widget, 2)
+        line_layout.addWidget(label)
+        line_layout.addWidget(first_widget, 1)
+        # An input whose caption is on the line below keeps its own width,
+        # rather than being stretched to fill a row it no longer fills
+        line_layout.addWidget(second_widget, 0 if caption is not None else 2)
+        row_layout.addWidget(line)
+
+        if caption is not None:
+            caption_parent = caption.parentWidget()
+            caption_layout = (
+                caption_parent.layout() if caption_parent is not None else None
+            )
+            if caption_layout is not None:
+                caption_layout.removeWidget(caption)
+            row_layout.addWidget(caption)
+
         layout.insertWidget(index, row)
         setattr(inputs, "{}_row".format(first), row)
 
@@ -459,6 +493,37 @@ def add_input_sections(inputs, sections=INPUT_SECTIONS):
         row_layout.addStretch()
         row_layout.addWidget(companion)
         layout.insertWidget(index, row)
+
+
+def add_mfc_warning(inputs, after="mfc{}_gas_row".format(len(MFC_NAMES))):
+    """Put one line under the MFC rows for calibrations worth redoing.
+
+    A stale calibration is already marked beside the MFC it belongs to, which
+    says which one but not what is wrong with it. This is where that is said,
+    once, rather than on every row.
+
+    Args:
+        inputs: the window's `InputsWidget`.
+        after: the row the line goes under, the last MFC's by default. Built
+            by :func:`pair_inputs`, which must have run.
+
+    Returns:
+        The label, hidden until something is stale, or `None` if the panel
+        has no such row.
+    """
+    anchor = getattr(inputs, after, None)
+    parent = anchor.parentWidget() if anchor is not None else None
+    layout = parent.layout() if parent is not None else None
+    if layout is None:
+        log.warning("No row named %s to put the MFC warning under", after)
+        return None
+    label = QtWidgets.QLabel()
+    label.setStyleSheet("color: red;")
+    label.setWordWrap(True)
+    label.hide()
+    index = layout.indexOf(anchor)
+    layout.insertWidget(index + 1 if index >= 0 else layout.count(), label)
+    return label
 
 
 def widen_inputs_panel(window, width=INPUTS_PANEL_WIDTH):
@@ -1078,6 +1143,57 @@ def main(*args):
         """Get the calibration entry of one MFC, counting from zero."""
         return getattr(inputs, "mfc{}_calibration".format(index + 1))
 
+    # Built once the panel has been laid out, which happens after the inputs
+    # are wired up, so it is reached through a holder rather than by name
+    mfc_warning = {"label": None}
+
+    def refresh_mfc_warning():
+        """Say in one line which MFCs were calibrated too long ago."""
+        label = mfc_warning["label"]
+        if label is None:
+            return
+        stale = [
+            MFC_NAMES[index]
+            for index in range(len(MFC_NAMES))
+            if calibration_input(index).stale
+        ]
+        if not stale:
+            label.setText("")
+            label.hide()
+            return
+        if len(stale) == 1:
+            which = "{} was".format(stale[0])
+        else:
+            which = "{} and {} were".format(", ".join(stale[:-1]), stale[-1])
+        label.setText(
+            "Warning! {} calibrated more than a year ago.".format(which)
+        )
+        label.show()
+
+    def clear_mfc_dock(running=None):
+        """Leave only the step that is running on the MFC dock.
+
+        Every step plots against time from zero, so the four colours of one
+        step are drawn over by the four of the next, and which is which stops
+        being readable. The other docks keep their whole history, where
+        comparing one step against another is the point.
+
+        Args:
+            running: the experiment now running, whose traces stay. Passed by
+                the manager's `running` signal.
+        """
+        queued = getattr(window.manager.experiments, "queue", None) or ()
+        for experiment in list(queued):
+            if experiment is running:
+                continue
+            for curve in getattr(experiment, "curve_list", None) or ():
+                widget = getattr(curve, "wdg", None)
+                if isinstance(widget, MultiColumnPlotWidget):
+                    try:
+                        widget.remove(curve)
+                    except Exception as e:
+                        log.debug("Could not clear an MFC trace: %s", e)
+
     # Each controller supplies its own panel, so the Manual Control tab is
     # rebuilt when the furnace type changes rather than patched in place.
     current = {"furnace": None, "control": None, "type": None}
@@ -1244,6 +1360,7 @@ def main(*args):
         name = MFC_NAMES[index]
         calibration = calibration_input(index).calibration
         mfcs.set_calibration(index, calibration)
+        refresh_mfc_warning()
         if calibration is None:
             _control_log.warning(
                 "%s has no flow calibration for %s: it can only be set in "
@@ -1343,6 +1460,7 @@ def main(*args):
     sync_mfc_selections()
 
     window.manager.queued.connect(disconnect_control_instruments)
+    window.manager.running.connect(clear_mfc_dock)
     window.manager.running.connect(
         lambda: current["control"].set_enabled_for_experiment(True)
     )
@@ -1358,8 +1476,10 @@ def main(*args):
 
     move_input_to_file_block(window)
     pair_inputs(window.inputs)
+    mfc_warning["label"] = add_mfc_warning(window.inputs)
     add_input_sections(window.inputs)
     widen_inputs_panel(window)
+    refresh_mfc_warning()
 
     def maximize():
         """Fill the screen, once the window is up.

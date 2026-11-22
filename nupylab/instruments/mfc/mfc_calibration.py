@@ -155,6 +155,15 @@ class MFCCalibration(NamedTuple):
         return self.date.strftime("%B %d, %Y") if self.date else "unknown date"
 
     @property
+    def short_date(self) -> str:
+        """Get the calibration date as `2026-11-21`.
+
+        For the inputs panel, which carries one of these per MFC and has no
+        room for the long form.
+        """
+        return self.date.strftime("%Y-%m-%d") if self.date else "an unknown date"
+
+    @property
     def substituted(self) -> bool:
         """Get whether this row is used for a gas other than its own.
 

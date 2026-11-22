@@ -660,9 +660,14 @@ class MFCCalibrationInput(Input, QtWidgets.QWidget):
         self._refresh()
 
     def _setup_ui(self) -> None:
-        layout = QtWidgets.QHBoxLayout()
+        layout = QtWidgets.QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(0)
+
+        line = QtWidgets.QWidget()
+        line_layout = QtWidgets.QHBoxLayout(line)
+        line_layout.setContentsMargins(0, 0, 0, 0)
+        line_layout.setSpacing(4)
 
         self.select_btn = QtWidgets.QPushButton("Calibration...")
         self.select_btn.setToolTip(
@@ -670,13 +675,33 @@ class MFCCalibrationInput(Input, QtWidgets.QWidget):
             "this MFC and gas."
         )
         self.select_btn.clicked.connect(self.select_calibration)
-        layout.addWidget(self.select_btn)
+        line_layout.addWidget(self.select_btn)
+
+        # Marks the one MFC, since the warning itself is a single line for the
+        # whole panel and does not sit beside any of them
+        self.stale_mark = QtWidgets.QLabel("!")
+        self.stale_mark.setStyleSheet("color: #cc0000; font-weight: bold;")
+        self.stale_mark.hide()
+        line_layout.addWidget(self.stale_mark)
+        line_layout.addStretch(1)
+        layout.addWidget(line)
 
         self.summary_label = QtWidgets.QLabel()
         self.summary_label.setWordWrap(True)
-        layout.addWidget(self.summary_label, 1)
+        layout.addWidget(self.summary_label)
 
         self.setLayout(layout)
+
+    @property
+    def caption_widget(self):
+        """Get the label saying which calibration is in use.
+
+        Offered so that whoever lays the panel out can put it on a line of
+        its own under the whole row, rather than beside the button where it
+        sets how wide the panel has to be. Left in this entry's own layout
+        until something takes it.
+        """
+        return self.summary_label
 
     # What it is for #
 
@@ -747,6 +772,17 @@ class MFCCalibrationInput(Input, QtWidgets.QWidget):
         """Get whether the MFC and gas in use have no calibration on file."""
         return self.calibration is None
 
+    @property
+    def stale(self) -> bool:
+        """Get whether the calibration in use is old enough to redo.
+
+        See :data:`~nupylab.instruments.mfc.mfc_calibration.CALIBRATION_WARNING_DAYS`.
+        An MFC with no calibration at all is not stale: it has a louder
+        problem than that.
+        """
+        calibration = self.calibration
+        return calibration is not None and calibration.older_than()
+
     def _refresh(self) -> None:
         """Show the calibration in use, or say why there is none."""
         path, mfc, gas, _ = decode_selection(self._value)
@@ -757,6 +793,7 @@ class MFCCalibrationInput(Input, QtWidgets.QWidget):
             calibration = None
             problem = str(e)
 
+        self.stale_mark.hide()
         if calibration is None:
             self.summary_label.setStyleSheet("color: #cc0000;")
             self.summary_label.setText(
@@ -774,21 +811,25 @@ class MFCCalibrationInput(Input, QtWidgets.QWidget):
             )
             return
 
-        summary = "m = {:.5g} sccm/%, b = {:.5g} sccm, {}".format(
-            calibration.m, calibration.b, calibration.date_text
+        # What was taken and when, which is what tells one calibration from
+        # another. The coefficients are in the tooltip, where they do not set
+        # how wide the panel has to be.
+        self.summary_label.setStyleSheet(
+            "color: #aa6600;" if calibration.substituted else ""
         )
-        colour = ""
-        notes = []
+        self.summary_label.setText(
+            "Calibrated {} in {}".format(
+                calibration.short_date,
+                calibration.calibration_gas or "an unknown gas",
+            )
+        )
         if calibration.older_than():
-            notes.append("more than a year old")
-            colour = "color: #cc0000;"
-        if calibration.substituted:
-            notes.append("taken in {}".format(calibration.calibration_gas))
-            colour = colour or "color: #aa6600;"
-        if notes:
-            summary = "{} ({})".format(summary, ", ".join(notes))
-        self.summary_label.setStyleSheet(colour)
-        self.summary_label.setText(summary)
+            self.stale_mark.show()
+            self.stale_mark.setToolTip(
+                "{} was last calibrated {}, more than a year ago.".format(
+                    mfc or "This MFC", calibration.date_text
+                )
+            )
         self.setToolTip("{}\nfrom {}".format(calibration.describe(), path))
 
     def select_calibration(self) -> None:

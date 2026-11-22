@@ -571,10 +571,16 @@ class MultiColumnPlotWidget(PlotWidget):
         self._curves.append(curve)
 
     def remove(self, curve) -> None:
-        """Remove `curve` from the plot."""
+        """Remove `curve` from the plot, if it is on it.
+
+        Checked rather than assumed, since a dock that drops the curves of
+        earlier experiments is asked to remove the same ones again whenever
+        another experiment starts.
+        """
+        if curve not in self._curves:
+            return
         self.plot.removeItem(curve)
-        if curve in self._curves:
-            self._curves.remove(curve)
+        self._curves.remove(curve)
 
     def clear_widget(self) -> None:
         """Remove every curve, leaving the legend as it is."""

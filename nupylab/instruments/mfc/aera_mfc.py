@@ -705,34 +705,38 @@ class AeraMFC(NupylabInstrument):
                 self.monitor_btn.clicked.connect(self.toggle_monitoring)
                 layout.addWidget(self.monitor_btn)
 
+                # Two lines per MFC: what it is being set to on the first,
+                # what it is flowing and the buttons on the second. On one
+                # line the panel is wider than the tab has to spare.
                 grid = QtWidgets.QGridLayout()
                 grid.setHorizontalSpacing(8)
-                headings = ("", "Setpoint", "Units", "", "", "Set", "Actual")
-                for column, heading in enumerate(headings):
-                    if not heading:
-                        continue
+                grid.setVerticalSpacing(2)
+                for column, heading in ((1, "Setpoint"), (2, "Units")):
                     label = QtWidgets.QLabel(heading)
                     label.setStyleSheet("font-weight: bold;")
                     grid.addWidget(label, 0, column)
 
-                self.name_labels = []
+                self.gas_labels = []
                 self.value_edits = []
                 self.unit_combos = []
                 self.set_labels = []
                 self.actual_labels = []
                 for index in range(instrument.channel_count):
-                    row = index + 1
+                    top = 1 + 2 * index
+                    bottom = top + 1
 
-                    name_label = QtWidgets.QLabel()
-                    self.name_labels.append(name_label)
-                    grid.addWidget(name_label, row, 0)
+                    name_label = QtWidgets.QLabel(instrument.channel_name(index))
+                    name_label.setStyleSheet("font-weight: bold;")
+                    if index:
+                        name_label.setContentsMargins(0, 8, 0, 0)
+                    grid.addWidget(name_label, top, 0)
 
                     edit = QtWidgets.QDoubleSpinBox()
                     edit.setDecimals(2)
                     edit.setRange(0.0, 1e6)
                     edit.setKeyboardTracking(False)
                     self.value_edits.append(edit)
-                    grid.addWidget(edit, row, 1)
+                    grid.addWidget(edit, top, 1)
 
                     units = QtWidgets.QComboBox()
                     units.addItems(list(instrument.UNITS))
@@ -740,38 +744,48 @@ class AeraMFC(NupylabInstrument):
                         lambda _text, i=index: self._on_unit_changed(i)
                     )
                     self.unit_combos.append(units)
-                    grid.addWidget(units, row, 2)
+                    grid.addWidget(units, top, 2)
 
+                    set_label = QtWidgets.QLabel()
+                    set_label.setAlignment(
+                        QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                    )
+                    self.set_labels.append(set_label)
+                    grid.addWidget(set_label, top, 3)
+
+                    gas_label = QtWidgets.QLabel()
+                    self.gas_labels.append(gas_label)
+                    grid.addWidget(gas_label, bottom, 0)
+
+                    buttons = QtWidgets.QWidget()
+                    button_layout = QtWidgets.QHBoxLayout(buttons)
+                    button_layout.setContentsMargins(0, 0, 0, 0)
+                    button_layout.setSpacing(4)
                     apply_btn = QtWidgets.QPushButton("Apply")
                     apply_btn.clicked.connect(
                         lambda _checked=False, i=index: self.apply_setpoint(i)
                     )
-                    grid.addWidget(apply_btn, row, 3)
-
+                    button_layout.addWidget(apply_btn)
                     close_btn = QtWidgets.QPushButton("Close")
                     close_btn.setToolTip("Shut this MFC's valve at once.")
                     close_btn.clicked.connect(
                         lambda _checked=False, i=index: self.close_channel(i)
                     )
-                    grid.addWidget(close_btn, row, 4)
+                    button_layout.addWidget(close_btn)
+                    button_layout.addStretch(1)
+                    grid.addWidget(buttons, bottom, 1, 1, 2)
 
-                    set_label = QtWidgets.QLabel(self.NO_READING)
-                    set_label.setAlignment(
-                        QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
-                    )
-                    self.set_labels.append(set_label)
-                    grid.addWidget(set_label, row, 5)
-
-                    actual_label = QtWidgets.QLabel(self.NO_READING)
+                    actual_label = QtWidgets.QLabel()
                     actual_label.setStyleSheet("font-weight: bold;")
                     actual_label.setAlignment(
                         QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
                     )
                     self.actual_labels.append(actual_label)
-                    grid.addWidget(actual_label, row, 6)
+                    grid.addWidget(actual_label, bottom, 3)
 
-                grid.setColumnStretch(7, 1)
+                grid.setColumnStretch(4, 1)
                 layout.addLayout(grid)
+                self._clear_readouts()
 
                 self.status_label = QtWidgets.QLabel("Status: Not connected")
                 self.status_label.setWordWrap(True)
@@ -783,13 +797,11 @@ class AeraMFC(NupylabInstrument):
             # What the panel says about itself #
 
             def refresh_labels(self):
-                """Name each row for its MFC and the gas it is flowing."""
-                for index, label in enumerate(self.name_labels):
+                """Say which gas each MFC is flowing, and whether it is calibrated."""
+                for index, label in enumerate(self.gas_labels):
                     gas = instrument.gas(index)
                     name = instrument.channel_name(index)
-                    label.setText(
-                        "{} ({})".format(name, gas) if gas else name
-                    )
+                    label.setText(gas or "no gas chosen")
                     calibration = instrument.calibration(index)
                     if calibration is None:
                         label.setStyleSheet("color: #cc0000;")
@@ -838,9 +850,23 @@ class AeraMFC(NupylabInstrument):
                     return "{:.1f} %".format(percent)
                 return "{:.1f} % / {:.2f} sccm".format(percent, flow)
 
+            def _show_set(self, index, percent, flow):
+                """Write one MFC's setpoint, on its first line."""
+                self.set_labels[index].setText(
+                    "Set: {}".format(self._format(index, percent, flow))
+                )
+
+            def _show_actual(self, index, percent, flow):
+                """Write one MFC's flow, on its second line."""
+                self.actual_labels[index].setText(
+                    "Actual: {}".format(self._format(index, percent, flow))
+                )
+
             def _clear_readouts(self):
-                for label in self.set_labels + self.actual_labels:
-                    label.setText(self.NO_READING)
+                for label in self.set_labels:
+                    label.setText("Set: {}".format(self.NO_READING))
+                for label in self.actual_labels:
+                    label.setText("Actual: {}".format(self.NO_READING))
 
             def _abort_if_needed(self):
                 if self._abort_callback:
@@ -933,7 +959,7 @@ class AeraMFC(NupylabInstrument):
                     _control_log.error("%s setpoint failed: %s", name, e)
                     return
                 flow = instrument.percent_to_flow(index, percent)
-                self.set_labels[index].setText(self._format(index, percent, flow))
+                self._show_set(index, percent, flow)
                 self._show_status("{} set".format(name))
                 _control_log.info(
                     "%s set to %s", name, self._format(index, percent, flow)
@@ -954,7 +980,7 @@ class AeraMFC(NupylabInstrument):
                     _control_log.error("%s close failed: %s", name, e)
                     return
                 self.value_edits[index].setValue(0.0)
-                self.set_labels[index].setText(self._format(index, 0.0, 0.0))
+                self._show_set(index, 0.0, 0.0)
                 self._show_status("{} closed".format(name))
                 _control_log.info("%s valve closed", name)
                 self.update_readings()
@@ -978,12 +1004,8 @@ class AeraMFC(NupylabInstrument):
                     recorded = []
                     for index, values in enumerate(readings):
                         set_pct, flow_pct, set_sccm, flow_sccm = values
-                        self.set_labels[index].setText(
-                            self._format(index, set_pct, set_sccm)
-                        )
-                        self.actual_labels[index].setText(
-                            self._format(index, flow_pct, flow_sccm)
-                        )
+                        self._show_set(index, set_pct, set_sccm)
+                        self._show_actual(index, flow_pct, flow_sccm)
                         flows.append(flow_pct)
                         recorded.extend(values)
                     self.live_plot.add_points(flows)
