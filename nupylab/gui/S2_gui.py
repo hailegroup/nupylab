@@ -43,8 +43,8 @@ tab and a queued experiment both measure with. The panel says in red when the
 station has no calibration, and when the one in use is over a year old;
 neither stops an experiment running.
 
-`Record pO2 Data`, on the pO2 heading, says whether a queued experiment
-reads the sensor at all. Unchecked, the sensor is left out of the measurement
+`Save Data`, on the pO2 heading, says whether a queued experiment reads the
+sensor at all. Unchecked, the sensor is left out of the measurement
 and its three columns stay empty, so nothing is read, recorded or plotted for
 them; the Manual Control tab still reads it whenever its panel is connected.
 
@@ -260,18 +260,22 @@ def add_input_sections(inputs, sections=INPUT_SECTIONS):
         layout.insertWidget(index, row)
 
 
-def fit_inputs_panel(window, limit=None):
+def fit_inputs_panel(window, floor=200):
     """Give the inputs panel the height its inputs need.
 
     PyMeasure puts the inputs in a scroll area with no minimum height, so a
-    station with many of them has to scroll to reach the last. Call this once
-    the panel holds everything it is going to.
+    station with many of them has to scroll to reach the last. This asks for
+    the height they need, or for whatever the dock has left once the fields
+    and buttons below the panel have taken theirs, whichever is less: a panel
+    taller than that would push the queue and abort buttons out of reach.
+
+    Measures the dock as it stands, so call it once the window is up and
+    laid out, and again if the window is resized to something smaller.
 
     Args:
         window: the main window.
-        limit: tallest the panel may be made, in pixels. Beyond this it keeps
-            scrolling, since a panel taller than the screen would push the
-            queue and abort buttons out of reach.
+        floor: least the panel is left with, in pixels, however little room
+            the dock has.
     """
     scroll = window.inputs.findChild(QtWidgets.QScrollArea)
     inner = scroll.widget() if scroll is not None else None
@@ -279,28 +283,24 @@ def fit_inputs_panel(window, limit=None):
         log.warning("Could not find the inputs panel to fit it to its inputs")
         return
     needed = inner.sizeHint().height() + 2 * scroll.frameWidth()
-    if limit:
-        needed = min(needed, limit)
-    scroll.setMinimumHeight(needed)
 
-
-def available_height(app, leaving=320):
-    """Get the height the inputs panel may take on this screen.
-
-    Args:
-        app: the Qt application.
-        leaving: room to leave for the title bar, the queue and abort buttons
-            and the window's own frame.
-
-    Returns:
-        A height in pixels, or `None` if the screen cannot be measured.
-    """
-    try:
-        screen = app.primaryScreen().availableGeometry().height()
-    except Exception as e:
-        log.warning("Could not measure the screen: %s", e)
-        return None
-    return max(400, screen - leaving)
+    dock = window.inputs.parentWidget()
+    layout = dock.layout() if dock is not None else None
+    if layout is None:
+        log.warning("Could not find the inputs dock to measure its room")
+        scroll.setMinimumHeight(needed)
+        return
+    # Everything else the dock holds: the filename fields, the record time,
+    # the queue and abort buttons, and the spacing between them
+    taken = 0
+    for position in range(layout.count()):
+        item = layout.itemAt(position)
+        widget = item.widget()
+        if widget is window.inputs:
+            continue
+        taken += item.sizeHint().height()
+    room = dock.height() - taken
+    scroll.setMinimumHeight(max(floor, min(needed, room)))
 
 
 def resource_choices(resources, *expected):
@@ -419,7 +419,7 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     # Whether a queued experiment reads the pO2 sensor at all. Drawn on the
     # pO2 heading, see `INPUT_SECTIONS`. The Manual Control tab is unaffected:
     # it reads the sensor whenever its panel is connected.
-    po2_record: BooleanParameter = BooleanParameter("Record pO2 Data", default=True)
+    po2_record: BooleanParameter = BooleanParameter("Save Data", default=True)
     po2_calibration: Parameter = Parameter(
         "pO2 Calibration",
         default=encode_selection(CALIBRATION_FILE),
@@ -816,18 +816,26 @@ def main(*args):
     move_input_to_file_block(window)
     add_input_sections(window.inputs)
 
-    def fit_and_maximize():
-        """Size the panel and fill the screen, once the window is up."""
-        fit_inputs_panel(window, available_height(app))
-        window.showMaximized()
+    def maximize():
+        """Fill the screen, once the window is up.
 
-    # Both of these wait for the window to be shown. A size hint taken before
-    # the widgets are laid out and polished is not the one they end up with,
-    # and a window told to maximize while its layout is still settling comes
-    # up holding the maximized state without the geometry to go with it, which
-    # is why it took a trip through the title bar button to fill the screen.
+        Maximizing a window that has never been shown leaves it holding the
+        maximized state without the geometry to go with it, so the screen is
+        filled by hand as well: whichever of the two the window manager
+        honours, the window ends up the size of the screen.
+        """
+        try:
+            window.setGeometry(app.primaryScreen().availableGeometry())
+        except Exception as e:
+            log.warning("Could not measure the screen: %s", e)
+        window.showMaximized()
+        # The panel is measured against the dock it ends up with, which is
+        # only settled once the maximized layout has been through the event
+        # loop, so that waits another turn
+        QtCore.QTimer.singleShot(0, lambda: fit_inputs_panel(window))
+
     window.show()
-    QtCore.QTimer.singleShot(0, fit_and_maximize)
+    QtCore.QTimer.singleShot(0, maximize)
     sys.exit(app.exec())
 
 
