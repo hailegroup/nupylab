@@ -63,7 +63,7 @@ wheel, so the ``qt6`` extra resolves to nothing on Python 3.7.
 
    On Python 3.7 the PyMeasure version matters and ``pip install -e .`` alone is
    not enough, which is why ``install.bat`` exists. PyMeasure 0.14.0 is required
-   -- it is the first release with the ``proterial`` (ROD-4, Aera) and
+   -- it is the first release with the ``proterial`` (ROD-4) and
    ``agilent4284A`` drivers -- and it declares ``Requires-Python >=3.8``, so
    ``install.bat`` installs it with ``--ignore-requires-python``. Its source has
    no 3.8-only syntax; the one stdlib module it assumes, ``importlib.metadata``,

@@ -35,6 +35,7 @@ log.addHandler(logging.NullHandler())
 @contextlib.contextmanager
 def _dock_widget_class(
     y_axis_right_labels: Sequence[Optional[str]],
+    setpoint_labels: Optional[Dict[str, str]] = None,
 ) -> Iterator[None]:
     """Build the Dock Tab with right-hand y axes for the duration of the context.
 
@@ -46,10 +47,15 @@ def _dock_widget_class(
     Args:
         y_axis_right_labels: right y-axis column of each dock, `None` entries
             giving a dock with a single y axis.
+        setpoint_labels: measured column to the column holding its setpoint, so
+            that a dock opening on such a column draws the setpoint dashed
+            beside it.
     """
     original = managed_dock_window.DockWidget
     managed_dock_window.DockWidget = functools.partial(
-        NupylabDockWidget, y_axis_right_labels=y_axis_right_labels
+        NupylabDockWidget,
+        y_axis_right_labels=y_axis_right_labels,
+        setpoint_labels=dict(setpoint_labels or {}),
     )
     try:
         yield
@@ -63,6 +69,11 @@ class NupylabWindow(ManagedDockWindow):
     Each entry of the procedure class attribute `Y_AXIS` gets its own dock. An
     entry naming two columns, e.g. ``("Ewe (V)", "I (A)")``, gives one dock whose
     plot carries the first column on its left y axis and the second on its right.
+
+    A procedure may also define `Y_AXIS_SETPOINTS`, a mapping of a measured
+    column to the column holding what was asked for. A dock that opens on such
+    a column draws the setpoint beside the measurement as a dashed line of the
+    same color.
 
     NOTE: The parameter order in the procedure class attribute `TABLE_PARAMETERS`
     **MUST MATCH** the order of the corresponding table column labels.
@@ -104,6 +115,11 @@ class NupylabWindow(ManagedDockWindow):
             if any(right_labels):
                 kwargs["y_axis"] = y_axis_labels
                 y_axis_right_labels = right_labels
+        # Columns a dock should draw the setpoint of, dashed, see
+        # :mod:`nupylab.utilities.dock_widgets`
+        setpoint_labels: Dict[str, str] = dict(
+            getattr(procedure_class, "Y_AXIS_SETPOINTS", {}) or {}
+        )
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
@@ -127,8 +143,10 @@ class NupylabWindow(ManagedDockWindow):
                         if name in name_to_label}
 
         with contextlib.ExitStack() as stack:
-            if y_axis_right_labels:
-                stack.enter_context(_dock_widget_class(y_axis_right_labels))
+            if y_axis_right_labels or setpoint_labels:
+                stack.enter_context(
+                    _dock_widget_class(y_axis_right_labels, setpoint_labels)
+                )
             super().__init__(
                 procedure_class,
                 inputs_in_scrollarea=True,
@@ -137,9 +155,13 @@ class NupylabWindow(ManagedDockWindow):
                 ),
                 **kwargs,
             )
-        # Right-axis columns are plotted too, so the browser must expect them
+        # Right-axis and setpoint columns are plotted too, so the browser must
+        # expect them
         self.browser_widget.browser.measured_quantities.update(
             label for label in y_axis_right_labels if label
+        )
+        self.browser_widget.browser.measured_quantities.update(
+            label for label in setpoint_labels.values() if label
         )
         self.setWindowTitle(f"{procedure_class.__name__}")
         self.directory = directory or os.path.join(

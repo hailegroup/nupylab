@@ -86,6 +86,16 @@ class NupylabProcedure(Procedure):
                         raise AttributeError(f"`Y_AXIS` entry `{y}` missing from "
                                              f"`DATA_COLUMNS`: {self.DATA_COLUMNS}")
 
+        if hasattr(self, "Y_AXIS_SETPOINTS"):
+            # A measured column may be paired with the column holding what was
+            # asked for, which a dock draws beside it as a dashed line
+            for measured, setpoint in self.Y_AXIS_SETPOINTS.items():
+                for column in (measured, setpoint):
+                    if column not in self.DATA_COLUMNS:
+                        raise AttributeError(
+                            f"`Y_AXIS_SETPOINTS` entry `{column}` missing from "
+                            f"`DATA_COLUMNS`: {self.DATA_COLUMNS}")
+
         if hasattr(self, "INPUTS"):
             for input_ in self.INPUTS:
                 if not hasattr(self, input_):

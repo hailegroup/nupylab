@@ -5,6 +5,7 @@ This GUI connects to and displays data from
     * Eurotherm 2416 Furnace Controller (via the Eurotherm 2400 driver)
     * Biologic SP-300 Potentiostat (optional)
     * pO2 sensor read by a Keithley 2182 and a Keithley 182 (optional)
+    * Four Aera FC-PA78x mass flow controllers on one RS-485 port
     * Solenoid valve driven by a LabJack U12 analog output (manual control only)
 
 Run the program by changing to the directory containing this file and calling:
@@ -22,6 +23,36 @@ at GPIB0::8 measures the sensor potential. The Manual Control tab reads both and
 shows the sensor temperature, the pO2 in atm, and the sensor voltage, whether or
 not an experiment is queued. A queued experiment records all three as well,
 unless neither meter answers, in which case it runs without them.
+
+The four mass flow controllers are Aera FC-PA78x units sharing one serial port
+through an RS-485 converter, at the addresses :data:`MFC_ADDRESSES`. The GUI
+calls them MFC 1 to MFC 4 in that order. An Aera is set and read in percent of
+its own range, so each one carries the gas it is flowing and a flow
+calibration, `Q = m p + b`, which turns that percent into sccm. Both are chosen
+in the inputs panel, one row per MFC: the gas from a drop-down which also
+offers `Add New Gas...`, and the calibration from the same kind of dialog the
+pO2 sensor uses. The gas last selected for each MFC is remembered in
+`nupylab/gui/s2_settings.json`, and the newest calibration recorded for that
+MFC in that gas is loaded at startup. Selecting a different gas looks the
+calibration up again for the new pair, and asks for one when the pair has none.
+
+Every MFC calibration the station has taken lives in one file,
+`nupylab/instruments/mfc/mfc_calibrations.csv`, a row per calibration of its
+date, who took it, which MFC, the gas it was taken in, the gas it is used for,
+and the coefficients `m` and `b`. The two gas columns let a calibration taken
+in one gas be used for a similar one, say a synthetic air calibration used for
+10% O2 in Ar, while recording that that is what happened. An MFC with no
+calibration for the gas it is flowing can still be set and read in percent; its
+flow in sccm reads blank, and a setpoint in sccm is refused rather than
+guessed. Closing an MFC never needs a calibration.
+
+Each MFC records four columns, its setpoint and its flow, each in percent and
+in sccm. The sccm columns are named `cc/min`, which is the same number under a
+name PyMeasure's unit parser knows, and is what S4's ROD-4 records its flows
+under as well. The Dock Tab plots them in percent, two MFCs to a dock, MFC 1
+and MFC 3 on the left axis and MFC 2 and MFC 4 on the right, each with its
+setpoint drawn beside it in the same colour: solid for MFC 1 and MFC 3, dashed
+for their setpoints, dash-dotted for MFC 2 and MFC 4, and dotted for theirs.
 
 The solenoid valve selects between two gas mixes and is driven from the LabJack
 U12's AO1 output. It appears in the Manual Control tab only, not in queued
@@ -51,10 +82,10 @@ sensor at all. Unchecked, the sensor is left out of the measurement
 and its three columns stay empty, so nothing is read, recorded or plotted for
 them; the Manual Control tab still reads it whenever its panel is connected.
 
-The Keithley ports are chosen in the inputs panel too, and default to the
-addresses S2 has them at. A station that picks others has them remembered in
-`nupylab/gui/s2_settings.json`, which, like the calibrations, is the station's
-own and not kept in version control.
+The Keithley and MFC ports are chosen in the inputs panel too, and default to
+the addresses S2 has them at. A station that picks others has them remembered
+in `nupylab/gui/s2_settings.json`, which, like the calibrations, is the
+station's own and not kept in version control.
 """
 
 import json
@@ -62,14 +93,28 @@ import logging
 import os
 import sys
 import time
-from typing import Dict, List, Tuple, Type, Union
+from typing import Dict, List, Optional, Tuple, Type, Union
 
 # Instrument Imports #
+from nupylab.drivers.aeraFC_PA78x import AeraFCPA78x
 from nupylab.instruments.ac_potentiostat.biologic import Biologic as Potentiostat
 from nupylab.instruments.ac_potentiostat.biologic import eis_value_errors
 from nupylab.instruments.heater.eurotherm2200 import Eurotherm2200
 from nupylab.instruments.heater.eurotherm2400 import Eurotherm2400
 from nupylab.instruments.heater.eurotherm3216 import Eurotherm3216
+from nupylab.instruments.mfc.aera_mfc import AeraMFC as MFCBank
+from nupylab.instruments.mfc.mfc_calibration import (
+    CALIBRATION_FILE as MFC_CALIBRATION_FILE,
+)
+from nupylab.instruments.mfc.mfc_calibration import DEFAULT_GASES as MFC_DEFAULT_GASES
+from nupylab.instruments.mfc.mfc_calibration import (
+    encode_selection as encode_mfc_selection,
+)
+from nupylab.instruments.mfc.mfc_calibration import load_selection as load_mfc_selection
+from nupylab.instruments.mfc.mfc_calibration_dialog import (
+    GasInput,
+    MFCCalibrationInput,
+)
 from nupylab.instruments.o2_sensor.keithley2182_182 import (
     Keithley2182And182 as PO2_Sensor,
 )
@@ -117,6 +162,21 @@ PO2_DATA_LABELS = (
 # until the station picks others, which are then remembered in its settings
 PO2_NANOVOLTMETER_PORT = "GPIB0::7::INSTR"  # Keithley 2182A, sensor thermocouple
 PO2_VOLTMETER_PORT = "GPIB0::8::INSTR"  # Keithley 182, sensor potential
+
+# S2's four Aera FC-PA78x mass flow controllers share one serial port through a
+# BSU485-AE1 RS-485 converter. Their digital addresses are 5 to 8; the GUI
+# calls them MFC 1 to MFC 4, in that order, and this is the one place the two
+# namings meet.
+MFC_PORT = "ASRL6::INSTR"
+MFC_ADDRESSES: Tuple[int, ...] = (5, 6, 7, 8)
+MFC_NAMES: Tuple[str, ...] = tuple(
+    "MFC {}".format(i) for i in range(1, len(MFC_ADDRESSES) + 1)
+)
+#: The four columns each MFC records, in the order the instrument returns them.
+MFC_DATA_LABELS: Tuple[Tuple[str, ...], ...] = tuple(
+    tuple("{} {}".format(name, suffix) for suffix in MFCBank.DATA_SUFFIXES)
+    for name in MFC_NAMES
+)
 
 #: Where this station keeps what it has been set to, beside this module. Like
 #: the calibrations, it belongs to the station rather than to the source, so it
@@ -166,14 +226,88 @@ def save_settings(settings, path=SETTINGS_FILE):
 SETTINGS = load_settings()
 
 
+def remembered_gas(name: str) -> str:
+    """Get the gas an MFC was last set to flow.
+
+    Args:
+        name: name of the MFC, e.g. `MFC 1`.
+
+    Returns:
+        The remembered gas, or the first of
+        :data:`~nupylab.instruments.mfc.mfc_calibration.DEFAULT_GASES` if the
+        station has not chosen one for this MFC yet.
+    """
+    remembered = SETTINGS.get("mfc_gases")
+    gas = remembered.get(name) if isinstance(remembered, dict) else None
+    return str(gas) if gas else MFC_DEFAULT_GASES[0]
+
+
+def remember_gas(name: str, gas: str) -> None:
+    """Remember the gas an MFC is flowing, for the next time the GUI starts.
+
+    Args:
+        name: name of the MFC, e.g. `MFC 1`.
+        gas: name of the gas.
+    """
+    remembered = SETTINGS.get("mfc_gases")
+    if not isinstance(remembered, dict):
+        remembered = {}
+    if remembered.get(name) == gas:
+        return
+    remembered[name] = gas
+    SETTINGS["mfc_gases"] = remembered
+    save_settings(SETTINGS)
+
+
+def remembered_calibration(name: str) -> str:
+    """Get the calibration selection an MFC should open on.
+
+    No date is named, so the selection means whichever calibration is newest
+    for that MFC in the gas it was last set to flow.
+
+    Args:
+        name: name of the MFC, e.g. `MFC 1`.
+
+    Returns:
+        The selection, see
+        :func:`~nupylab.instruments.mfc.mfc_calibration.encode_selection`.
+    """
+    return encode_mfc_selection(
+        MFC_CALIBRATION_FILE, name, remembered_gas(name), None
+    )
+
+
 #: Bold headings for the inputs panel, each above the first input of its
 #: group, and the input to draw on the heading's own row where one belongs
-#: there. The groups follow the order `INPUTS` lists them in.
+#: there. The groups follow the order `INPUTS` lists them in. A name ending in
+#: `_row` is a row built by :func:`pair_inputs`, which runs first.
 INPUT_SECTIONS = (
-    ("furnace_type", "Furnace Controls", None),
-    ("potentiostat", "Potentiostat", None),
-    ("po2_nanovoltmeter_port", "pO2 Sensor", "po2_record"),
+    ("furnace_type_row", "Furnace Controls", None),
+    ("po2_nanovoltmeter_port_row", "pO2 Sensor", "po2_record"),
+    ("mfc_port", "Mass Flow Controllers", None),
 )
+
+#: Pairs of inputs drawn on one row, under one label: the first input, the
+#: second input, the label to give the row, and whether that label is the
+#: group's bold heading rather than an ordinary field label.
+INPUT_PAIRS = (
+    ("furnace_type", "furnace_port", "Furnace Controller", False),
+    ("potentiostat", "potentiostat_model", "Potentiostat Model", True),
+    (
+        "po2_nanovoltmeter_port",
+        "po2_voltmeter_port",
+        "Keithley Ports: 2182, 182",
+        False,
+    ),
+) + tuple(
+    ("mfc{}_gas".format(i), "mfc{}_calibration".format(i), name, False)
+    for i, name in enumerate(MFC_NAMES, start=1)
+)
+
+#: Least width in pixels to leave the inputs panel. It carries a row per MFC,
+#: each holding a gas, a button and a line of calibration coefficients, which
+#: do not fit the width PyMeasure would otherwise settle on.
+INPUTS_PANEL_WIDTH = 540
 
 
 def move_input_to_file_block(window, name="record_time"):
@@ -213,6 +347,70 @@ def move_input_to_file_block(window, name="record_time"):
         index += 1
 
 
+def pair_inputs(inputs, pairs=INPUT_PAIRS):
+    """Draw pairs of inputs on one row, under one label.
+
+    PyMeasure gives every input a label of its own on a row of its own, which
+    for a setting that is really one choice in two parts, a controller and the
+    port it is on, say, costs a row and says less than one label would. This
+    puts both widgets on the first one's row and labels the row once.
+
+    The row is left on the panel as `<first>_row`, so that
+    :func:`add_input_sections` can head the group it starts.
+
+    Args:
+        inputs: the window's `InputsWidget`.
+        pairs: the first input, the second input, the label for the row, and
+            whether that label is the group's bold heading.
+    """
+    labels = getattr(inputs, "labels", {})
+    for first, second, title, heading in pairs:
+        first_widget = getattr(inputs, first, None)
+        second_widget = getattr(inputs, second, None)
+        if first_widget is None or second_widget is None:
+            log.warning("No inputs named %s and %s to pair", first, second)
+            continue
+        layout = first_widget.parentWidget().layout()
+        if layout is None:
+            log.warning("Could not find the panel layout to pair %s", first)
+            continue
+
+        row = QtWidgets.QWidget()
+        row_layout = QtWidgets.QHBoxLayout(row)
+        # Space above a heading, to part it from the group before it
+        row_layout.setContentsMargins(0, 10 if heading else 0, 0, 0)
+        row_layout.setSpacing(6)
+
+        label = QtWidgets.QLabel(title)
+        if heading:
+            label.setStyleSheet("font-weight: bold;")
+
+        # Where the pair starts, measured before anything is taken out. Every
+        # item removed below is at or after it, so the row goes back in the
+        # same place.
+        index = layout.indexOf(labels.get(first) or first_widget)
+        if index < 0:
+            index = layout.count()
+        # The label each input came with is replaced by the row's own. Taken
+        # out by hand rather than left to reparenting, which would leave the
+        # panel's layout holding an item for a widget that has moved.
+        for spare in (labels.get(first), labels.get(second)):
+            if spare is not None:
+                layout.removeWidget(spare)
+                spare.setParent(None)
+                spare.deleteLater()
+        labels.pop(first, None)
+        labels.pop(second, None)
+        for widget in (first_widget, second_widget):
+            layout.removeWidget(widget)
+
+        row_layout.addWidget(label)
+        row_layout.addWidget(first_widget, 1)
+        row_layout.addWidget(second_widget, 2)
+        layout.insertWidget(index, row)
+        setattr(inputs, "{}_row".format(first), row)
+
+
 def add_input_sections(inputs, sections=INPUT_SECTIONS):
     """Head each group of inputs with a bold title.
 
@@ -229,7 +427,7 @@ def add_input_sections(inputs, sections=INPUT_SECTIONS):
     labels = getattr(inputs, "labels", {})
     for name, title, on_heading in sections:
         # A parameter drawn without a label, as a checkbox is, is found by the
-        # input widget itself
+        # input widget itself, as is a row built by `pair_inputs`
         widget = labels.get(name) or getattr(inputs, name, None)
         parent = widget.parentWidget() if widget is not None else None
         layout = parent.layout() if parent is not None else None
@@ -261,6 +459,34 @@ def add_input_sections(inputs, sections=INPUT_SECTIONS):
         row_layout.addStretch()
         row_layout.addWidget(companion)
         layout.insertWidget(index, row)
+
+
+def widen_inputs_panel(window, width=INPUTS_PANEL_WIDTH):
+    """Leave the inputs panel wide enough for the rows it now carries.
+
+    PyMeasure sizes the panel from the widest input it happens to hold, which
+    is narrower than the MFC rows read well at. The panel is still in a
+    splitter, so the user can widen or narrow it from here.
+
+    Args:
+        window: the main window.
+        width: least width in pixels.
+    """
+    dock = window.inputs.parentWidget()
+    if dock is None:
+        log.warning("Could not find the inputs dock to widen it")
+        return
+    dock.setMinimumWidth(width)
+    splitter = dock.parentWidget()
+    while splitter is not None and not isinstance(splitter, QtWidgets.QSplitter):
+        splitter = splitter.parentWidget()
+    if splitter is None:
+        return
+    sizes = splitter.sizes()
+    index = splitter.indexOf(dock)
+    if 0 <= index < len(sizes) and sizes[index] < width:
+        sizes[index] = width
+        splitter.setSizes(sizes)
 
 
 def fit_inputs_panel(window, floor=200):
@@ -346,6 +572,47 @@ def make_heater(furnace_type, port, address, data_label=FURNACE_DATA_LABEL):
     return heater_class(port, address, data_label)
 
 
+def make_mfc_bank(port=MFC_PORT, gases=None, calibrations=None):
+    """Build the bank of Aera mass flow controllers.
+
+    Args:
+        port: string name of the port they share, e.g. `ASRL6::INSTR`.
+        gases: gas each MFC is flowing, in channel order. Optional.
+        calibrations: flow calibration of each MFC, `None` where it has none.
+            Optional.
+
+    Returns:
+        The bank, not yet connected.
+    """
+    return MFCBank(
+        port,
+        MFC_ADDRESSES,
+        AeraFCPA78x,
+        MFC_DATA_LABELS,
+        channel_names=MFC_NAMES,
+        gases=gases if gases is not None else [remembered_gas(n) for n in MFC_NAMES],
+        calibrations=calibrations,
+        name="Aera MFCs",
+    )
+
+
+def mfc_calibration_from(selection) -> Optional[object]:
+    """Read the calibration a selection names, without letting it fail a step.
+
+    Args:
+        selection: the selection held by an MFC calibration input.
+
+    Returns:
+        The calibration, or `None` if there is none to be had or the file
+        cannot be read.
+    """
+    try:
+        return load_mfc_selection(selection)
+    except Exception as e:
+        log.warning("Could not read the MFC calibrations: %s", e)
+        return None
+
+
 class S2Procedure(nupylab_procedure.NupylabProcedure):
     """Procedure for running high impedance station GUI.
 
@@ -373,6 +640,10 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         PO2_VOLTMETER_PORT,
         SETTINGS.get("nanovoltmeter_port", ""),
         SETTINGS.get("voltmeter_port", ""),
+    )
+    # The MFCs share one serial port, offered the same way
+    mfc_resources = resource_choices(
+        resources, MFC_PORT, SETTINGS.get("mfc_port", "")
     )
 
     #Furnace parameters
@@ -429,6 +700,57 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         ui_class=CalibrationInput,
     )
 
+    # Mass flow controller parameters. The gas each MFC is flowing decides
+    # which calibration is in use, so the two are kept side by side, one row
+    # per MFC. Both are remembered between sessions, see `remembered_gas`.
+    mfc_port: ListParameter = ListParameter(
+        "MFC Port",
+        choices=mfc_resources,
+        default=SETTINGS.get("mfc_port", MFC_PORT),
+        ui_class=None,
+    )
+    mfc1_gas: Parameter = Parameter(
+        "MFC 1 Gas", default=remembered_gas("MFC 1"), ui_class=GasInput
+    )
+    mfc1_calibration: Parameter = Parameter(
+        "MFC 1 Calibration",
+        default=remembered_calibration("MFC 1"),
+        ui_class=MFCCalibrationInput,
+    )
+    mfc2_gas: Parameter = Parameter(
+        "MFC 2 Gas", default=remembered_gas("MFC 2"), ui_class=GasInput
+    )
+    mfc2_calibration: Parameter = Parameter(
+        "MFC 2 Calibration",
+        default=remembered_calibration("MFC 2"),
+        ui_class=MFCCalibrationInput,
+    )
+    mfc3_gas: Parameter = Parameter(
+        "MFC 3 Gas", default=remembered_gas("MFC 3"), ui_class=GasInput
+    )
+    mfc3_calibration: Parameter = Parameter(
+        "MFC 3 Calibration",
+        default=remembered_calibration("MFC 3"),
+        ui_class=MFCCalibrationInput,
+    )
+    mfc4_gas: Parameter = Parameter(
+        "MFC 4 Gas", default=remembered_gas("MFC 4"), ui_class=GasInput
+    )
+    mfc4_calibration: Parameter = Parameter(
+        "MFC 4 Calibration",
+        default=remembered_calibration("MFC 4"),
+        ui_class=MFCCalibrationInput,
+    )
+
+    # One flow per MFC per step, in sccm. A step that asks for zero closes
+    # that MFC rather than setting it to flow nothing. The unit is written
+    # `cc/min`, the same number under a name Pint knows, see
+    # :attr:`~nupylab.instruments.mfc.aera_mfc.AeraMFC.DATA_SUFFIXES`.
+    mfc1_setpoint: FloatParameter = FloatParameter("MFC 1 Flow", units="cc/min", default=0)
+    mfc2_setpoint: FloatParameter = FloatParameter("MFC 2 Flow", units="cc/min", default=0)
+    mfc3_setpoint: FloatParameter = FloatParameter("MFC 3 Flow", units="cc/min", default=0)
+    mfc4_setpoint: FloatParameter = FloatParameter("MFC 4 Flow", units="cc/min", default=0)
+
     eis_toggle: ListParameter = ListParameter(
         "Run eis", choices=["True", "False"], default="False", ui_class=None
     )
@@ -439,7 +761,9 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     amplitude_voltage: FloatParameter = FloatParameter("Amplitude Voltage", units="V")
     points_per_decade: IntegerParameter = IntegerParameter("Points Per Decade")
 
-    # Units in parentheses must be valid pint units
+    # Units in parentheses must be valid pint units, except that a percentage
+    # is written `(%)`, which neither the plot nor the results formatter reads
+    # as units, so those columns are written and labelled as they stand
     # First two entries must be "System Time" and "Time (s)"
     DATA_COLUMNS: List[str] = [
         "System Time",
@@ -455,12 +779,16 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "pO2 Sensor Temperature (degC)",
         "pO2 (atm)",
         "pO2 Sensor Voltage (V)",
-    ]
+    ] + [label for group in MFC_DATA_LABELS for label in group]
 
     TABLE_PARAMETERS: Dict[str, str] = {
         "Target Temperature [C]": "target_temperature",
         "Ramp Rate [C/min]": "ramp_rate",
         "Dwell Time [min]": "dwell_time",
+        "MFC 1 (sccm)": "mfc1_setpoint",
+        "MFC 2 (sccm)": "mfc2_setpoint",
+        "MFC 3 (sccm)": "mfc3_setpoint",
+        "MFC 4 (sccm)": "mfc4_setpoint",
         "eis? [True/False]": "eis_toggle",
         "EIS Technique": "potentiostat_technique",
         "Initial Ewe or I [V or A]": "initial_step",
@@ -483,7 +811,16 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "Furnace Temperature (degC)",
         "pO2 (atm)",
         ("pO2 Sensor Temperature (degC)", "pO2 Sensor Voltage (V)"),
+        ("MFC 1 Flow (%)", "MFC 2 Flow (%)"),
+        ("MFC 3 Flow (%)", "MFC 4 Flow (%)"),
     ]
+    # A measured column drawn beside what was asked for, dashed and in the
+    # same colour. The MFC docks plot percent rather than sccm, so that an
+    # uncalibrated MFC still shows.
+    Y_AXIS_SETPOINTS: Dict[str, str] = {
+        "{} Flow (%)".format(name): "{} Setpoint (%)".format(name)
+        for name in MFC_NAMES
+    }
     # Inputs must match name of selected procedure parameters
     INPUTS: List[str] = [
         "record_time",
@@ -497,6 +834,15 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "po2_voltmeter_port",
         "po2_calibration",
         "po2_record",
+        "mfc_port",
+        "mfc1_gas",
+        "mfc1_calibration",
+        "mfc2_gas",
+        "mfc2_calibration",
+        "mfc3_gas",
+        "mfc3_calibration",
+        "mfc4_gas",
+        "mfc4_calibration",
     ]
 
     @classmethod
@@ -527,6 +873,30 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
             for k, v in errors.items()
         }
 
+    @property
+    def mfc_gases(self) -> List[str]:
+        """Get the gas each MFC is flowing, in channel order."""
+        return [
+            str(getattr(self, "mfc{}_gas".format(i)))
+            for i in range(1, len(MFC_NAMES) + 1)
+        ]
+
+    @property
+    def mfc_calibrations(self) -> List[Optional[object]]:
+        """Get the flow calibration of each MFC, in channel order."""
+        return [
+            mfc_calibration_from(getattr(self, "mfc{}_calibration".format(i)))
+            for i in range(1, len(MFC_NAMES) + 1)
+        ]
+
+    @property
+    def mfc_setpoints(self) -> List[float]:
+        """Get this step's wanted flow for each MFC in sccm, in channel order."""
+        return [
+            float(getattr(self, "mfc{}_setpoint".format(i)))
+            for i in range(1, len(MFC_NAMES) + 1)
+        ]
+
     def set_instruments(self) -> None:
         """Set and configure instruments list.
 
@@ -537,7 +907,9 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         `active_instruments` attributes.
         """
         if self.previous_procedure is not None:
-            furnace, potentiostat, po2_sensor = self.previous_procedure.instruments
+            furnace, potentiostat, po2_sensor, mfcs = (
+                self.previous_procedure.instruments
+            )
         else:
             furnace = make_heater(
                 self.furnace_type, self.furnace_port, self.furnace_address
@@ -549,6 +921,7 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
                 self.po2_voltmeter_port,
                 PO2_DATA_LABELS,
             )
+            mfcs = make_mfc_bank(self.mfc_port)
             potentiostat = Potentiostat(
                 self.potentiostat_port,
                 self.potentiostat_model,
@@ -563,7 +936,7 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
                     "Phase (degrees)",
                 ),
             )
-        self.instruments = (furnace, potentiostat, po2_sensor)
+        self.instruments = (furnace, potentiostat, po2_sensor, mfcs)
         furnace.set_parameters(self.target_temperature, self.ramp_rate, self.dwell_time)
         if str(self.eis_toggle).lower() == "true":
             self.active_instruments = [furnace, potentiostat]
@@ -580,6 +953,7 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
             )
         else:
             self.active_instruments = [furnace]
+        self._add_mfcs(mfcs)
         if self.po2_record:
             self._add_po2_sensor(po2_sensor)
         else:
@@ -587,6 +961,42 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
             # empty, so nothing is read, recorded or plotted for them
             log.info("Not recording pO2 this step")
 
+    def _add_mfcs(self, mfcs) -> None:
+        """Set the gases and flows for this step, and add the MFCs.
+
+        A step that asks for no gas at all can run without the MFC bank, which
+        is how a station that is not wired to one, or has it switched off,
+        still runs. A step that asks for a flow cannot: a step that silently
+        did not flow the gas it was given would be worse than one that stops.
+
+        Args:
+            mfcs: the bank to flow with.
+
+        Raises:
+            NupylabError: if a flow was asked for and the bank cannot deliver
+                it, because it does not answer or has no calibration for the
+                gas in use.
+        """
+        setpoints = self.mfc_setpoints
+        for index, (gas, calibration) in enumerate(
+            zip(self.mfc_gases, self.mfc_calibrations)
+        ):
+            mfcs.set_gas(index, gas)
+            mfcs.set_calibration(index, calibration)
+        mfcs.set_parameters(setpoints)
+        wanted = any(setpoints)
+        try:
+            if not mfcs.connected:
+                mfcs.connect()
+        except Exception as e:
+            if wanted:
+                raise
+            log.warning(
+                "MFCs unavailable and no gas was asked for, continuing "
+                "without them: %s", e
+            )
+            return
+        self.active_instruments.append(mfcs)
 
     def _add_po2_sensor(self, po2_sensor) -> None:
         """Calibrate the pO2 sensor and add it to the measurement.
@@ -651,9 +1061,21 @@ def main(*args):
         PO2_DATA_LABELS,
     )
 
+    # The MFC port is likewise only opened when the panel connects or a
+    # setpoint is applied, so a bank that is switched off costs nothing here.
+    mfcs = make_mfc_bank(inputs.mfc_port.value())
+
     # The LabJack driver is only loaded when the valve panel connects, so a
     # station without one, or without ljackuw.dll, still opens the GUI
     solenoid = LabJackSolenoid()
+
+    def gas_input(index):
+        """Get the gas drop-down of one MFC, counting from zero."""
+        return getattr(inputs, "mfc{}_gas".format(index + 1))
+
+    def calibration_input(index):
+        """Get the calibration entry of one MFC, counting from zero."""
+        return getattr(inputs, "mfc{}_calibration".format(index + 1))
 
     # Each controller supplies its own panel, so the Manual Control tab is
     # rebuilt when the furnace type changes rather than patched in place.
@@ -668,6 +1090,7 @@ def main(*args):
             instruments.append(potentiostat)
         instruments.append(po2_sensor)
         instruments.append(solenoid)
+        instruments.append(mfcs)
         return instruments
 
     def disconnect_control_instruments():
@@ -724,6 +1147,7 @@ def main(*args):
         window.tabs.addTab(control, "Manual Control")
         # The rebuilt panel starts from whatever the inputs panel has chosen
         sync_po2_calibration()
+        sync_mfc_selections()
 
     def sync_connection_settings(*_):
         """Apply inputs panel connection settings on next control tab connect."""
@@ -741,13 +1165,17 @@ def main(*args):
             nanovoltmeter = inputs.po2_nanovoltmeter_port.value()
             voltmeter = inputs.po2_voltmeter_port.value()
             po2_sensor.set_connection(nanovoltmeter, voltmeter)
+            mfc_port = inputs.mfc_port.value()
+            mfcs.set_connection(mfc_port)
             # Remembered, so the station opens on its own ports next time
             if (
                 SETTINGS.get("nanovoltmeter_port") != nanovoltmeter
                 or SETTINGS.get("voltmeter_port") != voltmeter
+                or SETTINGS.get("mfc_port") != mfc_port
             ):
                 SETTINGS["nanovoltmeter_port"] = nanovoltmeter
                 SETTINGS["voltmeter_port"] = voltmeter
+                SETTINGS["mfc_port"] = mfc_port
                 save_settings(SETTINGS)
         except Exception as e:
             _control_log.warning("Could not read connection settings: %s", e)
@@ -772,6 +1200,99 @@ def main(*args):
             calibration.b,
             calibration.describe(),
         )
+
+    def sync_mfc_selections(*_):
+        """Give the Manual Control bank the gases and calibrations shown.
+
+        Runs at startup and whenever a gas or a calibration is changed, so the
+        tab and a queued experiment flow the same way.
+        """
+        for index in range(len(MFC_NAMES)):
+            mfcs.set_gas(index, gas_input(index).value())
+            mfcs.set_calibration(index, calibration_input(index).calibration)
+
+    def on_gas_changed(index, gas):
+        """Follow a gas change: remember it, and look its calibration up.
+
+        A pair with no calibration on file is worth asking about there and
+        then, since the user has just said what the MFC is flowing and the
+        calibration is what turns that into sccm.
+
+        Args:
+            index: MFC index, counting from zero.
+            gas: the gas now selected.
+        """
+        name = MFC_NAMES[index]
+        remember_gas(name, gas)
+        entry = calibration_input(index)
+        entry.set_context(mfc=name, gas=gas)
+        mfcs.set_gas(index, gas)
+        _control_log.info("%s set to flow %s", name, gas)
+        if entry.missing:
+            _control_log.warning(
+                "No flow calibration for %s in %s", name, gas
+            )
+            entry.select_calibration()
+
+    def on_mfc_calibration_changed(index):
+        """Take a newly chosen MFC calibration into use.
+
+        Args:
+            index: MFC index, counting from zero.
+        """
+        name = MFC_NAMES[index]
+        calibration = calibration_input(index).calibration
+        mfcs.set_calibration(index, calibration)
+        if calibration is None:
+            _control_log.warning(
+                "%s has no flow calibration for %s: it can only be set in "
+                "percent", name, gas_input(index).value()
+            )
+            return
+        _control_log.info(
+            "%s calibration in use: m = %.6g sccm/%%, b = %.6g sccm, %s",
+            name,
+            calibration.m,
+            calibration.b,
+            calibration.describe(),
+        )
+
+    def prompt_for_missing_calibrations():
+        """Ask for a calibration for each MFC and gas that has none.
+
+        The newest calibration for each MFC in the gas it was last set to
+        flow is loaded at startup. Where the station has never recorded one
+        for that pair, there is nothing to turn a percent into sccm, so it is
+        worth saying so once rather than waiting for a setpoint to be refused.
+        """
+        missing = [
+            index
+            for index in range(len(MFC_NAMES))
+            if calibration_input(index).missing
+        ]
+        if not missing:
+            return
+        names = ", ".join(
+            "{} in {}".format(MFC_NAMES[i], gas_input(i).value() or "its gas")
+            for i in missing
+        )
+        box = QtWidgets.QMessageBox(window)
+        box.setWindowTitle("MFC Calibrations")
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setText("No flow calibration on file for {}.".format(names))
+        box.setInformativeText(
+            "Until one is chosen or recorded, these MFCs can only be set and "
+            "read in percent, not sccm."
+        )
+        choose = box.addButton(
+            "Select or Add...", QtWidgets.QMessageBox.AcceptRole
+        )
+        box.addButton("Later", QtWidgets.QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not choose:
+            return
+        for index in missing:
+            calibration_input(index).select_calibration()
 
     def on_furnace_type_changed(*_):
         """Swap the control tab over when a different controller is selected."""
@@ -798,12 +1319,27 @@ def main(*args):
 
     for name in (
         "furnace_port", "furnace_address", "potentiostat_port", "potentiostat_model",
-        "po2_nanovoltmeter_port", "po2_voltmeter_port",
+        "po2_nanovoltmeter_port", "po2_voltmeter_port", "mfc_port",
     ):
         connect_input(name, sync_connection_settings)
     connect_input("furnace_type", on_furnace_type_changed)
     inputs.po2_calibration.calibration_changed.connect(sync_po2_calibration)
     sync_po2_calibration()
+
+    for index, mfc_name in enumerate(MFC_NAMES):
+        entry = calibration_input(index)
+        # The add form offers every MFC the station has, not just this one
+        entry.mfc_names = MFC_NAMES
+        # The gas the GUI opens on may differ from the one the remembered
+        # selection was written for, e.g. after the settings file was edited
+        entry.set_context(mfc=mfc_name, gas=gas_input(index).value())
+        gas_input(index).gas_changed.connect(
+            lambda gas, i=index: on_gas_changed(i, gas)
+        )
+        entry.calibration_changed.connect(
+            lambda i=index: on_mfc_calibration_changed(i)
+        )
+    sync_mfc_selections()
 
     window.manager.queued.connect(disconnect_control_instruments)
     window.manager.running.connect(
@@ -820,7 +1356,9 @@ def main(*args):
     )
 
     move_input_to_file_block(window)
+    pair_inputs(window.inputs)
     add_input_sections(window.inputs)
+    widen_inputs_panel(window)
 
     def maximize():
         """Fill the screen, once the window is up.
@@ -839,6 +1377,9 @@ def main(*args):
         # only settled once the maximized layout has been through the event
         # loop, so that waits another turn
         QtCore.QTimer.singleShot(0, lambda: fit_inputs_panel(window))
+        # And the calibrations are asked about once the window is up, so the
+        # dialog has something to sit over
+        QtCore.QTimer.singleShot(0, prompt_for_missing_calibrations)
 
     window.show()
     QtCore.QTimer.singleShot(0, maximize)

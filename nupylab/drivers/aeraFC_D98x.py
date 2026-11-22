@@ -1,5 +1,5 @@
 
-from aera_mfc import AeraChannel
+from nupylab.drivers.aera_mfc import AeraChannel
 from pymeasure.instruments import Channel
 from pymeasure.instruments.validators import strict_discrete_set, strict_range
 

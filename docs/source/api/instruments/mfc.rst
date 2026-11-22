@@ -10,6 +10,14 @@ Aera MFC
    :undoc-members:
    :show-inheritance:
 
+MFC Calibration
+---------------
+
+.. automodule:: nupylab.instruments.mfc.mfc_calibration
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 ROD-4
 -----
 

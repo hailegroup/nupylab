@@ -13,12 +13,39 @@ A procedure requests this by making the ``Y_AXIS`` entry a two-item tuple of
 
 The right-axis curve of an experiment is drawn with a dashed line in the same
 color as its left-axis curve, so the two stay visually paired in the browser.
+
+A column may also be paired with the column that was *asked* for rather than
+measured, its setpoint. A procedure says so with a ``Y_AXIS_SETPOINTS``
+mapping of measured column to setpoint column::
+
+    Y_AXIS_SETPOINTS = {"MFC 1 Flow (%)": "MFC 1 Setpoint (%)"}
+
+Each such column is then drawn twice in its dock: the measurement and its
+setpoint, in the same color. The setpoint curve is only made for the column a
+dock opens on, so switching a dock to a different column shows the measurement
+alone.
+
+Every curve of one experiment is drawn in that experiment's color, so a dock
+carrying both axes and both setpoints has four lines of one color on it, told
+apart by their line style:
+
+==================  ==============
+Curve               Style
+==================  ==============
+Left measurement    solid
+Left setpoint       dashed
+Right measurement   dash-dotted
+Right setpoint      dotted
+==================  ==============
+
+A dock with no setpoints keeps the two styles it has always had, solid on the
+left and dashed on the right.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import pyqtgraph as pg
 from pyqtgraph.dockarea import Dock
@@ -34,6 +61,10 @@ log.addHandler(logging.NullHandler())
 
 #: Attribute tagged onto each curve to record which y axis it belongs to.
 RIGHT_AXIS_ATTR = "nupylab_right_axis"
+
+#: Attribute tagged onto a setpoint curve, holding the axis it belongs to,
+#: `left` or `right`. Absent on a curve that plots a measurement.
+SETPOINT_ATTR = "nupylab_setpoint_axis"
 
 YAxisEntry = Union[str, Sequence[str]]
 
@@ -76,12 +107,180 @@ def split_y_axis(
     return left_labels, right_labels
 
 
-class DualAxisPlotWidget(PlotWidget):
+class SetpointPlotWidget(PlotWidget):
+    """Plot widget that draws a column's setpoint beside it, dashed.
+
+    Behaves exactly as
+    :class:`~pymeasure.display.widgets.plot_widget.PlotWidget` for a column
+    that `setpoint_labels` does not name, which is every column of a procedure
+    that asks for no setpoints at all.
+
+    Args:
+        name: name of the widget.
+        columns: data columns selectable on the axis.
+        x_axis: column initially plotted on the x axis.
+        y_axis: column initially plotted on the y axis.
+        refresh_time: seconds between plot refreshes.
+        check_status: refresh curves only while their procedure is running.
+        linewidth: width of plotted curves.
+        parent: parent widget.
+        setpoint_labels: measured column to the column holding its setpoint.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        columns: Sequence[str],
+        x_axis: Optional[str] = None,
+        y_axis: Optional[str] = None,
+        refresh_time: float = 0.2,
+        check_status: bool = True,
+        linewidth: int = 1,
+        parent=None,
+        setpoint_labels: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Initialize the plot widget and note which columns have setpoints."""
+        # Read by `new_curve`, and set before the base class initializer in
+        # case anything it calls reaches for it.
+        self.setpoint_labels: Dict[str, str] = dict(setpoint_labels or {})
+        self._setpoint_curves: List[ResultsCurve] = []
+        super().__init__(
+            name, columns, x_axis, y_axis, refresh_time, check_status, linewidth, parent
+        )
+
+    # Building and keeping setpoint curves #
+
+    def _make_setpoint_curve(
+        self, results, color, column: Optional[str], side: str, **kwargs
+    ) -> Optional[ResultsCurve]:
+        """Build the dashed curve of a column's setpoint, if it has one.
+
+        Args:
+            results: results of the experiment being plotted.
+            color: color of the measured curve this one pairs with.
+            column: measured column the setpoint belongs to.
+            side: `left` or `right`, the axis the curve is drawn against.
+            **kwargs: as passed to :meth:`new_curve`, less the pen.
+
+        Returns:
+            The curve, or `None` if that column has no setpoint column.
+        """
+        setpoint = self.setpoint_labels.get(column) if column else None
+        if not setpoint:
+            return None
+        curve_kwargs = dict(kwargs)
+        curve_kwargs["antialias"] = False
+        # Four lines of one color share a dock that carries both axes and
+        # both setpoints, so each takes a style of its own
+        curve_kwargs["pen"] = pg.mkPen(
+            color=color,
+            width=self.linewidth,
+            style=(
+                QtCore.Qt.PenStyle.DotLine
+                if side == "right"
+                else QtCore.Qt.PenStyle.DashLine
+            ),
+        )
+        curve = ResultsCurve(
+            results,
+            wdg=self,
+            x=self.plot_frame.x_axis,
+            y=setpoint,
+            **curve_kwargs,
+        )
+        curve.setSymbol(None)
+        curve.setSymbolBrush(None)
+        setattr(curve, SETPOINT_ATTR, side)
+        if side == "right":
+            setattr(curve, RIGHT_AXIS_ATTR, True)
+        return curve
+
+    def _point_setpoint_curves(self, curves, column: Optional[str]) -> None:
+        """Point setpoint curves at the setpoint of the column now plotted.
+
+        A dock the user has switched to a column with no setpoint has nothing
+        to draw, so the curve is pointed back at the plotted column and
+        hidden. Leaving it on a column the results do not hold would make
+        every refresh fail.
+
+        Args:
+            curves: the setpoint curves of one axis.
+            column: measured column now plotted on that axis.
+        """
+        setpoint = self.setpoint_labels.get(column) if column else None
+        for curve in curves:
+            curve.y = setpoint or column
+            curve.setVisible(bool(setpoint))
+            try:
+                curve.update_data()
+            except Exception as e:  # A column the results do not hold yet
+                log.debug("Could not refresh a setpoint curve: %s", e)
+
+    def update_y_column(self, index: int) -> None:
+        """Plot the column at `index`, and follow it with its setpoint."""
+        super().update_y_column(index)
+        self._point_setpoint_curves(self._setpoint_curves, self.plot_frame.y_axis)
+
+    # Curves #
+
+    def new_curve(self, results, color=pg.intColor(0), **kwargs) -> List[ResultsCurve]:
+        """Return the curve for one set of results, and its setpoint curve."""
+        curves: List[ResultsCurve] = [
+            PlotWidget.new_curve(self, results, color=color, **kwargs)
+        ]
+        setpoint_curve = self._make_setpoint_curve(
+            results, color, self.plot_frame.y_axis, "left", **kwargs
+        )
+        if setpoint_curve is not None:
+            curves.append(setpoint_curve)
+        return curves
+
+    def load(self, curve) -> None:
+        """Add `curve` to the plot, as a measurement or as a setpoint."""
+        if getattr(curve, SETPOINT_ATTR, None) != "left":
+            super().load(curve)
+            return
+        curve.x = self.columns_x.currentText()
+        if curve not in self._setpoint_curves:
+            self._setpoint_curves.append(curve)
+            self.plot_frame.plot.addItem(curve)
+        self._point_setpoint_curves([curve], self.plot_frame.y_axis)
+
+    def remove(self, curve) -> None:
+        """Remove `curve` from the plot."""
+        if getattr(curve, SETPOINT_ATTR, None) != "left":
+            super().remove(curve)
+            return
+        self.plot_frame.plot.removeItem(curve)
+        if curve in self._setpoint_curves:
+            self._setpoint_curves.remove(curve)
+
+    def clear_widget(self) -> None:
+        """Remove every curve, setpoints included."""
+        super().clear_widget()
+        self._setpoint_curves.clear()
+
+    def preview_widget(self, parent=None) -> "SetpointPlotWidget":
+        """Return a widget suitable for preview during loading."""
+        return SetpointPlotWidget(
+            "Plot preview",
+            self.columns,
+            self.plot_frame.x_axis,
+            self.plot_frame.y_axis,
+            parent=parent,
+            setpoint_labels=self.setpoint_labels,
+        )
+
+
+class DualAxisPlotWidget(SetpointPlotWidget):
     """Plot widget with an independent right-hand y axis.
 
     The left axis behaves exactly as in
     :class:`~pymeasure.display.widgets.plot_widget.PlotWidget`. The right axis gets
     its own view box, column selector and curves, sharing the x axis of the left.
+
+    Either axis may also carry the dashed setpoint curve of the column it
+    plots, see :class:`SetpointPlotWidget`.
 
     Args:
         name: name of the widget.
@@ -93,6 +292,7 @@ class DualAxisPlotWidget(PlotWidget):
         check_status: refresh curves only while their procedure is running.
         linewidth: width of plotted curves.
         parent: parent widget.
+        setpoint_labels: measured column to the column holding its setpoint.
     """
 
     def __init__(
@@ -106,13 +306,23 @@ class DualAxisPlotWidget(PlotWidget):
         check_status: bool = True,
         linewidth: int = 1,
         parent=None,
+        setpoint_labels: Optional[Dict[str, str]] = None,
     ) -> None:
         """Initialize the plot widget and attach its right-hand axis."""
         # Read by `_setup_ui`, which the base class calls from its initializer.
         self.y_axis_right = y_axis_right
         self._right_curves: List[ResultsCurve] = []
+        self._right_setpoint_curves: List[ResultsCurve] = []
         super().__init__(
-            name, columns, x_axis, y_axis, refresh_time, check_status, linewidth, parent
+            name,
+            columns,
+            x_axis,
+            y_axis,
+            refresh_time,
+            check_status,
+            linewidth,
+            parent,
+            setpoint_labels=setpoint_labels,
         )
         self._setup_right_axis()
 
@@ -183,7 +393,7 @@ class DualAxisPlotWidget(PlotWidget):
         )
 
     def _update_right_curves(self) -> None:
-        for curve in self._right_curves:
+        for curve in self._right_curves + self._right_setpoint_curves:
             if self.check_status:
                 if curve.results.procedure.status == Procedure.RUNNING:
                     curve.update_data()
@@ -191,7 +401,7 @@ class DualAxisPlotWidget(PlotWidget):
                 curve.update_data()
 
     def _change_right_x_axis(self, axis: str) -> None:
-        for curve in self._right_curves:
+        for curve in self._right_curves + self._right_setpoint_curves:
             curve.x = axis
             curve.update_data()
 
@@ -206,16 +416,37 @@ class DualAxisPlotWidget(PlotWidget):
             curve.update_data()
         self._label_right_axis(axis)
         self.y_axis_right = axis
+        self._point_setpoint_curves(self._right_setpoint_curves, axis)
+
+    def _draws_setpoints(self) -> bool:
+        """Get whether either axis of this dock carries a setpoint curve.
+
+        `setpoint_labels` is handed to every dock, so it says what the
+        procedure asked for rather than what this dock draws.
+        """
+        return bool(
+            self.setpoint_labels.get(self.plot_frame.y_axis)
+            or self.setpoint_labels.get(self.y_axis_right)
+        )
 
     def new_curve(self, results, color=pg.intColor(0), **kwargs) -> List[ResultsCurve]:
-        """Return the left- and right-axis curves for one set of results."""
-        left_curve = super().new_curve(results, color=color, **kwargs)
-        setattr(left_curve, RIGHT_AXIS_ATTR, False)
+        """Return the curves of both axes, with their setpoints."""
+        curves: List[ResultsCurve] = list(
+            SetpointPlotWidget.new_curve(self, results, color=color, **kwargs)
+        )
 
         right_kwargs = dict(kwargs)
         right_kwargs.setdefault("antialias", False)
+        # Dashed pairs the right axis with the left, except where this dock
+        # also draws a dashed setpoint, which would then look the same
         right_kwargs["pen"] = pg.mkPen(
-            color=color, width=self.linewidth, style=QtCore.Qt.PenStyle.DashLine
+            color=color,
+            width=self.linewidth,
+            style=(
+                QtCore.Qt.PenStyle.DashDotLine
+                if self._draws_setpoints()
+                else QtCore.Qt.PenStyle.DashLine
+            ),
         )
         right_curve = ResultsCurve(
             results,
@@ -227,7 +458,14 @@ class DualAxisPlotWidget(PlotWidget):
         right_curve.setSymbol(None)
         right_curve.setSymbolBrush(None)
         setattr(right_curve, RIGHT_AXIS_ATTR, True)
-        return [left_curve, right_curve]
+        curves.append(right_curve)
+
+        right_setpoint = self._make_setpoint_curve(
+            results, color, self.y_axis_right, "right", **kwargs
+        )
+        if right_setpoint is not None:
+            curves.append(right_setpoint)
+        return curves
 
     def load(self, curve) -> None:
         """Add `curve` to the axis it was created for."""
@@ -235,6 +473,12 @@ class DualAxisPlotWidget(PlotWidget):
             super().load(curve)
             return
         curve.x = self.columns_x.currentText()
+        if getattr(curve, SETPOINT_ATTR, None) == "right":
+            if curve not in self._right_setpoint_curves:
+                self.right_viewbox.addItem(curve)
+                self._right_setpoint_curves.append(curve)
+            self._point_setpoint_curves([curve], self.y_axis_right)
+            return
         curve.y = self.columns_y_right.currentText()
         curve.update_data()
         if curve in self._right_curves:
@@ -249,15 +493,17 @@ class DualAxisPlotWidget(PlotWidget):
             super().remove(curve)
             return
         self.right_viewbox.removeItem(curve)
-        if curve in self._right_curves:
-            self._right_curves.remove(curve)
+        for curves in (self._right_curves, self._right_setpoint_curves):
+            if curve in curves:
+                curves.remove(curve)
 
     def clear_widget(self) -> None:
         """Remove the curves of both axes."""
         super().clear_widget()
-        for curve in list(self._right_curves):
-            self.right_viewbox.removeItem(curve)
-        self._right_curves.clear()
+        for curves in (self._right_curves, self._right_setpoint_curves):
+            for curve in list(curves):
+                self.right_viewbox.removeItem(curve)
+            curves.clear()
 
     def preview_widget(self, parent=None) -> "DualAxisPlotWidget":
         """Return a widget suitable for preview during loading."""
@@ -268,6 +514,7 @@ class DualAxisPlotWidget(PlotWidget):
             self.plot_frame.y_axis,
             self.y_axis_right,
             parent=parent,
+            setpoint_labels=self.setpoint_labels,
         )
 
 
@@ -282,6 +529,8 @@ class NupylabDockWidget(DockWidget):
         y_axis_labels: left y-axis column of each dock.
         y_axis_right_labels: right y-axis column of each dock, `None` entries
             giving a dock with a single y axis. Defaults to no right axes.
+        setpoint_labels: measured column to the column holding its setpoint. A
+            dock opening on such a column also draws the setpoint, dashed.
         linewidth: width of plotted curves.
         layout_path: directory in which the dock layout file is saved.
         layout_filename: name of the dock layout file.
@@ -295,6 +544,7 @@ class NupylabDockWidget(DockWidget):
         x_axis_labels: Optional[Sequence[str]] = None,
         y_axis_labels: Optional[Sequence[str]] = None,
         y_axis_right_labels: Optional[Sequence[Optional[str]]] = None,
+        setpoint_labels: Optional[Dict[str, str]] = None,
         linewidth: int = 1,
         layout_path: str = "./",
         layout_filename: str = "",
@@ -303,6 +553,7 @@ class NupylabDockWidget(DockWidget):
         """Initialize the dock area, adding a right axis where one is requested."""
         # Read by `_setup_ui`, which the base class calls from its initializer.
         self.y_axis_right_labels: List[Optional[str]] = list(y_axis_right_labels or ())
+        self.setpoint_labels: Dict[str, str] = dict(setpoint_labels or {})
         super().__init__(
             name,
             procedure_class,
@@ -325,24 +576,40 @@ class NupylabDockWidget(DockWidget):
             x_label = self.x_axis_labels[min(i, len(self.x_axis_labels) - 1)]
             y_label = self.y_axis_labels[min(i, len(self.y_axis_labels) - 1)]
             y_right_label = self._right_label(i)
+            wants_setpoints = bool(
+                self.setpoint_labels.get(y_label)
+                or (y_right_label and self.setpoint_labels.get(y_right_label))
+            )
 
             dock = Dock("Dock " + str(i + 1), closable=False, size=(200, 50))
             self.dock_area.addDock(dock)
-            if y_right_label is None:
-                plot_widget: PlotWidget = PlotWidget(
-                    "Results Graph",
-                    self.procedure_class.DATA_COLUMNS,
-                    x_label,
-                    y_label,
-                    linewidth=self.linewidth,
-                )
-            else:
-                plot_widget = DualAxisPlotWidget(
+            if y_right_label is not None:
+                plot_widget: PlotWidget = DualAxisPlotWidget(
                     "Results Graph",
                     self.procedure_class.DATA_COLUMNS,
                     x_label,
                     y_label,
                     y_right_label,
+                    linewidth=self.linewidth,
+                    setpoint_labels=self.setpoint_labels,
+                )
+            elif wants_setpoints:
+                plot_widget = SetpointPlotWidget(
+                    "Results Graph",
+                    self.procedure_class.DATA_COLUMNS,
+                    x_label,
+                    y_label,
+                    linewidth=self.linewidth,
+                    setpoint_labels=self.setpoint_labels,
+                )
+            else:
+                # A dock that needs neither a right axis nor a setpoint is
+                # left exactly as PyMeasure builds it
+                plot_widget = PlotWidget(
+                    "Results Graph",
+                    self.procedure_class.DATA_COLUMNS,
+                    x_label,
+                    y_label,
                     linewidth=self.linewidth,
                 )
             self.plot_frames.append(plot_widget)
@@ -361,7 +628,7 @@ class NupylabDockWidget(DockWidget):
         curves: List[Any] = []
         for plot_widget in self.plot_frames:
             curve = plot_widget.new_curve(results, color=color, **kwargs)
-            # Dual-axis plots return one curve per axis.
+            # Dual-axis and setpoint plots return one curve per drawn line.
             if isinstance(curve, (list, tuple)):
                 curves.extend(curve)
             else:
@@ -372,7 +639,13 @@ class NupylabDockWidget(DockWidget):
         """Remove the curves of every dock."""
         for plot_widget in self.plot_frames:
             plot_widget.plot.clear()
+            if isinstance(plot_widget, SetpointPlotWidget):
+                plot_widget._setpoint_curves.clear()
             if isinstance(plot_widget, DualAxisPlotWidget):
-                for curve in list(plot_widget._right_curves):
-                    plot_widget.right_viewbox.removeItem(curve)
-                plot_widget._right_curves.clear()
+                for curves in (
+                    plot_widget._right_curves,
+                    plot_widget._right_setpoint_curves,
+                ):
+                    for curve in list(curves):
+                        plot_widget.right_viewbox.removeItem(curve)
+                    curves.clear()

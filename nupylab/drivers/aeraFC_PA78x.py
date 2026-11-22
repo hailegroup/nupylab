@@ -1,5 +1,5 @@
 
-from aera_mfc import AeraChannel
+from nupylab.drivers.aera_mfc import AeraChannel
 
 
 class AeraFCPA78x(AeraChannel):
@@ -9,7 +9,7 @@ class AeraFCPA78x(AeraChannel):
         if 1 <= address <= 127:
             super().__init__(parent, address)
         else:
-            raise ValueError(f"Aera FC-D98x address must be between 1-127, not {address}.")
+            raise ValueError(f"Aera FC-PA78x address must be between 1-127, not {address}.")
 
     def write_eeprom(self):
         """Write variables of the current gas table to EEPROM.

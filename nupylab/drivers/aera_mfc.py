@@ -9,8 +9,42 @@ from pymeasure.instruments.validators import strict_discrete_set, strict_range
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
+#: Serial settings of the Aera digital interface. These are also what PyVISA
+#: opens a serial port with, so naming them changes nothing by itself; they are
+#: here so that a station whose converter is set differently has one place to
+#: say so, and so that the settings in use are visible rather than implied.
+DEFAULT_BAUD_RATE = 9600
+DEFAULT_DATA_BITS = 8
+DEFAULT_PARITY = pyvisa.constants.Parity.none
+DEFAULT_STOP_BITS = pyvisa.constants.StopBits.one
 
-def aera_scan(port, start=1, stop=8, stop_after_first=True):
+
+def _serial_settings(resource, **overrides):
+    """Get the serial settings to open a resource with.
+
+    Args:
+        resource: VISA resource name, e.g. `ASRL6::INSTR` or `COM6`.
+        **overrides: settings given by the caller, which win.
+
+    Returns:
+        Settings to pass to :meth:`pyvisa.ResourceManager.open_resource`, empty
+        for a resource that is not a serial port, since baud rate and parity
+        are not attributes such a session has.
+    """
+    name = str(resource).upper()
+    if not (name.startswith("ASRL") or name.startswith("COM")):
+        return dict(overrides)
+    settings = {
+        "baud_rate": DEFAULT_BAUD_RATE,
+        "data_bits": DEFAULT_DATA_BITS,
+        "parity": DEFAULT_PARITY,
+        "stop_bits": DEFAULT_STOP_BITS,
+    }
+    settings.update(overrides)
+    return settings
+
+
+def aera_scan(port, start=1, stop=8, stop_after_first=True, **settings):
     """Get addresses of connected Aera MFCs.
 
     This function will check for a response to a read command for each address
@@ -20,11 +54,12 @@ def aera_scan(port, start=1, stop=8, stop_after_first=True):
     :param int start: first address to scan
     :param int stop: final address to scan
     :param bool stop_after_first: terminate scan after first valid address
+    :param settings: serial settings to override, see :func:`_serial_settings`
 
     :returns: list of valid addresses
     """
     rm = pyvisa.ResourceManager()
-    inst = rm.open_resource(port)
+    inst = rm.open_resource(port, **_serial_settings(port, **settings))
     inst.write_termination = '\r'
     inst.read_termination = '\r'
     address_list = []
@@ -42,7 +77,7 @@ def aera_scan(port, start=1, stop=8, stop_after_first=True):
     return address_list
 
 
-def get_address(port, serial_num):
+def get_address(port, serial_num, **settings):
     """Get address of connected MFC from its serial number.
 
     :param str port: port of connected Aera MFC
@@ -52,7 +87,7 @@ def get_address(port, serial_num):
         does not correspond to any connected MFCs
     """
     rm = pyvisa.ResourceManager()
-    inst = rm.open_resource(port)
+    inst = rm.open_resource(port, **_serial_settings(port, **settings))
     inst.write_termination = '\r'
     inst.read_termination = '\r'
     try:
@@ -65,7 +100,7 @@ def get_address(port, serial_num):
     return address
 
 
-def set_address(port, serial_num, address):
+def set_address(port, serial_num, address, **settings):
     """Set address of connected MFC given its serial number.
 
     :param str port: port of connected MFC
@@ -76,7 +111,7 @@ def set_address(port, serial_num, address):
         does not correspond to any connected MFCs
     """
     rm = pyvisa.ResourceManager()
-    inst = rm.open_resource(port)
+    inst = rm.open_resource(port, **_serial_settings(port, **settings))
     inst.write_termination = '\r'
     inst.read_termination = '\r'
     hex_address = hex(address)[2:].zfill(2)
@@ -104,11 +139,29 @@ class AeraChannel(Channel):
         """Insert the address in 2-character hex format replacing `placeholder`."""
         return command.format_map({self.placeholder: self.hex_id})
 
+    @staticmethod
+    def _nibbles(code):
+        """Split a two-hex status code into its high and low nibbles.
+
+        :param str code: the code as the MFC reported it. The last two
+            characters are read, so a code that still carries the status
+            character in front of it is split the same way.
+
+        :returns: the high and low nibbles as integers, both zero for a code
+            that is not hexadecimal. That is worth a warning rather than an
+            exception: this runs while reporting a fault that has already
+            happened, and raising here would hide it.
+        """
+        digits = str(code or "").strip()[-2:].zfill(2)
+        try:
+            return int(digits[0], base=16), int(digits[1], base=16)
+        except ValueError:
+            log.warning("Aera MFC status code %r is not two hex digits", code)
+            return 0, 0
+
     def _read_error(self):
         """Convert two-hex error code to message(s)."""
-        error = self.error
-        error_4_7 = int(error[1], base=16)
-        error_0_3 = int(error[2], base=16)
+        error_4_7, error_0_3 = self._nibbles(self.error)
         for i, err in enumerate(AERA_ERRORS_0_3):
             if (2**i & error_0_3) == 2**i:
                 log.warning("Aera MFC %d %s", self.id, err)
@@ -120,9 +173,7 @@ class AeraChannel(Channel):
 
     def _read_alarm(self):
         """Convert two-hex alarm code to message(s)."""
-        alarm = self.alarm
-        external_alarm = int(alarm[1], base=16)
-        internal_alarm = int(alarm[2], base=16)
+        external_alarm, internal_alarm = self._nibbles(self.alarm)
         for i, alarm in enumerate(AERA_EXTERNAL_ALARMS):
             if (2**i & external_alarm) == 2**i:
                 log.warning("Aera MFC %d alarm: %s", self.id, alarm)
@@ -418,8 +469,9 @@ class AeraChannel(Channel):
     def check_set_errors(self):
         """Read 'OK' from MFC after setting."""
         response = self.read()
-        if response != 'OK':
-            errors = ["Error setting ROD-4.",]
+        if response.strip() != 'OK':
+            errors = [f"Error setting Aera MFC {self.id}, it answered "
+                      f"{response!r} rather than 'OK'.",]
         else:
             errors = []
         return errors
@@ -454,9 +506,17 @@ class AeraMFC(Instrument):
     """
 
     def __init__(self, adapter, name="Aera MFC Collection", **kwargs):
+        """Open the port the MFCs are connected to.
+
+        :param adapter: VISA resource name of the port, e.g. `ASRL6::INSTR`.
+        :param str name: name of the collection.
+        :param kwargs: passed on to the adapter. Baud rate, data bits, parity
+            and stop bits default to the settings named at the top of this
+            module, and are only set at all for a serial port.
+        """
         super().__init__(
             adapter, name, read_termination='\r', write_termination='\r',
-            includeSCPI=False, **kwargs
+            includeSCPI=False, **_serial_settings(adapter, **kwargs)
         )
 
     def add_channel(self, address, mfc_class=AeraChannel):
