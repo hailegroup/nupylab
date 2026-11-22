@@ -23,15 +23,16 @@ shows the sensor temperature, the pO2 in atm, and the sensor voltage, whether or
 not an experiment is queued. A queued experiment records all three as well,
 unless neither meter answers, in which case it runs without them.
 
-The solenoid valve is driven from the LabJack U12's AO1 output and appears in
-the Manual Control tab only, not in queued experiments. Its selector follows
-the station's LabVIEW front panel, where `True` applies no power to the valve
-and `False` powers it, at a drive voltage set from the panel. There is nothing
-to read back from it, so the panel has no connect button: Apply opens the
-LabJack if needed and writes, and the valve moves at no other time. Each write
-is recorded to `~/.nupylab/solenoid_valve.json` and shown in the panel as
-history, which is what this GUI wrote rather than where the valve is, since
-LabVIEW drives the same output.
+The solenoid valve selects between two gas mixes and is driven from the LabJack
+U12's AO1 output. It appears in the Manual Control tab only, not in queued
+experiments, and sits under the pO2 sensor panel rather than taking a column of
+its own. Gas Mix 1 applies no power to the valve and Gas Mix 2 powers it, at a
+drive voltage set from the panel. There is nothing to read back from it, so the
+panel has no connect button: Apply opens the LabJack if needed and writes, and
+the valve moves at no other time. Each write is recorded to
+`~/.nupylab/solenoid_valve.json` and shown in the panel as history, which is
+what this GUI wrote rather than where the valve is, since LabVIEW drives the
+same output.
 
 Every pO2 calibration the station has taken lives in one file,
 `nupylab/instruments/o2_sensor/po2_calibrations.csv`, a row per calibration of

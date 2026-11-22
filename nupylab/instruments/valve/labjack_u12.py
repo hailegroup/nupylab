@@ -1,7 +1,9 @@
 """Adapts the LabJack U12 driver to a NUPyLab instrument for solenoid control.
 
-The solenoid valve is driven from the U12's AO1 analog output, which is a screw
-terminal on the device. AO0 is held at 0 V.
+The solenoid valve selects which of two gas mixes reaches the station. It is
+driven from the U12's AO1 analog output, which is a screw terminal on the
+device, and AO0 is held at 0 V. Gas Mix 1 is the unpowered position and Gas
+Mix 2 the powered one.
 
 This mirrors the LabVIEW Call Library Function Node the station has used:
 `AOUpdate` in `ljackuw.dll`, called with `updateDigital` and `resetCounter`
@@ -51,11 +53,15 @@ log.addHandler(logging.NullHandler())
 class LabJackSolenoid(NupylabInstrument):
     """Solenoid valve driven by a LabJack U12 analog output.
 
-    The station's selector is a boolean whose sense is inverted with respect to
-    the drive voltage, matching the LabVIEW front panel:
+    The valve selects which of two gas mixes reaches the station, and its two
+    positions are the unpowered and powered states of the same output:
 
-        * `True` -- no power, the analog output is written 0 V
-        * `False` -- powered, the analog output is written `drive_voltage`
+        * Gas Mix 1 -- no power, the analog output is written 0 V
+        * Gas Mix 2 -- powered, the analog output is written `drive_voltage`
+
+    Internally a state is the boolean the LabVIEW front panel uses, where
+    `True` is Gas Mix 1 and so applies no power. :attr:`STATE_LABELS` maps the
+    two onto each other, and is the only place the names appear.
 
     The U12 analog outputs span 0 to 5 V and the valve needs more than 2 V, so
     the default drive voltage is 3 V.
@@ -76,6 +82,8 @@ class LabJackSolenoid(NupylabInstrument):
     DEFAULT_DRIVE_VOLTAGE: float = 3.0
     #: Analog output S2's solenoid valve is wired to, 1 for AO1.
     DEFAULT_CHANNEL: int = 1
+    #: Names of the two valve positions, keyed by their LabVIEW boolean.
+    STATE_LABELS: dict = {True: "Gas Mix 1", False: "Gas Mix 2"}
     #: Where :meth:`_record_write` keeps the last state this GUI applied.
     DEFAULT_STATE_FILE: Path = Path.home() / ".nupylab" / "solenoid_valve.json"
 
@@ -162,7 +170,7 @@ class LabJackSolenoid(NupylabInstrument):
 
     @property
     def state(self) -> bool:
-        """Get the selector state. `True` is unpowered, `False` is powered."""
+        """Get the selector state. `True` is Gas Mix 1, `False` is Gas Mix 2."""
         return self._state
 
     @property
@@ -216,12 +224,13 @@ class LabJackSolenoid(NupylabInstrument):
         nothing reads it back and losing it must not cost control of the valve.
 
         Args:
-            state: selector state written, `True` for no power.
+            state: selector state written, `True` for Gas Mix 1.
             voltage: voltage written, in volts.
         """
         record = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "state": bool(state),
+            "label": self.label_for(bool(state)),
             "voltage": float(voltage),
             "channel": self._channel,
             "channel_name": self.channel_name,
@@ -251,7 +260,7 @@ class LabJackSolenoid(NupylabInstrument):
         except (KeyError, TypeError, ValueError):
             stamp = "an unknown time"
         return (
-            f"This GUI last wrote {record.get('state')} "
+            f"This GUI last wrote {self.label_for(record.get('state'))} "
             f"({record['voltage']:.2f} V) at {stamp}"
         )
 
@@ -259,12 +268,42 @@ class LabJackSolenoid(NupylabInstrument):
         """Get the drive voltage a selector state corresponds to.
 
         Args:
-            state: `True` for no power, `False` for powered.
+            state: `True` for Gas Mix 1 and no power, `False` for Gas Mix 2.
 
         Returns:
             Voltage in volts to write to the valve's analog output.
         """
         return 0.0 if state else self._drive_voltage
+
+    @classmethod
+    def label_for(cls, state: Optional[bool]) -> str:
+        """Get the name of a valve position.
+
+        Args:
+            state: `True` for Gas Mix 1 and no power, `False` for Gas Mix 2.
+
+        Returns:
+            Name of the position, or a note if `state` is not one of the two.
+        """
+        return cls.STATE_LABELS.get(state, "an unknown position")
+
+    @classmethod
+    def state_for(cls, label: str) -> bool:
+        """Get the selector state a valve position's name corresponds to.
+
+        Args:
+            label: name of a position, as :attr:`STATE_LABELS` gives it.
+
+        Returns:
+            `True` for Gas Mix 1 and no power, `False` for Gas Mix 2.
+
+        Raises:
+            ValueError: if `label` names neither position.
+        """
+        for state, name in cls.STATE_LABELS.items():
+            if name == label:
+                return state
+        raise ValueError(f"{label!r} is not a valve position.")
 
     def set_connection(self, channel: int, id_num: Optional[int] = None) -> None:
         """Set the analog output and LabJack used by the next write.
@@ -366,7 +405,7 @@ class LabJackSolenoid(NupylabInstrument):
         """Set the selector state to apply on the next call to :meth:`start`.
 
         Args:
-            state: `True` for no power, `False` for powered.
+            state: `True` for Gas Mix 1 and no power, `False` for Gas Mix 2.
         """
         self._state = bool(state)
 
@@ -382,7 +421,7 @@ class LabJackSolenoid(NupylabInstrument):
         """Set the selector state and write it in one step.
 
         Args:
-            state: `True` for no power, `False` for powered.
+            state: `True` for Gas Mix 1 and no power, `False` for Gas Mix 2.
 
         Raises:
             NupylabError: if the LabJack is not connected.
@@ -428,6 +467,9 @@ class LabJackSolenoid(NupylabInstrument):
             instrument_name = "Solenoid Valve"
             record_columns = ["Solenoid Valve Voltage (V)"]
             data_recorded = QtCore.Signal(list)
+            # Short enough that a column of its own would be mostly empty, so
+            # it goes under the panel before it, the pO2 sensor on S2
+            stack_with_previous = True
 
             def __init__(self):
                 super().__init__("Solenoid Valve - LabJack U12")
@@ -439,16 +481,19 @@ class LabJackSolenoid(NupylabInstrument):
                 layout = QtWidgets.QVBoxLayout()
                 grid = QtWidgets.QGridLayout()
 
-                grid.addWidget(QtWidgets.QLabel("State"), 0, 0)
+                grid.addWidget(QtWidgets.QLabel("Gas Mix"), 0, 0)
                 self.state_combo = QtWidgets.QComboBox()
-                self.state_combo.addItems(["True", "False"])
+                self.state_combo.addItems(
+                    [
+                        instrument.label_for(True),
+                        instrument.label_for(False),
+                    ]
+                )
                 self.state_combo.setToolTip(
-                    "True applies no power to the valve, False powers it"
+                    f"{instrument.label_for(True)} applies no power to the "
+                    f"valve, {instrument.label_for(False)} powers it"
                 )
                 grid.addWidget(self.state_combo, 0, 1)
-                hint = QtWidgets.QLabel("True = no power")
-                hint.setStyleSheet("color: gray;")
-                grid.addWidget(hint, 0, 2)
 
                 grid.addWidget(QtWidgets.QLabel("Drive Voltage"), 1, 0)
                 self.voltage_spin = QtWidgets.QDoubleSpinBox()
@@ -463,14 +508,10 @@ class LabJackSolenoid(NupylabInstrument):
                 grid.addWidget(QtWidgets.QLabel("Analog Output"), 2, 0)
                 channel_label = QtWidgets.QLabel(instrument.channel_name)
                 channel_label.setToolTip(
-                    "Which U12 screw terminal the valve is wired to"
+                    "Which U12 screw terminal the valve is wired to. The other "
+                    "output is held at 0 V, since one call writes both."
                 )
                 grid.addWidget(channel_label, 2, 1)
-                other = QtWidgets.QLabel(
-                    f"AO{1 - instrument.channel} held at 0 V"
-                )
-                other.setStyleSheet("color: gray;")
-                grid.addWidget(other, 2, 2)
 
                 layout.addLayout(grid)
 
@@ -484,8 +525,11 @@ class LabJackSolenoid(NupylabInstrument):
                 btn_layout.addStretch()
                 layout.addLayout(btn_layout)
 
+                # One status line rather than separate applied and status
+                # lines, which only ever said the same thing, and the panel is
+                # stacked under another so its height is worth saving
                 self.applied_label = QtWidgets.QLabel(
-                    "Applied: nothing written this session"
+                    "Nothing written this session"
                 )
                 layout.addWidget(self.applied_label)
 
@@ -497,9 +541,6 @@ class LabJackSolenoid(NupylabInstrument):
                     "necessarily where the valve is now."
                 )
                 layout.addWidget(self.record_label)
-
-                self.status_label = QtWidgets.QLabel("Status: Idle")
-                layout.addWidget(self.status_label)
                 self.setLayout(layout)
 
             # Helpers #
@@ -514,19 +555,18 @@ class LabJackSolenoid(NupylabInstrument):
                     self._abort_callback()
 
             def _selected_state(self) -> bool:
-                return self.state_combo.currentText() == "True"
+                return instrument.state_for(self.state_combo.currentText())
 
             def _show_applied(self):
                 voltage = instrument.applied_voltage
                 self.record_label.setText(instrument.last_record_summary())
+                self.applied_label.setStyleSheet("")
                 if voltage is None:
-                    self.applied_label.setText(
-                        "Applied: nothing written this session"
-                    )
+                    self.applied_label.setText("Nothing written this session")
                     return
-                powered = "powered" if voltage else "no power"
                 self.applied_label.setText(
-                    f"Applied: {instrument.channel_name} {voltage:.2f} V ({powered})"
+                    f"{instrument.label_for(instrument.state)}, "
+                    f"{instrument.channel_name} at {voltage:.2f} V"
                 )
                 self.data_recorded.emit([f"{voltage:.3f}"])
 
@@ -540,16 +580,18 @@ class LabJackSolenoid(NupylabInstrument):
                     if not instrument.connected:
                         instrument.connect()
                     instrument.set_state(state)
-                    self.status_label.setText(f"Status: {state}")
                     self._show_applied()
                     _control_log.info(
-                        "Solenoid valve set %s, %s written %.2f V",
-                        state,
+                        "Solenoid valve set to %s, %s written %.2f V",
+                        instrument.label_for(state),
                         instrument.channel_name,
                         instrument.applied_voltage,
                     )
                 except Exception as e:
-                    self.status_label.setText(f"Status: Error - {e}")
+                    # The valve has not moved, so say so where the applied
+                    # state would otherwise be read as current
+                    self.applied_label.setText(f"Not applied: {e}")
+                    self.applied_label.setStyleSheet("color: #cc0000;")
                     _control_log.error("Solenoid valve write failed: %s", e)
 
         return SolenoidPanel()

@@ -341,7 +341,13 @@ class LivePlotWidget(QtWidgets.QWidget):
 
 
 class InstrumentControlWidget(QtWidgets.QWidget):
-    """Generic tab widget that assembles control panels from instruments."""
+    """Generic tab widget that assembles control panels from instruments.
+
+    Panels are laid out left to right in the order their instruments are
+    given. A panel that sets `stack_with_previous = True` is placed beneath
+    the panel before it instead of starting a column of its own, which suits a
+    short panel that would otherwise waste a column's width.
+    """
 
     def __init__(self, instruments: List = None,
                  abort_callback: Optional[Callable] = None,
@@ -416,8 +422,29 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                 if 'scanner' in cw_params:
                     kwargs['scanner'] = self._scanner
                 panel = instrument.control_widget(**kwargs)
-                panels_layout.addWidget(panel)
                 self._panels.append(panel)
+
+        # Panels sit side by side, except that a short one may ask to go under
+        # the panel before it rather than take a column of its own. Grouping
+        # them first keeps the single-panel case laid out exactly as before.
+        columns: List[List] = []
+        for panel in self._panels:
+            if columns and getattr(panel, 'stack_with_previous', False):
+                columns[-1].append(panel)
+            else:
+                columns.append([panel])
+
+        for column in columns:
+            if len(column) == 1:
+                panels_layout.addWidget(column[0])
+                continue
+            holder = QtWidgets.QWidget()
+            column_layout = QtWidgets.QVBoxLayout(holder)
+            column_layout.setContentsMargins(0, 0, 0, 0)
+            column_layout.setAlignment(QtCore.Qt.AlignTop)
+            for panel in column:
+                column_layout.addWidget(panel)
+            panels_layout.addWidget(holder)
 
         # Recording controls — instrument selector + record/save/delete buttons
         rec_group = QtWidgets.QGroupBox("Data Recording")
