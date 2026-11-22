@@ -403,6 +403,10 @@ class CalibrationInput(Input, QtWidgets.QWidget):
         self.select_btn.clicked.connect(self.select_calibration)
         layout.addWidget(self.select_btn)
 
+        # Each line is taken out of the entry while it has nothing to say,
+        # rather than left empty: what the panel shows with no calibration is
+        # one line of red under the button, not a line of red with the gap
+        # above it that the coefficients and the date would have filled.
         self.coefficients_label = QtWidgets.QLabel()
         self.coefficients_label.setWordWrap(True)
         layout.addWidget(self.coefficients_label)
@@ -417,6 +421,17 @@ class CalibrationInput(Input, QtWidgets.QWidget):
         layout.addWidget(self.warning_label)
 
         self.setLayout(layout)
+
+    @staticmethod
+    def _say(label, text: str) -> None:
+        """Put one line in the entry, and take it out again when it is empty.
+
+        Args:
+            label: the line to write.
+            text: what it is to say, empty to leave it out.
+        """
+        label.setText(text)
+        label.setVisible(bool(text))
 
     # The interface PyMeasure's Input mixin expects #
 
@@ -455,12 +470,13 @@ class CalibrationInput(Input, QtWidgets.QWidget):
             problem = str(e)
 
         if calibration is None:
-            self.coefficients_label.setText("")
-            self.date_label.setText("")
-            self.warning_label.setText(
+            self._say(self.coefficients_label, "")
+            self._say(self.date_label, "")
+            self._say(
+                self.warning_label,
                 problem
                 if problem
-                else "No calibration file found! Please select calibration!"
+                else "No calibration file found! Please select calibration!",
             )
             self.setToolTip(
                 "pO2 is the ideal Nernst response until a calibration is "
@@ -468,17 +484,19 @@ class CalibrationInput(Input, QtWidgets.QWidget):
             )
             return
 
-        self.coefficients_label.setText(
-            "a = {:.6g} V/K\nb = {:.6g} V".format(calibration.a, calibration.b)
+        self._say(
+            self.coefficients_label,
+            "a = {:.6g} V/K\nb = {:.6g} V".format(calibration.a, calibration.b),
         )
-        self.date_label.setText("Calibrated {}".format(calibration.date_text))
-        if calibration.older_than():
-            self.warning_label.setText(
-                "Warning! It has been more than 1 year since the last "
-                "calibration"
-            )
-        else:
-            self.warning_label.setText("")
+        self._say(
+            self.date_label, "Calibrated {}".format(calibration.date_text)
+        )
+        self._say(
+            self.warning_label,
+            "Warning! It has been more than 1 year since the last calibration"
+            if calibration.older_than()
+            else "",
+        )
         self.setToolTip("{}\nfrom {}".format(calibration.describe(), path))
 
     def select_calibration(self) -> None:
