@@ -815,6 +815,15 @@ class Keithley2182And182(NupylabInstrument):
                 layout.addRow(readouts)
 
                 self.status_label = QtWidgets.QLabel("Status: Not connected")
+                # An error message is as long as it is, and this panel shares
+                # a narrow column, so it wraps rather than widening it
+                self.status_label.setWordWrap(True)
+                # Room for the second line it wraps onto at this column's
+                # width, which a layout sizing it from its one-line hint
+                # would otherwise leave clipped
+                self.status_label.setMinimumHeight(
+                    2 * self.status_label.fontMetrics().height()
+                )
                 layout.addRow(self.status_label)
 
                 self.setLayout(layout)

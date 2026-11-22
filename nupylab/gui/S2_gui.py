@@ -33,7 +33,9 @@ in the inputs panel, one row per MFC: the gas from a drop-down which also
 offers `Add New Gas...`, and the calibration from the same kind of dialog the
 pO2 sensor uses. Under each of those rows is one line saying when that MFC
 was last calibrated and in what gas, or, in red, that it has no calibration
-for the gas it is set to. A calibration more than a year old is marked with a
+for the gas it is set to. Nothing is asked at launch: the red line is the
+whole of it until a gas is changed, when the calibration for the new pair is
+asked for if there is none. A calibration more than a year old is marked with a
 red exclamation mark beside its button, and the MFCs that carries are named
 in one red line under the last of them.
 
@@ -296,28 +298,40 @@ INPUT_SECTIONS = (
     ("mfc_port", "Mass Flow Controllers", None),
 )
 
-#: Pairs of inputs drawn on one row, under one label: the first input, the
-#: second input, the label to give the row, and whether that label is the
-#: group's bold heading rather than an ordinary field label.
+#: Pairs of inputs drawn as one row, under one label: the first input, the
+#: second input, the label to give the row, whether that label is the group's
+#: bold heading rather than an ordinary field label, and whether it stands
+#: over the inputs rather than beside them.
+#:
+#: A device named by what it is and then chosen from two drop-downs reads
+#: better with the name over them, and leaves the panel as narrow as the
+#: drop-downs themselves. An MFC row is named by nothing more than `MFC 1`,
+#: which costs no width beside its inputs and would waste a line above them.
 INPUT_PAIRS = (
-    ("furnace_type", "furnace_port", "Furnace Controller", False),
-    ("potentiostat", "potentiostat_model", "Potentiostat Model", True),
+    ("furnace_type", "furnace_port", "Furnace Controller", False, True),
+    ("potentiostat", "potentiostat_model", "Potentiostat Model", True, True),
     (
         "po2_nanovoltmeter_port",
         "po2_voltmeter_port",
         "Keithley Ports: 2182, 182",
         False,
+        True,
     ),
 ) + tuple(
-    ("mfc{}_gas".format(i), "mfc{}_calibration".format(i), name, False)
+    ("mfc{}_gas".format(i), "mfc{}_calibration".format(i), name, False, False)
     for i, name in enumerate(MFC_NAMES, start=1)
 )
 
-#: Least width in pixels to leave the inputs panel. It carries a row per MFC,
-#: each holding a gas and a button, which do not fit the width PyMeasure would
-#: otherwise settle on. What each calibration is goes on its own line under
-#: the row, so it is not what sets this.
-INPUTS_PANEL_WIDTH = 430
+#: Width in pixels of the Manual Control column holding the pO2 sensor and
+#: the solenoid valve, which are both narrower than the Biologic panel beside
+#: them. Lines too long for it wrap.
+MANUAL_COLUMN_WIDTH = 260
+
+#: Least width in pixels to leave the inputs panel. The widest thing in it is
+#: an MFC row, a name beside a gas and a button. What each calibration is, and
+#: what each device is called, go on lines of their own, so neither is what
+#: sets this.
+INPUTS_PANEL_WIDTH = 380
 
 
 def move_input_to_file_block(window, name="record_time"):
@@ -365,6 +379,10 @@ def pair_inputs(inputs, pairs=INPUT_PAIRS):
     port it is on, say, costs a row and says less than one label would. This
     puts both widgets on the first one's row and labels the row once.
 
+    A pair may ask for its label to stand over the inputs rather than beside
+    them, which reads better for a device named by what it is, and leaves the
+    panel no wider than the two drop-downs.
+
     An input that offers a `caption_widget` has it drawn on a line of its own
     under the row. What a calibration is runs to half a line of text, and
     beside the inputs it would set how wide the whole panel has to be.
@@ -374,11 +392,10 @@ def pair_inputs(inputs, pairs=INPUT_PAIRS):
 
     Args:
         inputs: the window's `InputsWidget`.
-        pairs: the first input, the second input, the label for the row, and
-            whether that label is the group's bold heading.
+        pairs: see :data:`INPUT_PAIRS`.
     """
     labels = getattr(inputs, "labels", {})
-    for first, second, title, heading in pairs:
+    for first, second, title, heading, stacked in pairs:
         first_widget = getattr(inputs, first, None)
         second_widget = getattr(inputs, second, None)
         if first_widget is None or second_widget is None:
@@ -425,11 +442,15 @@ def pair_inputs(inputs, pairs=INPUT_PAIRS):
         for widget in (first_widget, second_widget):
             layout.removeWidget(widget)
 
-        line_layout.addWidget(label)
         line_layout.addWidget(first_widget, 1)
         # An input whose caption is on the line below keeps its own width,
         # rather than being stretched to fill a row it no longer fills
         line_layout.addWidget(second_widget, 0 if caption is not None else 2)
+
+        if stacked:
+            row_layout.addWidget(label)
+        else:
+            line_layout.insertWidget(0, label)
         row_layout.addWidget(line)
 
         if caption is not None:
@@ -1256,9 +1277,10 @@ def main(*args):
             recording_beside_panels=True,
             fit_panels_height=True,
             button_feedback=True,
-            # Keep the pO2 and valve column to the Biologic panel's width, so
-            # the columns line up and what is left over fits another panel
-            column_width_from="Biologic",
+            # The pO2 and valve panels are both short of what the Biologic
+            # panel beside them needs, and holding their column to that width
+            # spent room the MFC panel wants. Their long lines wrap instead.
+            column_width=MANUAL_COLUMN_WIDTH,
         )
         current["control"] = control
         window.tabs.addTab(control, "Manual Control")
@@ -1375,43 +1397,6 @@ def main(*args):
             calibration.describe(),
         )
 
-    def prompt_for_missing_calibrations():
-        """Ask for a calibration for each MFC and gas that has none.
-
-        The newest calibration for each MFC in the gas it was last set to
-        flow is loaded at startup. Where the station has never recorded one
-        for that pair, there is nothing to turn a percent into sccm, so it is
-        worth saying so once rather than waiting for a setpoint to be refused.
-        """
-        missing = [
-            index
-            for index in range(len(MFC_NAMES))
-            if calibration_input(index).missing
-        ]
-        if not missing:
-            return
-        names = ", ".join(
-            "{} in {}".format(MFC_NAMES[i], gas_input(i).value() or "its gas")
-            for i in missing
-        )
-        box = QtWidgets.QMessageBox(window)
-        box.setWindowTitle("MFC Calibrations")
-        box.setIcon(QtWidgets.QMessageBox.Warning)
-        box.setText("No flow calibration on file for {}.".format(names))
-        box.setInformativeText(
-            "Until one is chosen or recorded, these MFCs can only be set and "
-            "read in percent, not sccm."
-        )
-        choose = box.addButton(
-            "Select or Add...", QtWidgets.QMessageBox.AcceptRole
-        )
-        box.addButton("Later", QtWidgets.QMessageBox.RejectRole)
-        box.exec()
-        if box.clickedButton() is not choose:
-            return
-        for index in missing:
-            calibration_input(index).select_calibration()
-
     def on_furnace_type_changed(*_):
         """Swap the control tab over when a different controller is selected."""
         if inputs.furnace_type.value() == current["type"]:
@@ -1498,9 +1483,6 @@ def main(*args):
         # only settled once the maximized layout has been through the event
         # loop, so that waits another turn
         QtCore.QTimer.singleShot(0, lambda: fit_inputs_panel(window))
-        # And the calibrations are asked about once the window is up, so the
-        # dialog has something to sit over
-        QtCore.QTimer.singleShot(0, prompt_for_missing_calibrations)
 
     window.show()
     QtCore.QTimer.singleShot(0, maximize)

@@ -253,15 +253,17 @@ class LabJackSolenoid(NupylabInstrument):
         """
         record = self._last_record
         if record is None:
-            return "No write recorded by this GUI"
+            return "Nothing written by this GUI yet"
         try:
             when = datetime.fromisoformat(record["timestamp"])
             stamp = when.strftime("%Y-%m-%d %H:%M")
         except (KeyError, TypeError, ValueError):
             stamp = "an unknown time"
+        # Kept short: this sits in a narrow column, and what it means is in
+        # the panel's tooltip rather than in the line itself
         return (
-            f"This GUI last wrote {self.label_for(record.get('state'))} "
-            f"({record['voltage']:.2f} V) at {stamp}"
+            f"Last wrote {self.label_for(record.get('state'))}, "
+            f"{record['voltage']:.2f} V, {stamp}"
         )
 
     def voltage_for(self, state: bool) -> float:
@@ -522,9 +524,20 @@ class LabJackSolenoid(NupylabInstrument):
                 self.applied_label = QtWidgets.QLabel(
                     "Nothing written this session"
                 )
+                self.applied_label.setWordWrap(True)
+                # Room for the second line it wraps onto at this column's
+                # width, which a layout sizing it from its one-line hint
+                # would otherwise leave clipped
+                self.applied_label.setMinimumHeight(
+                    2 * self.applied_label.fontMetrics().height()
+                )
                 layout.addWidget(self.applied_label)
 
                 self.record_label = QtWidgets.QLabel(instrument.last_record_summary())
+                self.record_label.setWordWrap(True)
+                self.record_label.setMinimumHeight(
+                    2 * self.record_label.fontMetrics().height()
+                )
                 self.record_label.setStyleSheet("color: gray;")
                 self.record_label.setToolTip(
                     "History of what this GUI wrote. The valve cannot be read "

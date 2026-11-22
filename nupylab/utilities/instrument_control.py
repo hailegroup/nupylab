@@ -357,6 +357,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                  fit_panels_height: bool = False,
                  button_feedback: bool = False,
                  column_width_from: Optional[str] = None,
+                 column_width: Optional[int] = None,
                  parent=None):
         """
         Args:
@@ -371,6 +372,11 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                 room left over is predictable. Columns are never narrowed
                 below what they need. Ignored for panels in a column of their
                 own, and when no panel answers to the name.
+            column_width: width in pixels for a stacked column, used instead
+                of `column_width_from` when both are given. For a column of
+                short panels that would otherwise be held to the width of a
+                much larger one beside it. A panel with a label set to wrap
+                takes the extra lines it needs.
         """
         super().__init__(parent)
         self._panels = []
@@ -381,6 +387,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         self._recording_beside_panels = recording_beside_panels
         self._fit_panels_height = fit_panels_height
         self._column_width_from = column_width_from
+        self._column_width = column_width
         self._setup_ui(instruments or [])
         if button_feedback:
             self._add_button_feedback()
@@ -441,7 +448,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
             else:
                 columns.append([panel])
 
-        reference_width = self._reference_panel_width()
+        reference_width = self._column_width or self._reference_panel_width()
 
         for column in columns:
             if len(column) == 1:
