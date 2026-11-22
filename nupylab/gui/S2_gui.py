@@ -92,6 +92,19 @@ sensor at all. Unchecked, the sensor is left out of the measurement
 and its three columns stay empty, so nothing is read, recorded or plotted for
 them; the Manual Control tab still reads it whenever its panel is connected.
 
+Sample ID and User Initials sit at the foot of the inputs panel, with the
+record time and the filename. Both are recorded in the header of every data
+file the experiment writes, and both also name the file. A saved file is
+called `YYMMDD_<initials>_<sample>_<step>.csv`: today's date and the User
+Initials are shown greyed out and locked at the start of the Filename field,
+since neither is typed into the name itself; what follows them is the user's,
+and is filled in from the Sample ID as it is typed, with spaces and anything
+a filename will not take turned into underscores. That part stays editable,
+so a name typed there by hand stands until the Sample ID is changed again.
+Both halves are read afresh when an experiment is queued, so a GUI left open
+overnight files the next morning's run under the new date, and every step of
+one queue is filed the same way.
+
 The Keithley and MFC ports are chosen in the inputs panel too, and default to
 the addresses S2 has them at. A station that picks others has them remembered
 in `nupylab/gui/s2_settings.json`, which, like the calibrations, is the
@@ -101,8 +114,10 @@ station's own and not kept in version control.
 import json
 import logging
 import os
+import re
 import sys
 import time
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Type, Union
 
 # Instrument Imports #
@@ -335,41 +350,255 @@ MANUAL_COLUMN_WIDTH = 260
 INPUTS_PANEL_WIDTH = 320
 
 
-def move_input_to_file_block(window, name="record_time"):
-    """Move one input down to sit with the filename and directory fields.
+#: Inputs that belong with the filename and directory fields at the foot of
+#: the panel rather than among the instrument settings, in the order they are
+#: drawn there. Two names together share a row, each beside its own label,
+#: which suits a pair of short entries and saves the panel a line. Sample ID
+#: is left on a row of its own, directly above the filename it names.
+FILE_BLOCK_INPUTS = (("record_time", "user_initials"), "sample_id")
+
+#: Characters an entry sharing a row is left room for. A record time is a
+#: second or two and a set of initials two or three letters, so neither is
+#: drawn at the width a text box asks for by default, which is what would
+#: otherwise decide how wide the whole panel has to be.
+FILE_BLOCK_ENTRY_CHARS = 8
+
+#: How a saved file is named before the part the user types: the date, then
+#: whose initials are in User Initials, e.g. `261121_DV_`.
+FILENAME_DATE_FORMAT = "%y%m%d"
+
+
+def cap_entry_width(widget, characters=FILE_BLOCK_ENTRY_CHARS):
+    """Keep a short entry from asking for the width of a full text box.
+
+    Only the most the entry may be drawn at changes; it is still free to be
+    narrower, and what it holds is untouched.
+
+    Args:
+        widget: the entry to cap.
+        characters: how many characters to leave room for.
+    """
+    metrics = widget.fontMetrics()
+    sample = "0" * characters
+    if hasattr(metrics, "horizontalAdvance"):
+        width = metrics.horizontalAdvance(sample)
+    else:  # Qt older than 5.11
+        width = metrics.width(sample)
+    # Room over the text itself for the frame, and for the arrows of a spin box
+    widget.setMaximumWidth(width + 28)
+
+
+def move_inputs_to_file_block(window, names=FILE_BLOCK_INPUTS):
+    """Move inputs down to sit with the filename and directory fields.
 
     An input that is about the recording rather than about an instrument
     belongs with them, not among the instrument settings. Only where it is
     drawn changes: PyMeasure still builds the widget and still reads the
     value from it, wherever it sits.
 
+    Names given together as a tuple share one row, each input beside its own
+    label rather than under it. Two short entries cost less there than two
+    rows of their own, which is a line the panel does not have to be long
+    enough for.
+
     Args:
         window: the main window.
-        name: the parameter to move.
+        names: the parameters to move, in the order they are to be drawn. An
+            entry may be a tuple of names to draw on one row.
     """
     inputs = window.inputs
-    widget = getattr(inputs, name, None)
-    if widget is None:
-        log.warning("No input named %s to move", name)
-        return
-    label = getattr(inputs, "labels", {}).get(name)
-    field_layout = widget.parentWidget().layout()
     dock = inputs.parentWidget()
     dock_layout = dock.layout() if dock is not None else None
-    if field_layout is None or dock_layout is None:
-        log.warning("Could not find the panel layouts to move %s", name)
+    if dock_layout is None:
+        log.warning("Could not find the panel layout to move inputs into")
         return
     anchor = getattr(window, "file_input", None)
     index = dock_layout.indexOf(anchor) if anchor is not None else -1
     if index < 0:
         # No filename field: settle for just below the other inputs
         index = dock_layout.indexOf(inputs) + 1
-    for moving in (label, widget):
-        if moving is None:
+
+    def take(name):
+        """Take one input and its label out of the inputs panel."""
+        widget = getattr(inputs, name, None)
+        if widget is None:
+            log.warning("No input named %s to move", name)
+            return None, None
+        label = getattr(inputs, "labels", {}).get(name)
+        parent = widget.parentWidget()
+        field_layout = parent.layout() if parent is not None else None
+        if field_layout is None:
+            log.warning("Could not find the panel layout holding %s", name)
+            return None, None
+        for moving in (label, widget):
+            if moving is not None:
+                field_layout.removeWidget(moving)
+        return label, widget
+
+    for entry in names:
+        if isinstance(entry, str):
+            for moving in take(entry):
+                if moving is None:
+                    continue
+                dock_layout.insertWidget(index, moving)
+                index += 1
             continue
-        field_layout.removeWidget(moving)
-        dock_layout.insertWidget(index, moving)
+
+        row = QtWidgets.QWidget()
+        row_layout = QtWidgets.QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        for name in entry:
+            label, widget = take(name)
+            if widget is None:
+                continue
+            if label is not None:
+                row_layout.addWidget(label, 0)
+            cap_entry_width(widget)
+            row_layout.addWidget(widget, 0)
+        # Room left over goes to the end of the row rather than to the
+        # entries, which are short and read better left where their labels are
+        row_layout.addStretch(1)
+        dock_layout.insertWidget(index, row)
         index += 1
+
+
+def dated_filename_prefix(window, now=None, name="user_initials"):
+    """Work out the locked start of a filename: the date and the initials.
+
+    Neither is typed into the filename: the date is today's, and the initials
+    are whatever User Initials says, so that changing that field renames the
+    files that follow without anything else being touched.
+
+    Args:
+        window: the main window.
+        now: the moment to date the name by, for testing. Defaults to now.
+        name: the parameter holding the user's initials.
+
+    Returns:
+        The prefix, e.g. `261121_DV_`, ending in the separator that the part
+        the user types follows. Initials left blank leave just the date.
+    """
+    stamp = (now or datetime.now()).strftime(FILENAME_DATE_FORMAT)
+    field = getattr(window.inputs, name, None)
+    initials = filename_tail(field.value()) if field is not None else ""
+    if not initials:
+        return "{}_".format(stamp)
+    return "{}_{}_".format(stamp, initials)
+
+
+def lock_filename_prefix(window):
+    """Give the filename field a locked start and an editable end.
+
+    The start is today's date and the User Initials, which are not typed into
+    the name itself: it is shown greyed out, beside the field, and cannot be
+    typed in. What follows it is the user's, and is filled in from Sample ID,
+    see :func:`follow_sample_id`.
+
+    The prefix is worked out afresh whenever it is shown or used, so a GUI
+    left open overnight files the next morning's experiment under the new
+    date, and an experiment is filed under whoever's initials are in the
+    panel when it is queued rather than when the window opened.
+
+    Args:
+        window: the main window.
+
+    Returns:
+        A function giving the prefix as it stands, which also refreshes what
+        the field shows, or `None` if the panel has no filename field.
+    """
+    file_input = getattr(window, "file_input", None)
+    filename_input = getattr(file_input, "filename_input", None)
+    layout = file_input.layout() if file_input is not None else None
+    index = layout.indexOf(filename_input) if layout is not None else -1
+    if filename_input is None or index < 0:
+        log.warning("No filename field to lock a prefix on")
+        return None
+
+    prefix_field = QtWidgets.QLineEdit()
+    prefix_field.setReadOnly(True)
+    prefix_field.setEnabled(False)
+    prefix_field.setFocusPolicy(QtCore.Qt.NoFocus)
+    prefix_field.setToolTip(
+        "Named for you: today's date and the User Initials above. The rest "
+        "of the name, after it, is yours, and starts as the Sample ID."
+    )
+
+    # The locked start and the part the user types are drawn as one field in
+    # two halves, so the whole name reads left to right on one line
+    row = QtWidgets.QWidget()
+    row_layout = QtWidgets.QHBoxLayout(row)
+    row_layout.setContentsMargins(0, 0, 0, 0)
+    row_layout.setSpacing(2)
+    layout.removeWidget(filename_input)
+    row_layout.addWidget(prefix_field, 0)
+    row_layout.addWidget(filename_input, 1)
+    layout.insertWidget(index, row)
+
+    def refresh():
+        """Show the prefix as it now stands, and give it back."""
+        text = dated_filename_prefix(window)
+        if prefix_field.text() != text:
+            prefix_field.setText(text)
+        # Measured every time rather than once: the field is built before it
+        # is in the panel, so the font it is finally drawn in may not be the
+        # one it started with
+        metrics = prefix_field.fontMetrics()
+        if hasattr(metrics, "horizontalAdvance"):
+            width = metrics.horizontalAdvance(text)
+        else:  # Qt older than 5.11
+            width = metrics.width(text)
+        prefix_field.setFixedWidth(width + 12)
+        return text
+
+    refresh()
+    # Whose initials the files carry is read from the panel as it is typed
+    initials = getattr(window.inputs, "user_initials", None)
+    if initials is not None and hasattr(initials, "textChanged"):
+        initials.textChanged.connect(lambda *_: refresh())
+    else:
+        log.warning("No User Initials input to name files after")
+    return refresh
+
+
+def filename_tail(text):
+    """Turn what the user typed into something a filename will take.
+
+    Spaces and anything Windows or PyMeasure will not take in a name become
+    underscores, so that a sample called `LSM 20/80` is filed as `LSM_20_80`
+    rather than refused.
+
+    Args:
+        text: a Sample ID or a set of initials, as typed.
+
+    Returns:
+        The name to end the file with, which may be empty.
+    """
+    cleaned = re.sub(r'[<>:"/\\|?*{}\s]+', "_", str(text).strip())
+    return cleaned.strip("_")
+
+
+def follow_sample_id(window, name="sample_id"):
+    """Fill the editable end of the filename in from the Sample ID.
+
+    Typing a Sample ID names the file after it, which is what the name is
+    wanted for; the field stays editable, so a name typed there by hand
+    stands until the Sample ID is changed again.
+
+    Args:
+        window: the main window.
+        name: the parameter holding the sample ID.
+    """
+    field = getattr(window.inputs, name, None)
+    if field is None or not hasattr(field, "textChanged"):
+        log.warning("No input named %s to name files after", name)
+        return
+
+    def update(text):
+        window.file_input.filename = filename_tail(text)
+
+    field.textChanged.connect(update)
+    update(field.value())
 
 
 def pair_inputs(inputs, pairs=INPUT_PAIRS):
@@ -776,6 +1005,12 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         resources, MFC_PORT, SETTINGS.get("mfc_port", "")
     )
 
+    # Who ran it and on what: recorded in the data file's header, and the
+    # Sample ID is what the saved file is named after, see
+    # :func:`follow_sample_id`
+    sample_id: Parameter = Parameter("Sample ID", default="")
+    user_initials: Parameter = Parameter("User Initials", default="")
+
     #Furnace parameters
     furnace_type: ListParameter = ListParameter(
         "Furnace Controller",
@@ -932,7 +1167,16 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
     # Entries in axes must have matches in procedure DATA_COLUMNS.
     # Number of plots is determined by the longer of X_AXIS or Y_AXIS
     # An entry naming two columns gives one plot with left and right y axes
-    X_AXIS: List[str] = ["Z_re (ohm)","Frequency (Hz)", "Time (s)"]
+    # A list shorter than the number of docks has its last entry reused, so
+    # everything after the three Bode and Nyquist docks is plotted against
+    # time. The |Z| and the phase docks are both halves of one Bode plot and
+    # both belong over frequency.
+    X_AXIS: List[str] = [
+        "Z_re (ohm)",
+        "Frequency (Hz)",
+        "Frequency (Hz)",
+        "Time (s)",
+    ]
     Y_AXIS: List[Union[str, Tuple[str, str]]] = [
         "-Z_im (ohm)",
         "|Z| (ohm)",
@@ -952,9 +1196,17 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         "{} Flow (%)".format(name): "{} Setpoint (%)".format(name)
         for name in MFC_NAMES
     }
+    # Columns measured over decades rather than over a range: a frequency
+    # sweep runs from MHz to mHz and a pO2 from air to parts per billion, and
+    # on a linear axis all but the top decade of either is squeezed into
+    # nothing. A dock showing one of these draws that axis on a log scale,
+    # whichever axis it is on, and goes back to linear when moved off it.
+    LOG_COLUMNS: Tuple[str, ...] = ("Frequency (Hz)", "pO2 (atm)")
     # Inputs must match name of selected procedure parameters
     INPUTS: List[str] = [
         "record_time",
+        "sample_id",
+        "user_initials",
         "furnace_type",
         "furnace_port",
         "furnace_address",
@@ -1503,7 +1755,12 @@ def main(*args):
         lambda: current["control"].set_enabled_for_experiment(False)
     )
 
-    move_input_to_file_block(window)
+    move_inputs_to_file_block(window)
+    # The panel names the start of each file and the user types the end of
+    # it, see `lock_filename_prefix`. `queue` reads the prefix once per queue,
+    # so every step of one experiment is filed the same way.
+    window.filename_prefix = lock_filename_prefix(window)
+    follow_sample_id(window)
     pair_inputs(window.inputs)
     mfc_warning["label"] = add_mfc_warning(window.inputs)
     add_input_sections(window.inputs)

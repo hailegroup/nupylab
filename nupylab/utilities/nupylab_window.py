@@ -13,7 +13,7 @@ from typing import Dict, Iterator, List, Optional, Sequence, TYPE_CHECKING, Type
 import pymeasure.display.windows.managed_dock_window as managed_dock_window
 from nupylab.utilities.dock_widgets import NupylabDockWidget, split_y_axis
 from nupylab.utilities.parameter_table import ParameterTableWidget
-from pymeasure.display.Qt import QtWidgets
+from pymeasure.display.Qt import QtGui, QtWidgets
 from pymeasure.display.windows.managed_dock_window import ManagedDockWindow
 from pymeasure.experiment import (
     BooleanParameter,
@@ -37,6 +37,7 @@ def _dock_widget_class(
     y_axis_right_labels: Sequence[Optional[str]],
     y_axis_extra_labels: Optional[Sequence[Sequence[str]]] = None,
     setpoint_labels: Optional[Dict[str, str]] = None,
+    log_columns: Optional[Sequence[str]] = None,
 ) -> Iterator[None]:
     """Build the Dock Tab with right-hand y axes for the duration of the context.
 
@@ -53,6 +54,8 @@ def _dock_widget_class(
         setpoint_labels: measured column to the column holding its setpoint, so
             that a dock opening on such a column draws the setpoint dashed
             beside it.
+        log_columns: columns whose axis is drawn on a log scale while a dock
+            is showing them.
     """
     original = managed_dock_window.DockWidget
     managed_dock_window.DockWidget = functools.partial(
@@ -60,6 +63,7 @@ def _dock_widget_class(
         y_axis_right_labels=y_axis_right_labels,
         y_axis_extra_labels=[list(entry) for entry in (y_axis_extra_labels or ())],
         setpoint_labels=dict(setpoint_labels or {}),
+        log_columns=list(log_columns or ()),
     )
     try:
         yield
@@ -130,6 +134,11 @@ class NupylabWindow(ManagedDockWindow):
         setpoint_labels: Dict[str, str] = dict(
             getattr(procedure_class, "Y_AXIS_SETPOINTS", {}) or {}
         )
+        # Columns measured over decades rather than over a range, whose axis
+        # is drawn on a log scale, see :mod:`nupylab.utilities.dock_widgets`
+        log_columns: List[str] = list(
+            getattr(procedure_class, "LOG_COLUMNS", ()) or ()
+        )
         if hasattr(procedure_class, "INPUTS"):
             kwargs.setdefault("inputs", procedure_class.INPUTS)
         table_column_labels = list(procedure_class.TABLE_PARAMETERS)
@@ -153,10 +162,18 @@ class NupylabWindow(ManagedDockWindow):
                         if name in name_to_label}
 
         with contextlib.ExitStack() as stack:
-            if y_axis_right_labels or y_axis_extra_labels or setpoint_labels:
+            if (
+                y_axis_right_labels
+                or y_axis_extra_labels
+                or setpoint_labels
+                or log_columns
+            ):
                 stack.enter_context(
                     _dock_widget_class(
-                        y_axis_right_labels, y_axis_extra_labels, setpoint_labels
+                        y_axis_right_labels,
+                        y_axis_extra_labels,
+                        setpoint_labels,
+                        log_columns,
                     )
                 )
             super().__init__(
@@ -198,7 +215,48 @@ class NupylabWindow(ManagedDockWindow):
                 self.tabs.addTab(tab_widget, tab_name)
 
         self.setWindowTitle(f"{procedure_class.__name__}")
+        self._keep_log_tab_text_themed()
         self.manager.failed.connect(self._on_failed)
+
+    def _keep_log_tab_text_themed(self) -> None:
+        """Leave the Experiment Log tab's name whatever colour the theme gives.
+
+        PyMeasure blinks that tab's name when something is logged as a warning
+        or an error, and paints it back to a hard-coded black between blinks
+        and once the tab has been read. On a dark theme that is a name the
+        same colour as the tab behind it, so the Experiment Log tab reads as
+        blank while every other tab name is white.
+
+        Painting it back to no colour at all instead leaves the tab bar to
+        draw the name as it draws the others, under either theme. Only the
+        colour it returns to changes: the blink itself, and the icon that
+        comes with it, are PyMeasure's and still happen.
+        """
+        log_widget = getattr(self, "log_widget", None)
+        if log_widget is None:
+            return
+
+        def blink() -> None:
+            tabs = getattr(log_widget, "tab_widget", None)
+            index = getattr(log_widget, "tab_index", None)
+            if tabs is None or index is None:
+                return
+            # An invalid color is what a tab bar takes as "no colour of its
+            # own", which is the theme's and so readable either way round
+            color = QtGui.QColor()
+            if not log_widget._blink_state and log_widget._blink_color:
+                color = QtGui.QColor(log_widget._blink_color)
+            tabs.tabBar().setTabTextColor(index, color)
+            log_widget._blink_state = not log_widget._blink_state
+
+        # The timer holds the method it was given when the widget was built,
+        # so replacing the attribute alone would leave the blink itself black
+        try:
+            log_widget._blink_qtimer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        log_widget._blink_qtimer.timeout.connect(blink)
+        log_widget._blink = blink
 
     def abort_returned(self, experiment):
         self.browser_widget.clear_button.setEnabled(True)
@@ -362,6 +420,16 @@ class NupylabWindow(ManagedDockWindow):
         current_step: int = 1
         previous_procedure = None
 
+        # A GUI that names its own files sets `filename_prefix` to something
+        # callable giving the locked start of the name, e.g. the date and
+        # whose experiment it is. Read once here, so that every step of one
+        # queue is filed the same way, and the user's part of the name
+        # follows it.
+        prefix_source = getattr(self, "filename_prefix", None)
+        locked_prefix: Optional[str] = (
+            prefix_source() if callable(prefix_source) else None
+        )
+
         for table_row in converted_df.itertuples(index=False):
             procedure: NupylabProcedure = self.make_procedure()
             procedure.num_steps = num_steps
@@ -374,17 +442,32 @@ class NupylabWindow(ManagedDockWindow):
             if self.store_measurement:
                 _experiments_dir = os.path.join(self.directory, "Experiments")
                 os.makedirs(_experiments_dir, exist_ok=True)
-                # Filename input sets the prefix, e.g. "EXPRDATA" -> EXPRDATA_<date>_1.csv
-                filename_base = self.file_input.filename_base.strip() or "EXPRDATA"
+                filename_base = self.file_input.filename_base.strip()
                 ext = self.file_input.filename_extension
+                if locked_prefix is None:
+                    # Filename input sets the prefix,
+                    # e.g. "EXPRDATA" -> EXPRDATA_<date>_1.csv
+                    prefix = f"{filename_base or 'EXPRDATA'}_"
+                    datetimeformat = "%Y-%m-%d"
+                else:
+                    # The locked prefix carries the date itself, and ends in
+                    # the separator the user's part follows: one separator too
+                    # many when the user has left that part empty.
+                    prefix = (
+                        locked_prefix + filename_base
+                        if filename_base
+                        else locked_prefix.rstrip("_")
+                    )
+                    datetimeformat = ""
                 try:
                     filename: str = unique_filename(
                         _experiments_dir,
-                        prefix=f"{filename_base}_",
+                        prefix=prefix,
                         suffix="_{Current Step}",
                         ext=ext,
                         dated_folder=False,
                         index=False,
+                        datetimeformat=datetimeformat,
                         procedure=procedure,
                     )
                 except KeyError as e:

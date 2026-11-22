@@ -197,6 +197,66 @@ def narrow_column_selectors(plot_widget, length: int = 12) -> None:
         )
 
 
+def apply_log_axes(plot_widget, columns: Sequence[str]):
+    """Draw a dock's axes on a log scale while they show certain columns.
+
+    A frequency sweep and a pO2 both run over decades, and on a linear axis
+    all but the top decade is squeezed into nothing. Which axis is drawn log
+    therefore follows what the dock is showing rather than being fixed: a
+    dock moved onto one of these columns is drawn log, and moved off it is
+    drawn linear again.
+
+    Only how the data is drawn changes. What is recorded, and what a curve
+    holds, stay in the units they were measured in.
+
+    Args:
+        plot_widget: the dock's plot widget.
+        columns: the data columns to draw on a log scale.
+
+    Returns:
+        A function that reads the dock's selectors and draws its axes to
+        match, which is to be called again whenever curves are added, or
+        `None` where there is nothing to draw log.
+    """
+    if not columns:
+        return None
+    wanted = set(columns)
+    plot = plot_widget.plot
+    selectors = {
+        name: getattr(plot_widget, name, None)
+        for name in ("columns_x", "columns_y", "columns_y_right")
+    }
+
+    def shown(name: str) -> str:
+        combo = selectors[name]
+        return combo.currentText() if combo is not None else ""
+
+    def refresh(*_) -> None:
+        """Draw each axis to match the column it is showing."""
+        x_log = shown("columns_x") in wanted
+        plot.setLogMode(x=x_log, y=shown("columns_y") in wanted)
+
+        # A right-hand axis is a view box of its own, which the plot item's
+        # own log mode does not reach, so its curves and its axis are told
+        # separately. Its x must follow the left axis or the two would be
+        # drawn against different scales on the one x axis they share.
+        right = getattr(plot_widget, "_right_curves", None)
+        if right is None:
+            return
+        right_log = shown("columns_y_right") in wanted
+        for curve in right + getattr(plot_widget, "_right_setpoint_curves", []):
+            curve.setLogMode(x_log, right_log)
+        plot.getAxis("right").setLogMode(right_log)
+
+    for combo in selectors.values():
+        if combo is not None:
+            # `activated` fires only on the user's own choice, and after the
+            # dock has moved its curves onto the new column
+            combo.activated.connect(refresh)
+    refresh()
+    return refresh
+
+
 def split_y_axis(
     y_axis: Sequence[YAxisEntry],
 ) -> Tuple[List[str], List[Optional[str]], List[List[str]]]:
@@ -863,6 +923,8 @@ class NupylabDockWidget(DockWidget):
             its selectors, see :class:`MultiColumnPlotWidget`.
         setpoint_labels: measured column to the column holding its setpoint. A
             dock opening on such a column also draws the setpoint, dashed.
+        log_columns: columns whose axis is drawn on a log scale, see
+            :func:`apply_log_axes`.
         linewidth: width of plotted curves.
         layout_path: directory in which the dock layout file is saved.
         layout_filename: name of the dock layout file.
@@ -878,6 +940,7 @@ class NupylabDockWidget(DockWidget):
         y_axis_right_labels: Optional[Sequence[Optional[str]]] = None,
         y_axis_extra_labels: Optional[Sequence[Sequence[str]]] = None,
         setpoint_labels: Optional[Dict[str, str]] = None,
+        log_columns: Optional[Sequence[str]] = None,
         linewidth: int = 1,
         layout_path: str = "./",
         layout_filename: str = "",
@@ -890,6 +953,7 @@ class NupylabDockWidget(DockWidget):
             list(entry) for entry in (y_axis_extra_labels or ())
         ]
         self.setpoint_labels: Dict[str, str] = dict(setpoint_labels or {})
+        self.log_columns: List[str] = list(log_columns or ())
         super().__init__(
             name,
             procedure_class,
@@ -900,6 +964,18 @@ class NupylabDockWidget(DockWidget):
             layout_filename=layout_filename,
             parent=parent,
         )
+        # A saved dock layout carries each plot's own settings, log scaling
+        # among them, and is read while the base class builds the docks. The
+        # axes are drawn to match their columns again here, so that a layout
+        # saved before a column was drawn log does not quietly undo it.
+        self.refresh_log_mode()
+
+    def refresh_log_mode(self) -> None:
+        """Draw every dock's axes to match the columns they are showing."""
+        for plot_widget in self.plot_frames:
+            refresh = getattr(plot_widget, "_refresh_log_mode", None)
+            if refresh is not None:
+                refresh()
 
     def _right_label(self, index: int) -> Optional[str]:
         if index < len(self.y_axis_right_labels):
@@ -964,6 +1040,11 @@ class NupylabDockWidget(DockWidget):
                     linewidth=self.linewidth,
                 )
             narrow_column_selectors(plot_widget)
+            # Kept on the dock so that curves added later can be redrawn to
+            # match, see `new_curve`
+            plot_widget._refresh_log_mode = apply_log_axes(
+                plot_widget, self.log_columns
+            )
             self.plot_frames.append(plot_widget)
             plot_widget.plot_frame.plot_widget.scene().contextMenu.append(
                 self.save_dock_action()
@@ -985,6 +1066,11 @@ class NupylabDockWidget(DockWidget):
                 curves.extend(curve)
             else:
                 curves.append(curve)
+            # A right-axis curve is made outside the plot item, so it is not
+            # given the dock's log mode the way the others are
+            refresh = getattr(plot_widget, "_refresh_log_mode", None)
+            if refresh is not None:
+                refresh()
         return curves
 
     def clear(self) -> None:
