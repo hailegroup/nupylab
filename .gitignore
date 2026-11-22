@@ -161,3 +161,6 @@ cython_debug/
 .idea/shelf/Changes.xml
 .idea/workspace.xml
 .idea/shelf/Uncommitted_changes_before_checout_at_11_17_2026_6_03_PM__Changes_.xml
+
+# S2 keeps its pO2 calibrations on the station, not in version control
+nupylab/instruments/o2_sensor/po2_calibrations.csv

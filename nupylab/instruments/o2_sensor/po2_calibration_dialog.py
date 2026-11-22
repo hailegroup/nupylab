@@ -17,10 +17,14 @@ from typing import List, Optional, Sequence
 
 from pymeasure.display.Qt import QtCore, QtWidgets
 
+import os
+import shutil
+
 from nupylab.instruments.o2_sensor.keithley2182_182 import (
     CALIBRATION_FILE,
     PO2Calibration,
     append_calibration,
+    create_calibration_file,
     load_calibrations,
 )
 
@@ -306,6 +310,93 @@ class SelectCalibrationDialog(QtWidgets.QDialog):
             calibration.b,
         )
         self.refresh(select=calibration)
+
+
+def ensure_calibration_file(
+    path: str = CALIBRATION_FILE, parent=None
+) -> Optional[str]:
+    """Make sure the station has a calibration file, asking for one if not.
+
+    Called when the GUI starts. A station that already has its calibrations
+    is not asked anything. One that does not, because it has just been set up
+    or because the file is not kept in version control, is offered the chance
+    to point at calibrations taken elsewhere, which are then copied into
+    place; closing that dialog starts an empty file instead.
+
+    A file that is there but cannot be read is never written over, since it
+    may hold calibrations that only need a correction by hand.
+
+    Args:
+        path: where the station's calibration file belongs.
+        parent: parent widget.
+
+    Returns:
+        The path, or `None` if there is no usable file there and the user
+        did not supply one, which leaves the sensor uncalibrated.
+    """
+    problem = ""
+    if os.path.exists(path):
+        try:
+            load_calibrations(path)
+            return path
+        except Exception as e:
+            problem = str(e)
+
+    if problem:
+        message = (
+            "{}\n\nSelect a calibration file to use instead, or close this to "
+            "carry on without one. The file above is left as it is.".format(
+                problem
+            )
+        )
+    else:
+        message = (
+            "This station has no pO2 calibration file yet.\n\nSelect "
+            "calibrations taken elsewhere to copy into place, or close this "
+            "to start an empty file at\n{}".format(path)
+        )
+    QtWidgets.QMessageBox.information(parent, "pO2 Calibrations", message)
+    chosen, _ = QtWidgets.QFileDialog.getOpenFileName(
+        parent,
+        "Select pO2 Calibration File",
+        os.path.dirname(path),
+        "Calibration files (*.csv);;All files (*)",
+    )
+
+    if chosen:
+        try:
+            load_calibrations(chosen)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                parent,
+                "pO2 Calibrations",
+                "That file cannot be read as calibrations:\n\n{}".format(e),
+            )
+            return None
+        if os.path.abspath(chosen) != os.path.abspath(path):
+            try:
+                shutil.copyfile(chosen, path)
+            except OSError as e:
+                QtWidgets.QMessageBox.warning(
+                    parent,
+                    "pO2 Calibrations",
+                    "Could not copy that file to {}:\n\n{}".format(path, e),
+                )
+                return chosen  # Usable where it is, just not copied
+            log.info("Copied pO2 calibrations from %s to %s", chosen, path)
+        return path
+
+    if problem:
+        return None  # Leave an unreadable file alone rather than replace it
+    try:
+        return create_calibration_file(path)
+    except Exception as e:
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "pO2 Calibrations",
+            "Could not start a calibration file:\n\n{}".format(e),
+        )
+        return None
 
 
 def choose_calibration(

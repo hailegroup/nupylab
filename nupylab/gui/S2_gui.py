@@ -377,6 +377,15 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
 def main(*args):
     """Run S2 procedure."""
     app = QtWidgets.QApplication(*args)
+
+    # The calibration file is not kept in version control, so a station set up
+    # from a fresh clone has none until it is pointed at one or starts its own
+    from nupylab.instruments.o2_sensor.po2_calibration_dialog import (
+        ensure_calibration_file,
+    )
+
+    calibration_file = ensure_calibration_file()
+
     window = nupylab_window.NupylabWindow(S2Procedure)
     inputs = window.inputs
 
@@ -568,6 +577,10 @@ def main(*args):
         sync_po2_calibration,
         ("editingFinished", "textChanged"),
     )
+    # A calibration file taken from elsewhere at startup may not be the one
+    # the inputs panel defaults to
+    if calibration_file and calibration_file != inputs.po2_calibration_file.value():
+        inputs.po2_calibration_file.setValue(calibration_file)
     sync_po2_calibration()
 
     window.manager.queued.connect(disconnect_control_instruments)

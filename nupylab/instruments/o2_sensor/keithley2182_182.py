@@ -216,6 +216,35 @@ def latest_calibration(path: str = CALIBRATION_FILE) -> Optional[PO2Calibration]
     return calibrations[0] if calibrations else None
 
 
+def create_calibration_file(path: str = CALIBRATION_FILE) -> str:
+    """Start an empty calibration file, with its header and no calibrations.
+
+    For a station that has not recorded one yet. An existing file is left
+    exactly as it is, since it may hold calibrations.
+
+    Args:
+        path: path to the calibration file, S2's by default.
+
+    Returns:
+        The path, whether it was created here or was already there.
+
+    Raises:
+        NupylabError: if the file cannot be written.
+    """
+    if os.path.exists(path):
+        return path
+    try:
+        folder = os.path.dirname(path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        with open(path, "w", newline="") as calibration_file:
+            csv.writer(calibration_file).writerow(CALIBRATION_FIELDS)
+    except OSError as e:
+        raise NupylabError(f"Could not create pO2 calibration file {path}: {e}")
+    log.info("Started a pO2 calibration file at %s", path)
+    return path
+
+
 def append_calibration(
     calibration: PO2Calibration, path: str = CALIBRATION_FILE
 ) -> None:
