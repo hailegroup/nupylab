@@ -329,9 +329,10 @@ MANUAL_COLUMN_WIDTH = 260
 
 #: Least width in pixels to leave the inputs panel. The widest thing in it is
 #: an MFC row, a name beside a gas and a button. What each calibration is, and
-#: what each device is called, go on lines of their own, so neither is what
-#: sets this.
-INPUTS_PANEL_WIDTH = 380
+#: what each device is called, go on lines of their own, and the gas box is
+#: sized by a character count rather than by its longest entry, so none of
+#: those is what sets this.
+INPUTS_PANEL_WIDTH = 320
 
 
 def move_input_to_file_block(window, name="record_time"):

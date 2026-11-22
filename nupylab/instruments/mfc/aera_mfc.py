@@ -711,16 +711,27 @@ class AeraMFC(NupylabInstrument):
                 grid = QtWidgets.QGridLayout()
                 grid.setHorizontalSpacing(8)
                 grid.setVerticalSpacing(2)
-                for column, heading in ((1, "Setpoint"), (2, "Units")):
+                for column, heading in (
+                    (1, "Setpoint"), (2, "Units"), (3, "Set"), (4, "Actual")
+                ):
                     label = QtWidgets.QLabel(heading)
                     label.setStyleSheet("font-weight: bold;")
+                    if column > 2:
+                        label.setAlignment(
+                            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                        )
                     grid.addWidget(label, 0, column)
 
                 self.gas_labels = []
                 self.value_edits = []
                 self.unit_combos = []
-                self.set_labels = []
-                self.actual_labels = []
+                # Set and Actual take a column each, and each says the
+                # percentage on the MFC's first line and the flow on its
+                # second, so the two can be read against one another
+                self.set_pct_labels = []
+                self.set_flow_labels = []
+                self.actual_pct_labels = []
+                self.actual_flow_labels = []
                 for index in range(instrument.channel_count):
                     top = 1 + 2 * index
                     bottom = top + 1
@@ -746,12 +757,17 @@ class AeraMFC(NupylabInstrument):
                     self.unit_combos.append(units)
                     grid.addWidget(units, top, 2)
 
-                    set_label = QtWidgets.QLabel()
-                    set_label.setAlignment(
-                        QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
-                    )
-                    self.set_labels.append(set_label)
-                    grid.addWidget(set_label, top, 3)
+                    for column, labels in (
+                        (3, self.set_pct_labels), (4, self.actual_pct_labels)
+                    ):
+                        reading = QtWidgets.QLabel()
+                        reading.setAlignment(
+                            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                        )
+                        if column == 4:
+                            reading.setStyleSheet("font-weight: bold;")
+                        labels.append(reading)
+                        grid.addWidget(reading, top, column)
 
                     gas_label = QtWidgets.QLabel()
                     self.gas_labels.append(gas_label)
@@ -775,15 +791,19 @@ class AeraMFC(NupylabInstrument):
                     button_layout.addStretch(1)
                     grid.addWidget(buttons, bottom, 1, 1, 2)
 
-                    actual_label = QtWidgets.QLabel()
-                    actual_label.setStyleSheet("font-weight: bold;")
-                    actual_label.setAlignment(
-                        QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
-                    )
-                    self.actual_labels.append(actual_label)
-                    grid.addWidget(actual_label, bottom, 3)
+                    for column, labels in (
+                        (3, self.set_flow_labels), (4, self.actual_flow_labels)
+                    ):
+                        reading = QtWidgets.QLabel()
+                        reading.setAlignment(
+                            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                        )
+                        if column == 4:
+                            reading.setStyleSheet("font-weight: bold;")
+                        labels.append(reading)
+                        grid.addWidget(reading, bottom, column)
 
-                grid.setColumnStretch(4, 1)
+                grid.setColumnStretch(5, 1)
                 layout.addLayout(grid)
                 self._clear_readouts()
 
@@ -842,31 +862,49 @@ class AeraMFC(NupylabInstrument):
                     "0 to {:.4g} sccm on this calibration.".format(top)
                 )
 
-            def _format(self, index, percent, flow):
-                """Write one reading as both a percentage and a flow."""
+            def _percent_text(self, percent):
+                """Write a reading in percent of range, or a dash."""
                 if percent is None or not math.isfinite(percent):
                     return self.NO_READING
+                return "{:.1f} %".format(percent)
+
+            def _flow_text(self, flow):
+                """Write a reading in sccm, or a dash.
+
+                An MFC with no calibration for the gas it is flowing has no
+                flow to report, only a percentage.
+                """
                 if flow is None or not math.isfinite(flow):
-                    return "{:.1f} %".format(percent)
-                return "{:.1f} % / {:.2f} sccm".format(percent, flow)
+                    return self.NO_READING
+                return "{:.2f} sccm".format(flow)
+
+            def _format(self, percent, flow):
+                """Write a reading as both, for the log rather than the panel."""
+                return "{} / {}".format(
+                    self._percent_text(percent), self._flow_text(flow)
+                )
 
             def _show_set(self, index, percent, flow):
-                """Write one MFC's setpoint, on its first line."""
-                self.set_labels[index].setText(
-                    "Set: {}".format(self._format(index, percent, flow))
-                )
+                """Write one MFC's setpoint, down the Set column."""
+                self.set_pct_labels[index].setText(self._percent_text(percent))
+                self.set_flow_labels[index].setText(self._flow_text(flow))
 
             def _show_actual(self, index, percent, flow):
-                """Write one MFC's flow, on its second line."""
-                self.actual_labels[index].setText(
-                    "Actual: {}".format(self._format(index, percent, flow))
+                """Write one MFC's flow, down the Actual column."""
+                self.actual_pct_labels[index].setText(
+                    self._percent_text(percent)
                 )
+                self.actual_flow_labels[index].setText(self._flow_text(flow))
 
             def _clear_readouts(self):
-                for label in self.set_labels:
-                    label.setText("Set: {}".format(self.NO_READING))
-                for label in self.actual_labels:
-                    label.setText("Actual: {}".format(self.NO_READING))
+                for labels in (
+                    self.set_pct_labels,
+                    self.set_flow_labels,
+                    self.actual_pct_labels,
+                    self.actual_flow_labels,
+                ):
+                    for label in labels:
+                        label.setText(self.NO_READING)
 
             def _abort_if_needed(self):
                 if self._abort_callback:
@@ -962,7 +1000,7 @@ class AeraMFC(NupylabInstrument):
                 self._show_set(index, percent, flow)
                 self._show_status("{} set".format(name))
                 _control_log.info(
-                    "%s set to %s", name, self._format(index, percent, flow)
+                    "%s set to %s", name, self._format(percent, flow)
                 )
                 self.update_readings()
 

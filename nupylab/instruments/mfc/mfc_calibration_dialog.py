@@ -48,6 +48,13 @@ log.addHandler(logging.NullHandler())
 #: Last entry of a gas drop-down, which asks for a gas that is not on it yet.
 ADD_GAS_TEXT: str = "Add New Gas..."
 
+#: How many characters wide to leave a gas drop-down. Left to itself a
+#: combo box is as wide as its longest entry, which is this one rather than
+#: any gas, and four of them set how wide the whole inputs panel has to be.
+#: The list shows every name in full when it is opened, and the tooltip
+#: carries the one in use.
+GAS_BOX_CHARS: int = 10
+
 
 def _combo_values(
     existing: Sequence[str], defaults: Sequence[str] = ()
@@ -550,8 +557,16 @@ class GasInput(Input, QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.combo = QtWidgets.QComboBox()
-        self.combo.setToolTip(
-            "Gas flowing through this MFC. The calibration below follows it."
+        # Sized by the count above rather than by the longest entry
+        policy = getattr(
+            QtWidgets.QComboBox, "AdjustToMinimumContentsLengthWithIcon", None
+        )
+        if policy is not None:
+            self.combo.setSizeAdjustPolicy(policy)
+        self.combo.setMinimumContentsLength(GAS_BOX_CHARS)
+        self.combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            self.combo.sizePolicy().verticalPolicy(),
         )
         self.combo.activated.connect(self._on_activated)
         layout.addWidget(self.combo)
@@ -579,6 +594,12 @@ class GasInput(Input, QtWidgets.QWidget):
         elif self.combo.count():
             self.combo.setCurrentIndex(0)
         self.combo.blockSignals(False)
+        # The box is narrower than some of the names, so the one in use is
+        # said in full here
+        self.combo.setToolTip(
+            "{} flows through this MFC. The calibration below follows "
+            "it.".format(self.combo.currentText() or "No gas")
+        )
 
     def _on_activated(self, index: int) -> None:
         """Take up the gas the user picked, or ask for a new one."""
