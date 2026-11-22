@@ -443,10 +443,16 @@ def pair_inputs(inputs, pairs=INPUT_PAIRS):
         for widget in (first_widget, second_widget):
             layout.removeWidget(widget)
 
-        line_layout.addWidget(first_widget, 1)
-        # An input whose caption is on the line below keeps its own width,
-        # rather than being stretched to fill a row it no longer fills
-        line_layout.addWidget(second_widget, 0 if caption is not None else 2)
+        # A row with a caption, which is an MFC's, is a name, a gas and a
+        # button: each keeps its own width, and what is left over is left
+        # over. The rows without one are two drop-downs that fill the row.
+        if caption is None:
+            line_layout.addWidget(first_widget, 1)
+            line_layout.addWidget(second_widget, 2)
+        else:
+            line_layout.addWidget(first_widget, 0)
+            line_layout.addWidget(second_widget, 0)
+            line_layout.addStretch(1)
 
         if stacked:
             row_layout.addWidget(label)
@@ -549,30 +555,67 @@ def add_mfc_warning(inputs, after="mfc{}_gas_row".format(len(MFC_NAMES))):
 
 
 def widen_inputs_panel(window, width=INPUTS_PANEL_WIDTH):
-    """Leave the inputs panel wide enough for the rows it now carries.
+    """Open the inputs panel wide enough for everything in it.
 
-    PyMeasure sizes the panel from the widest input it happens to hold, which
-    is narrower than the MFC rows read well at. The panel is still in a
-    splitter, so the user can widen or narrow it from here.
+    PyMeasure puts the inputs in a scroll area inside a splitter and sizes
+    neither of them to what the inputs need, so the panel opens narrower than
+    its own rows and their right-hand side is cut off until it is dragged
+    wider. This measures the inputs, holds the panel to that, and tells the
+    splitter to take a change in the window's width out of the other pane
+    rather than this one.
+
+    Measures the inputs as they stand, so call it once they have been laid
+    out, and again once the window has been given its final size.
 
     Args:
         window: the main window.
-        width: least width in pixels.
+        width: least width in pixels, however little the inputs need.
     """
-    dock = window.inputs.parentWidget()
-    if dock is None:
+    scroll = window.inputs.findChild(QtWidgets.QScrollArea)
+    inner = scroll.widget() if scroll is not None else None
+    needed = width
+    if scroll is not None and inner is not None:
+        needed = max(
+            width,
+            inner.sizeHint().width()
+            + 2 * scroll.frameWidth()
+            + scroll.verticalScrollBar().sizeHint().width(),
+        )
+        scroll.setMinimumWidth(needed)
+    window.inputs.setMinimumWidth(needed)
+
+    # The pane the splitter holds, which is the dock the inputs sit in, or
+    # whatever stands between the two
+    pane = window.inputs.parentWidget()
+    if pane is None:
         log.warning("Could not find the inputs dock to widen it")
         return
-    dock.setMinimumWidth(width)
-    splitter = dock.parentWidget()
+    splitter = pane.parentWidget()
     while splitter is not None and not isinstance(splitter, QtWidgets.QSplitter):
+        pane = splitter
         splitter = splitter.parentWidget()
     if splitter is None:
+        # The walk ran out at the window itself, so there is no pane to hold
+        # to a width; the scroll area above is the whole of it
+        log.debug("The inputs panel is not in a splitter, leaving it at %d", needed)
         return
+    pane.setMinimumWidth(needed)
+
+    index = splitter.indexOf(pane)
+    if index < 0:
+        return
+    # A wider window widens the tabs beside the inputs, not the inputs, which
+    # need what they need and no more
+    for position in range(splitter.count()):
+        splitter.setStretchFactor(position, 0 if position == index else 1)
+    splitter.setCollapsible(index, False)
     sizes = splitter.sizes()
-    index = splitter.indexOf(dock)
-    if 0 <= index < len(sizes) and sizes[index] < width:
-        sizes[index] = width
+    if index < len(sizes) and sizes[index] < needed:
+        # Taken from whichever pane has the most to spare
+        roomiest = max(range(len(sizes)), key=lambda i: sizes[i])
+        if roomiest != index:
+            sizes[roomiest] -= needed - sizes[index]
+        sizes[index] = needed
         splitter.setSizes(sizes)
 
 
@@ -1482,8 +1525,14 @@ def main(*args):
         window.showMaximized()
         # The panel is measured against the dock it ends up with, which is
         # only settled once the maximized layout has been through the event
-        # loop, so that waits another turn
-        QtCore.QTimer.singleShot(0, lambda: fit_inputs_panel(window))
+        # loop, so that waits another turn. Its width is set again there too:
+        # the splitter shares the window's new width out among its panes, and
+        # would otherwise leave the inputs narrower than their own rows.
+        def fit():
+            widen_inputs_panel(window)
+            fit_inputs_panel(window)
+
+        QtCore.QTimer.singleShot(0, fit)
 
     window.show()
     QtCore.QTimer.singleShot(0, maximize)

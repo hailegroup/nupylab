@@ -48,12 +48,9 @@ log.addHandler(logging.NullHandler())
 #: Last entry of a gas drop-down, which asks for a gas that is not on it yet.
 ADD_GAS_TEXT: str = "Add New Gas..."
 
-#: How many characters wide to leave a gas drop-down. Left to itself a
-#: combo box is as wide as its longest entry, which is this one rather than
-#: any gas, and four of them set how wide the whole inputs panel has to be.
-#: The list shows every name in full when it is opened, and the tooltip
-#: carries the one in use.
-GAS_BOX_CHARS: int = 10
+#: How many characters wider than its longest entry to leave a gas
+#: drop-down, so that the name in it is not up against the arrow.
+GAS_BOX_PADDING: int = 4
 
 
 def _combo_values(
@@ -557,15 +554,17 @@ class GasInput(Input, QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.combo = QtWidgets.QComboBox()
-        # Sized by the count above rather than by the longest entry
+        # Sized by `_refresh_choices` from what is in it, rather than by
+        # whatever the style would otherwise ask for
         policy = getattr(
             QtWidgets.QComboBox, "AdjustToMinimumContentsLengthWithIcon", None
         )
         if policy is not None:
             self.combo.setSizeAdjustPolicy(policy)
-        self.combo.setMinimumContentsLength(GAS_BOX_CHARS)
+        # Never wider than it needs. Expanding here, in a row that has space
+        # to give, came to about twice the width of the longest gas.
         self.combo.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Maximum,
             self.combo.sizePolicy().verticalPolicy(),
         )
         self.combo.activated.connect(self._on_activated)
@@ -584,6 +583,11 @@ class GasInput(Input, QtWidgets.QWidget):
         self.combo.insertSeparator(self.combo.count())
         self.combo.addItem(ADD_GAS_TEXT)
         self.combo.blockSignals(False)
+        longest = max(
+            (len(self.combo.itemText(i)) for i in range(self.combo.count())),
+            default=0,
+        )
+        self.combo.setMinimumContentsLength(longest + GAS_BOX_PADDING)
 
     def _select(self, gas: str) -> None:
         """Show a gas in the drop-down without emitting anything."""
