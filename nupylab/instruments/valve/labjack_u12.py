@@ -475,6 +475,14 @@ class LabJackSolenoid(NupylabInstrument):
                 super().__init__("Solenoid Valve - LabJack U12")
                 self._abort_callback = abort_callback
                 instrument._panel = self
+                # The output and the drive voltage are set in code rather than
+                # from here, so they are stated where they can still be seen
+                self.setToolTip(
+                    f"Writes {instrument.channel_name}, "
+                    f"{instrument.label_for(False)} at "
+                    f"{instrument.drive_voltage:.2f} V and "
+                    f"{instrument.label_for(True)} at 0 V"
+                )
                 self._setup_ui()
 
             def _setup_ui(self):
@@ -494,24 +502,7 @@ class LabJackSolenoid(NupylabInstrument):
                     f"valve, {instrument.label_for(False)} powers it"
                 )
                 grid.addWidget(self.state_combo, 0, 1)
-
-                grid.addWidget(QtWidgets.QLabel("Drive Voltage"), 1, 0)
-                self.voltage_spin = QtWidgets.QDoubleSpinBox()
-                self.voltage_spin.setRange(0.0, instrument.MAX_VOLTAGE)
-                self.voltage_spin.setDecimals(2)
-                self.voltage_spin.setSingleStep(0.1)
-                self.voltage_spin.setValue(instrument.drive_voltage)
-                self.voltage_spin.setSuffix(" V")
-                self.voltage_spin.setToolTip("Valve needs more than 2 V")
-                grid.addWidget(self.voltage_spin, 1, 1)
-
-                grid.addWidget(QtWidgets.QLabel("Analog Output"), 2, 0)
-                channel_label = QtWidgets.QLabel(instrument.channel_name)
-                channel_label.setToolTip(
-                    "Which U12 screw terminal the valve is wired to. The other "
-                    "output is held at 0 V, since one call writes both."
-                )
-                grid.addWidget(channel_label, 2, 1)
+                grid.setColumnStretch(2, 1)
 
                 layout.addLayout(grid)
 
@@ -576,7 +567,6 @@ class LabJackSolenoid(NupylabInstrument):
                 self._abort_if_needed()
                 state = self._selected_state()
                 try:
-                    instrument.set_drive_voltage(self.voltage_spin.value())
                     if not instrument.connected:
                         instrument.connect()
                     instrument.set_state(state)

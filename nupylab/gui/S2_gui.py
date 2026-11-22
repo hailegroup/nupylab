@@ -26,10 +26,12 @@ unless neither meter answers, in which case it runs without them.
 The solenoid valve selects between two gas mixes and is driven from the LabJack
 U12's AO1 output. It appears in the Manual Control tab only, not in queued
 experiments, and sits under the pO2 sensor panel rather than taking a column of
-its own. Gas Mix 1 applies no power to the valve and Gas Mix 2 powers it, at a
-drive voltage set from the panel. There is nothing to read back from it, so the
-panel has no connect button: Apply opens the LabJack if needed and writes, and
-the valve moves at no other time. Each write is recorded to
+its own. Gas Mix 1 applies no power to the valve and Gas Mix 2 powers it, at
+a drive voltage set in code rather than from the panel, so Apply writes AO1
+either 0 V or that voltage and nothing else differs between the two positions.
+There is nothing to read back from it, so the panel has no connect button:
+Apply opens the LabJack if needed and writes, and the valve moves at no other
+time. Each write is recorded to
 `~/.nupylab/solenoid_valve.json` and shown in the panel as history, which is
 what this GUI wrote rather than where the valve is, since LabVIEW drives the
 same output.
@@ -714,6 +716,9 @@ def main(*args):
             recording_beside_panels=True,
             fit_panels_height=True,
             button_feedback=True,
+            # Keep the pO2 and valve column to the Biologic panel's width, so
+            # the columns line up and what is left over fits another panel
+            column_width_from="Biologic",
         )
         current["control"] = control
         window.tabs.addTab(control, "Manual Control")

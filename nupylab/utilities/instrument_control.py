@@ -356,6 +356,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                  recording_beside_panels: bool = False,
                  fit_panels_height: bool = False,
                  button_feedback: bool = False,
+                 column_width_from: Optional[str] = None,
                  parent=None):
         """
         Args:
@@ -365,6 +366,11 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                 panel in full instead of the default fixed height.
             button_feedback: darken buttons from press until their action
                 finishes, so slow actions like connecting show the click registered.
+            column_width_from: `instrument_name` of the panel whose width a
+                stacked column should take, so that columns line up and the
+                room left over is predictable. Columns are never narrowed
+                below what they need. Ignored for panels in a column of their
+                own, and when no panel answers to the name.
         """
         super().__init__(parent)
         self._panels = []
@@ -374,6 +380,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         self._directory = directory
         self._recording_beside_panels = recording_beside_panels
         self._fit_panels_height = fit_panels_height
+        self._column_width_from = column_width_from
         self._setup_ui(instruments or [])
         if button_feedback:
             self._add_button_feedback()
@@ -434,6 +441,8 @@ class InstrumentControlWidget(QtWidgets.QWidget):
             else:
                 columns.append([panel])
 
+        reference_width = self._reference_panel_width()
+
         for column in columns:
             if len(column) == 1:
                 panels_layout.addWidget(column[0])
@@ -444,6 +453,13 @@ class InstrumentControlWidget(QtWidgets.QWidget):
             column_layout.setAlignment(QtCore.Qt.AlignTop)
             for panel in column:
                 column_layout.addWidget(panel)
+            if reference_width:
+                # Never below what the column needs, since a fixed width
+                # overrides the minimum Qt would otherwise respect and the
+                # panels would be clipped rather than merely crowded
+                holder.setFixedWidth(
+                    max(reference_width, holder.minimumSizeHint().width())
+                )
             panels_layout.addWidget(holder)
 
         # Recording controls — instrument selector + record/save/delete buttons
@@ -550,6 +566,25 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         _control_log.propagate = False
 
         self.setLayout(layout)
+
+    def _reference_panel_width(self) -> int:
+        """Get the width stacked columns should take, or 0 to leave them be.
+
+        Returns:
+            Width in pixels of the panel named by `column_width_from`, or 0 if
+            no name was given or no panel answers to it, which happens when an
+            instrument could not be built.
+        """
+        if not self._column_width_from:
+            return 0
+        for panel in self._panels:
+            name = getattr(panel, 'instrument_name', panel.__class__.__name__)
+            if name == self._column_width_from:
+                return panel.sizeHint().width()
+        log.debug(
+            "No panel named %s to take a column width from", self._column_width_from
+        )
+        return 0
 
     def _get_selected_panel(self):
         idx = self._instrument_selector.currentIndex()
