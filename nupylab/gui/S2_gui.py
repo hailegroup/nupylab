@@ -120,6 +120,7 @@ import os
 import re
 import sys
 import time
+import warnings
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Type, Union
 
@@ -934,7 +935,12 @@ def serial_resources(backend="@py"):
         loaded or cannot list them, which is no reason not to start.
     """
     try:
-        found = list_resources(backend=backend)
+        with warnings.catch_warnings():
+            # Asked for serial ports, `pyvisa-py` reports on its way past
+            # that it cannot discover network instruments without `psutil`
+            # and `zeroconf`. Nothing here wants either.
+            warnings.simplefilter("ignore", UserWarning)
+            found = list_resources(backend=backend)
     except Exception as e:
         log.warning("Could not list serial ports with %s: %s", backend, e)
         return ()

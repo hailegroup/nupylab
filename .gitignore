@@ -168,3 +168,4 @@ nupylab/instruments/o2_sensor/po2_calibrations.csv
 nupylab/instruments/mfc/mfc_calibrations.csv
 nupylab/instruments/mfc/mfc_gases.json
 nupylab/gui/s2_settings.json
+nupylab/gui/*_dock_layout.json

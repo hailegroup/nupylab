@@ -164,22 +164,28 @@ class AeraChannel(Channel):
         error_4_7, error_0_3 = self._nibbles(self.error)
         for i, err in enumerate(AERA_ERRORS_0_3):
             if (2**i & error_0_3) == 2**i:
-                log.warning("Aera MFC %d %s", self.id, err)
+                log.warning("Aera MFC at address %d: %s", self.id, err)
         for i, err in enumerate(AERA_ERRORS_4_7):
             if (2**i & error_4_7) == 2**i:
-                log.warning("Aera MFC %d %s", self.id, err)
+                log.warning("Aera MFC at address %d: %s", self.id, err)
         if error_4_7 == 0 and error_0_3 == 0 and self._error:
-            log.warning("Aera MFC %d error: unknown error", self.id)
+            log.warning(
+                "Aera MFC at address %d: an error it does not name", self.id
+            )
 
     def _read_alarm(self):
         """Convert two-hex alarm code to message(s)."""
         external_alarm, internal_alarm = self._nibbles(self.alarm)
         for i, alarm in enumerate(AERA_EXTERNAL_ALARMS):
             if (2**i & external_alarm) == 2**i:
-                log.warning("Aera MFC %d alarm: %s", self.id, alarm)
+                log.warning(
+                    "Aera MFC at address %d alarm: %s", self.id, alarm
+                )
         for i, alarm in enumerate(AERA_INTERNAL_ALARMS):
             if (2**i & internal_alarm) == 2**i:
-                log.warning("Aera MFC %d alarm: %s", self.id, alarm)
+                log.warning(
+                    "Aera MFC at address %d alarm: %s", self.id, alarm
+                )
 
     def _update_status(self, status):
         """Get status from first character of read response."""
@@ -189,7 +195,9 @@ class AeraChannel(Channel):
             self._autozero = False
         if status == 'Z' and not self._autozero:
             self._autozero = True
-            log.info("Aera MFC %d auto zero in progress.", self.id)
+            log.info(
+                "Aera MFC at address %d: auto zero in progress.", self.id
+            )
         elif status == 'A' and not self._alarm:
             self._alarm = True
             self._read_alarm()

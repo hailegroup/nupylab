@@ -651,6 +651,28 @@ class AeraMFC(NupylabInstrument):
             self._write_setpoint(index, percent, close=not value)
         return percent
 
+    def clear_faults(self, index: Optional[int] = None) -> None:
+        """Clear the latched alarms and errors of one channel, or of all.
+
+        An Aera latches a fault until it is cleared, so one that failed an
+        auto zero goes on reporting it long after the cause has gone. Nothing
+        else about the MFC changes: no valve moves, and no setpoint is
+        touched.
+
+        Args:
+            index: channel index, counting from zero, or `None` for every
+                channel.
+
+        Raises:
+            NupylabError: if the bank is not connected.
+        """
+        indices = range(self.channel_count) if index is None else (index,)
+        with self.lock:
+            for channel_index in indices:
+                channel = self._channel(channel_index)
+                channel.clear_alarms()
+                channel.clear_errors()
+
     def close_channel(self, index: int) -> None:
         """Shut one channel's valve and set it to zero.
 
@@ -806,13 +828,28 @@ class AeraMFC(NupylabInstrument):
             def _setup_ui(self):
                 layout = QtWidgets.QVBoxLayout()
 
+                top_row = QtWidgets.QHBoxLayout()
+                top_row.setContentsMargins(0, 0, 0, 0)
+                top_row.setSpacing(4)
+
                 self.monitor_btn = QtWidgets.QPushButton(self.START_TEXT)
                 self.monitor_btn.setToolTip(
-                    "Reads every MFC in the bank. Applying a setpoint does "
-                    "not need monitoring to be running."
+                    "Reads every MFC in the bank, once every {:.0f} s. "
+                    "Applying a setpoint does not need monitoring to be "
+                    "running.".format(self.READ_INTERVAL_MS / 1e3)
                 )
                 self.monitor_btn.clicked.connect(self.toggle_monitoring)
-                layout.addWidget(self.monitor_btn)
+                top_row.addWidget(self.monitor_btn)
+
+                self.clear_btn = QtWidgets.QPushButton("Clear Faults")
+                self.clear_btn.setToolTip(
+                    "Clear the latched alarms and errors of every MFC. An "
+                    "Aera reports a fault until it is cleared, long after "
+                    "whatever caused it has gone. No valve moves."
+                )
+                self.clear_btn.clicked.connect(self.clear_faults)
+                top_row.addWidget(self.clear_btn)
+                layout.addLayout(top_row)
 
                 # Two lines per MFC: what it is being set to on the first,
                 # what it is flowing and the buttons on the second. On one
@@ -975,7 +1012,7 @@ class AeraMFC(NupylabInstrument):
                 """Write a reading in percent of range, or a dash."""
                 if percent is None or not math.isfinite(percent):
                     return self.NO_READING
-                return "{:.1f} %".format(percent)
+                return "{:.2f} %".format(percent)
 
             def _flow_text(self, flow):
                 """Write a reading in sccm, or a dash.
@@ -1120,6 +1157,24 @@ class AeraMFC(NupylabInstrument):
                 self._show_status("{} set".format(name))
                 _control_log.info(
                     "%s set to %s", name, self._format(percent, flow)
+                )
+                self.update_readings()
+
+            def clear_faults(self):
+                """Clear every MFC's latched alarms and errors."""
+                self._abort_if_needed()
+                try:
+                    self._ensure_connected()
+                    instrument.clear_faults()
+                except Exception as e:
+                    self._show_status(
+                        "Faults not cleared — {}".format(e), steady=False
+                    )
+                    _control_log.error("Aera MFC clear failed: %s", e)
+                    return
+                self._show_status("Faults cleared")
+                _control_log.info(
+                    "Cleared the latched alarms and errors of every Aera MFC"
                 )
                 self.update_readings()
 
