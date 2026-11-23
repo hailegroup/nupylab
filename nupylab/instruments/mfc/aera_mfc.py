@@ -39,6 +39,24 @@ log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 
+#: What to call a VISA backend in a message. The empty string is whichever
+#: one `pyvisa` loads by default, which on a station with National
+#: Instruments' VISA installed is that.
+VISA_LIBRARY_NAMES = {"": "the system VISA", "@py": "pyvisa-py"}
+
+
+def visa_library_name(library: str) -> str:
+    """Get a readable name for a VISA backend.
+
+    Args:
+        library: the backend as `pyvisa` names it.
+
+    Returns:
+        Something to put in a message.
+    """
+    return VISA_LIBRARY_NAMES.get(library, library)
+
+
 def port_hint(port: str) -> str:
     """Say what VISA can see, for a port that could not be opened.
 
@@ -105,6 +123,17 @@ class AeraMFC(NupylabInstrument):
     #: Units a setpoint may be given in, see :meth:`apply_setpoint`.
     UNITS: Tuple[str, ...] = ("sccm", "%")
 
+    #: VISA backend to fall back on when the one in use has no such port.
+    #:
+    #: National Instruments' VISA only knows the serial ports it enumerated,
+    #: and a USB RS-485 converter that Windows has given a COM number is not
+    #: always among them: `list_resources` leaves it out and opening it fails
+    #: with `VI_ERROR_RSRC_NFOUND`, however well the converter works for
+    #: everything else on the machine. `pyvisa-py` reaches a COM port through
+    #: `pyserial` instead and is not affected, so the port is tried again
+    #: through it before the connection is given up on.
+    FALLBACK_VISA_LIBRARY: str = "@py"
+
     def __init__(
         self,
         port: str,
@@ -114,6 +143,7 @@ class AeraMFC(NupylabInstrument):
         channel_names: Optional[Sequence[str]] = None,
         gases: Optional[Sequence[str]] = None,
         calibrations: Optional[Sequence[Optional[MFCCalibration]]] = None,
+        visa_library: str = "",
         name: str = "Aera MFC",
     ) -> None:
         """Initialize the bank, its labels, and its connection parameters.
@@ -132,6 +162,9 @@ class AeraMFC(NupylabInstrument):
             gases: gas each channel is flowing. Optional.
             calibrations: flow calibration of each channel, `None` where there
                 is none. Optional.
+            visa_library: VISA backend to open the port with, as `pyvisa`
+                names it. The default is whichever one it loads by itself.
+                See :attr:`FALLBACK_VISA_LIBRARY`.
             name: name of instrument.
 
         Raises:
@@ -186,6 +219,8 @@ class AeraMFC(NupylabInstrument):
 
         self.aera: Optional[aera_mfc.AeraMFC] = None
         self._port = port
+        self._visa_library = visa_library
+        self._visa_library_in_use: Optional[str] = None
         self._ranges: List[float] = [math.nan] * count
         self._panel = None
         # Set by the control panel, so that a disconnection from elsewhere,
@@ -229,6 +264,15 @@ class AeraMFC(NupylabInstrument):
         return groups
 
     # What the bank is made of #
+
+    @property
+    def visa_library(self) -> Optional[str]:
+        """Get the VISA backend the port was last opened with.
+
+        `None` until the bank has connected. Worth saying out loud when it is
+        not the one that was asked for, see :attr:`FALLBACK_VISA_LIBRARY`.
+        """
+        return self._visa_library_in_use
 
     @property
     def channel_count(self) -> int:
@@ -424,15 +468,32 @@ class AeraMFC(NupylabInstrument):
         """
         with self.lock:
             self._close_port()
-            try:
-                self.aera = aera_mfc.AeraMFC(self._port)
-            except Exception as e:
-                self.aera = None
-                raise NupylabError(
-                    "Aera MFCs on {} could not be opened: {}.{}".format(
-                        self._port, e, port_hint(self._port)
+            libraries = [self._visa_library]
+            if self.FALLBACK_VISA_LIBRARY not in libraries:
+                libraries.append(self.FALLBACK_VISA_LIBRARY)
+            failures = []
+            for library in libraries:
+                try:
+                    self.aera = aera_mfc.AeraMFC(
+                        self._port, visa_library=library
                     )
-                ) from e
+                except Exception as e:
+                    self.aera = None
+                    failures.append((library, e))
+                    continue
+                self._visa_library_in_use = library
+                break
+            if self.aera is None:
+                raise NupylabError(
+                    "Aera MFCs on {} could not be opened. {}.{}".format(
+                        self._port,
+                        "; ".join(
+                            "{}: {}".format(visa_library_name(library), error)
+                            for library, error in failures
+                        ),
+                        port_hint(self._port),
+                    )
+                ) from failures[-1][1]
             for address, mfc_class in zip(self._addresses, self._mfc_classes):
                 self.aera.add_channel(address, mfc_class)
             for index, address in enumerate(self._addresses):
@@ -997,10 +1058,20 @@ class AeraMFC(NupylabInstrument):
                     self.live_plot.clear()
                     self.timer.start(self.READ_INTERVAL_MS)
                     _control_log.info(
-                        "Aera MFCs connected on %s, addresses %s",
+                        "Aera MFCs connected on %s through %s, addresses %s",
                         instrument._port,
+                        visa_library_name(instrument.visa_library or ""),
                         ", ".join(str(a) for a in instrument.addresses),
                     )
+                    if instrument.visa_library != instrument._visa_library:
+                        _control_log.warning(
+                            "%s does not have %s, so it was opened with %s "
+                            "instead. Both work; the port is missing from "
+                            "the system VISA rather than from Windows.",
+                            visa_library_name(instrument._visa_library),
+                            instrument._port,
+                            visa_library_name(instrument.visa_library or ""),
+                        )
                 except Exception as e:
                     self._set_monitoring(False)
                     self._show_status("Error — {}".format(e), steady=False)
