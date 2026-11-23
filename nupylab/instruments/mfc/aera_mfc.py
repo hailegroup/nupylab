@@ -230,6 +230,7 @@ class AeraMFC(NupylabInstrument):
         self._visa_library = visa_library
         self._visa_library_in_use: Optional[str] = None
         self._ranges: List[float] = [math.nan] * count
+        self._ramp_times: List[float] = [math.nan] * count
         self._panel = None
         # Set by the control panel, so that a disconnection from elsewhere,
         # e.g. when an experiment is queued, reaches its button. Emitting a Qt
@@ -506,7 +507,11 @@ class AeraMFC(NupylabInstrument):
                 self.aera.add_channel(address, mfc_class)
             for index, address in enumerate(self._addresses):
                 try:
-                    self._ranges[index] = float(self._channel(index).mfc_range)
+                    channel = self._channel(index)
+                    self._ranges[index] = float(channel.mfc_range)
+                    # Read once, because a channel that ramps explains a
+                    # setpoint that does not arrive where it was put
+                    self._ramp_times[index] = float(channel.ramp_time)
                 except Exception as e:
                     self._close_port()
                     raise NupylabError(
@@ -515,6 +520,36 @@ class AeraMFC(NupylabInstrument):
                         )
                     ) from e
             self._connected = True
+        ramping = [
+            (self.channel_name(index), self._ramp_times[index])
+            for index in range(self.channel_count)
+            if math.isfinite(self._ramp_times[index])
+            and self._ramp_times[index] > 0
+        ]
+        if ramping:
+            # Worth knowing before a setpoint appears not to have arrived
+            log.warning(
+                "These MFCs ramp to a new setpoint rather than stepping to "
+                "it, so one will read back as on its way for that long: %s",
+                ", ".join(
+                    "{} over {:g} s".format(name, seconds)
+                    for name, seconds in ramping
+                ),
+            )
+
+    def ramp_time(self, index: int) -> float:
+        """Get how long one MFC takes to travel to a new setpoint, in seconds.
+
+        Read once when the bank connects. Zero means it steps straight to a
+        new setpoint, which is what makes Apply and Close look immediate.
+
+        Args:
+            index: channel index, counting from zero.
+
+        Returns:
+            Ramp time in seconds, NaN until the bank has connected.
+        """
+        return self._ramp_times[index]
 
     def _channel(self, index: int) -> "AeraChannel":
         """Get the driver channel of one MFC. Call while holding the lock."""
@@ -606,7 +641,9 @@ class AeraMFC(NupylabInstrument):
         channel.setpoint = percent
         channel.valve_mode = "close" if close else "flow"
 
-    def apply_setpoint(self, index: int, value: float, unit: str = "sccm") -> float:
+    def apply_setpoint(
+        self, index: int, value: float, unit: str = "sccm"
+    ) -> Tuple[float, float]:
         """Set one channel's flow, from the Manual Control tab.
 
         Args:
@@ -615,7 +652,9 @@ class AeraMFC(NupylabInstrument):
             unit: `sccm` or `%`, see :attr:`UNITS`.
 
         Returns:
-            The setpoint written, as a percentage of the MFC range.
+            The setpoint written and the one the MFC reports afterwards, both
+            as a percentage of the MFC range. They differ when the MFC is
+            ramping towards it or would not take it, see :meth:`_read_back`.
 
         Raises:
             NupylabError: if the unit is not one of :attr:`UNITS`, if the
@@ -649,7 +688,7 @@ class AeraMFC(NupylabInstrument):
             percent = self.flow_to_percent(index, value)
         with self.lock:
             self._write_setpoint(index, percent, close=not value)
-        return percent
+            return percent, self._read_back(index, percent)
 
     def clear_faults(self, index: Optional[int] = None) -> None:
         """Clear the latched alarms and errors of one channel, or of all.
@@ -673,7 +712,53 @@ class AeraMFC(NupylabInstrument):
                 channel.clear_alarms()
                 channel.clear_errors()
 
-    def close_channel(self, index: int) -> float:
+    #: How far a setpoint read back may sit from the one written, in percent
+    #: of range, before it is worth saying so. An Aera reports its setpoint to
+    #: a tenth of a percent.
+    SETPOINT_TOLERANCE: float = 0.2
+
+    def _read_back(self, index: int, written: float) -> float:
+        """Read a setpoint back and say so if it is not what was written.
+
+        Writing a setpoint and the MFC holding it are not the same thing. One
+        with a ramp time set reports the setpoint it is on its way to rather
+        than the one just written, and one that refused the setting goes on
+        reporting whatever it had before. Either way the figure to show is the
+        MFC's, not the one that was asked for.
+
+        Call while holding the lock.
+
+        Args:
+            index: channel index, counting from zero.
+            written: the setpoint just written, in percent of range.
+
+        Returns:
+            The setpoint the MFC reports, or `written` if it cannot be read.
+        """
+        try:
+            reported = float(self._channel(index).setpoint)
+        except Exception as e:
+            log.warning(
+                "%s was set to %.2f %%, but its setpoint could not be read "
+                "back: %s", self.channel_name(index), written, e
+            )
+            return written
+        if abs(reported - written) > self.SETPOINT_TOLERANCE:
+            ramp = self._ramp_times[index]
+            log.warning(
+                "%s was set to %.2f %% but reports %.2f %%. Its ramp time "
+                "is %s, so %s.",
+                self.channel_name(index),
+                written,
+                reported,
+                "{:g} s".format(ramp) if math.isfinite(ramp) else "not known",
+                "it is on its way there"
+                if math.isfinite(ramp) and ramp > 0
+                else "it did not take the setting",
+            )
+        return reported
+
+    def close_channel(self, index: int) -> Tuple[float, float]:
         """Shut one channel's valve and set it to zero.
 
         The setpoint is read back, because writing zero is not the same as
@@ -685,23 +770,16 @@ class AeraMFC(NupylabInstrument):
             index: channel index, counting from zero.
 
         Returns:
-            The setpoint the MFC reports once zero has been written, in
-            percent of range. Zero is what it should be, and anything else is
-            worth showing rather than hiding.
+            Zero, and the setpoint the MFC reports once zero has been
+            written, in percent of range. The second should be zero too, and
+            anything else is worth showing rather than hiding.
 
         Raises:
             NupylabError: if the bank is not connected.
         """
         with self.lock:
             self._write_setpoint(index, 0.0, close=True)
-            try:
-                return float(self._channel(index).setpoint)
-            except Exception as e:
-                log.warning(
-                    "%s was closed, but its setpoint could not be read back: "
-                    "%s", self.channel_name(index), e
-                )
-                return 0.0
+            return 0.0, self._read_back(index, 0.0)
 
     def read_channel(self, index: int) -> Tuple[float, float, float, float]:
         """Read one channel's setpoint and flow.
@@ -1172,14 +1250,24 @@ class AeraMFC(NupylabInstrument):
                     self._ensure_connected()
                     unit = self.unit_combos[index].currentText()
                     value = self.value_edits[index].value()
-                    percent = instrument.apply_setpoint(index, value, unit)
+                    asked, percent = instrument.apply_setpoint(
+                        index, value, unit
+                    )
                 except Exception as e:
                     self._show_status("{} not set — {}".format(name, e), steady=False)
                     _control_log.error("%s setpoint failed: %s", name, e)
                     return
                 flow = instrument.percent_to_flow(index, percent)
                 self._show_set(index, percent, flow)
-                self._show_status("{} set".format(name))
+                if abs(percent - asked) > instrument.SETPOINT_TOLERANCE:
+                    self._show_status(
+                        "{} set to {:.2f} %, but it reports {:.2f} %".format(
+                            name, asked, percent
+                        ),
+                        steady=False,
+                    )
+                else:
+                    self._show_status("{} set".format(name))
                 _control_log.info(
                     "%s set to %s", name, self._format(percent, flow)
                 )
@@ -1209,7 +1297,7 @@ class AeraMFC(NupylabInstrument):
                 name = instrument.channel_name(index)
                 try:
                     self._ensure_connected()
-                    written = instrument.close_channel(index)
+                    _, written = instrument.close_channel(index)
                 except Exception as e:
                     self._show_status(
                         "{} not closed — {}".format(name, e), steady=False

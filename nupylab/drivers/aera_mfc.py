@@ -475,14 +475,21 @@ class AeraChannel(Channel):
         self.check_set_errors()
 
     def check_set_errors(self):
-        """Read 'OK' from MFC after setting."""
+        """Read 'OK' from MFC after setting.
+
+        An Aera answers a set with 'OK' or with 'NG', and PyMeasure does not
+        act on what this returns, so a refusal is logged here as well: a
+        setting that quietly did not take is worse than one that failed
+        loudly, and the only sign of it otherwise is a value that reads back
+        as whatever it was before.
+        """
         response = self.read()
         if response.strip() != 'OK':
-            errors = [f"Error setting Aera MFC {self.id}, it answered "
-                      f"{response!r} rather than 'OK'.",]
-        else:
-            errors = []
-        return errors
+            message = (f"Aera MFC at address {self.id} refused a setting: it "
+                       f"answered {response!r} rather than 'OK'.")
+            log.warning(message)
+            return [message]
+        return []
 
     def write_eeprom(self):
         """Write variables of the current gas table to EEPROM.
