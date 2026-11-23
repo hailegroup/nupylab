@@ -673,17 +673,35 @@ class AeraMFC(NupylabInstrument):
                 channel.clear_alarms()
                 channel.clear_errors()
 
-    def close_channel(self, index: int) -> None:
+    def close_channel(self, index: int) -> float:
         """Shut one channel's valve and set it to zero.
+
+        The setpoint is read back, because writing zero is not the same as
+        the MFC holding zero: one with a ramp time set reports the setpoint
+        it is on its way to rather than the one just written, and the panel
+        should not claim a zero the instrument does not have.
 
         Args:
             index: channel index, counting from zero.
+
+        Returns:
+            The setpoint the MFC reports once zero has been written, in
+            percent of range. Zero is what it should be, and anything else is
+            worth showing rather than hiding.
 
         Raises:
             NupylabError: if the bank is not connected.
         """
         with self.lock:
             self._write_setpoint(index, 0.0, close=True)
+            try:
+                return float(self._channel(index).setpoint)
+            except Exception as e:
+                log.warning(
+                    "%s was closed, but its setpoint could not be read back: "
+                    "%s", self.channel_name(index), e
+                )
+                return 0.0
 
     def read_channel(self, index: int) -> Tuple[float, float, float, float]:
         """Read one channel's setpoint and flow.
@@ -1191,7 +1209,7 @@ class AeraMFC(NupylabInstrument):
                 name = instrument.channel_name(index)
                 try:
                     self._ensure_connected()
-                    instrument.close_channel(index)
+                    written = instrument.close_channel(index)
                 except Exception as e:
                     self._show_status(
                         "{} not closed — {}".format(name, e), steady=False
@@ -1199,9 +1217,26 @@ class AeraMFC(NupylabInstrument):
                     _control_log.error("%s close failed: %s", name, e)
                     return
                 self.value_edits[index].setValue(0.0)
-                self._show_set(index, 0.0, 0.0)
-                self._show_status("{} closed".format(name))
-                _control_log.info("%s valve closed", name)
+                self._show_set(
+                    index, written, instrument.percent_to_flow(index, written)
+                )
+                if written:
+                    # Written and read back, so this is the MFC's own figure
+                    self._show_status(
+                        "{} closed, but it still reports a setpoint of "
+                        "{:.2f} %".format(name, written),
+                        steady=False,
+                    )
+                    _control_log.warning(
+                        "%s valve closed, and its setpoint was set to zero, "
+                        "but it reports %.2f %%. Check whether it has a ramp "
+                        "time set.", name, written
+                    )
+                else:
+                    self._show_status("{} closed".format(name))
+                    _control_log.info(
+                        "%s valve closed and its setpoint cleared to zero", name
+                    )
                 self.update_readings()
 
             def _show_status(self, status, steady=True):
