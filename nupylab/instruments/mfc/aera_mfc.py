@@ -26,7 +26,7 @@ from typing import List, Optional, Sequence, TYPE_CHECKING, Tuple, Union
 
 from nupylab.drivers import aera_mfc
 from nupylab.instruments.mfc.mfc_calibration import MFCCalibration
-from nupylab.utilities import DataTuple, NupylabError
+from nupylab.utilities import DataTuple, NupylabError, list_resources
 from nupylab.utilities.nupylab_instrument import NupylabInstrument
 
 if TYPE_CHECKING:
@@ -37,6 +37,44 @@ _control_log = logging.getLogger("nupylab.instrument_control")
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
+
+
+def port_hint(port: str) -> str:
+    """Say what VISA can see, for a port that could not be opened.
+
+    A port that is not there fails with `VI_ERROR_RSRC_NFOUND`, which says
+    that the name resolved to nothing and no more. What is worth knowing at
+    that moment is which ports do exist, so that the right one can be picked
+    in the inputs panel, or so that it is clear that none do.
+
+    Args:
+        port: the port that could not be opened.
+
+    Returns:
+        A sentence to add to the error, or an empty string if the resources
+        could not be listed either.
+    """
+    try:
+        resources = tuple(list_resources())
+    except Exception as e:
+        log.debug("Could not list VISA resources: %s", e)
+        return ""
+    serial = [name for name in resources if str(name).upper().startswith("ASRL")]
+    if not resources:
+        return (
+            " VISA can see no instruments at all on this machine, so check "
+            "that it is installed and working before looking at {}.".format(port)
+        )
+    if not serial:
+        return (
+            " VISA can see no serial ports at all, only {}. Check that the "
+            "RS-485 converter is plugged in and that its driver is "
+            "installed.".format(", ".join(str(name) for name in resources))
+        )
+    return (
+        " VISA can see these serial ports: {}. Choose the right one as the "
+        "MFC Port.".format(", ".join(serial))
+    )
 
 
 class AeraMFC(NupylabInstrument):
@@ -391,7 +429,9 @@ class AeraMFC(NupylabInstrument):
             except Exception as e:
                 self.aera = None
                 raise NupylabError(
-                    "Aera MFCs on {} could not be opened: {}".format(self._port, e)
+                    "Aera MFCs on {} could not be opened: {}.{}".format(
+                        self._port, e, port_hint(self._port)
+                    )
                 ) from e
             for address, mfc_class in zip(self._addresses, self._mfc_classes):
                 self.aera.add_channel(address, mfc_class)
