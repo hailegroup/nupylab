@@ -101,15 +101,27 @@ them; the Manual Control tab still reads it whenever its panel is connected.
 Sample ID and User Initials sit at the foot of the inputs panel, with the
 record time and the filename. Both are recorded in the header of every data
 file the experiment writes, and both also name the file. A saved file is
-called `YYMMDD_<initials>_<sample>_<step>.csv`: today's date and the User
-Initials are shown greyed out and locked at the start of the Filename field,
-since neither is typed into the name itself; what follows them is the user's,
+called `<sample>_<initials>_YYMMDD_<step>.csv`: the User Initials and today's
+date are shown greyed out and locked at the end of the Filename field, since
+neither is typed into the name itself; what comes before them is the user's,
 and is filled in from the Sample ID as it is typed, with spaces and anything
 a filename will not take turned into underscores. That part stays editable,
 so a name typed there by hand stands until the Sample ID is changed again.
 Both halves are read afresh when an experiment is queued, so a GUI left open
 overnight files the next morning's run under the new date, and every step of
 one queue is filed the same way.
+
+Nothing is queued while Sample ID is blank: the GUI says so and queues no
+step, since a run named for nothing but the day and whoever ran it is one
+nobody can match to a sample afterwards. Everything else in the panel may be
+left as it stands.
+
+A Sample ID runs to :data:`MAX_SAMPLE_ID` characters and a set of initials to
+:data:`MAX_INITIALS`, neither field taking more than that. Everything else in
+a filename is fixed width, so those two settle how long the longest name can
+be, and keep a folder of data short enough in the path to zip, send and
+unzip somewhere else without running into the 260 characters Windows allows
+a path.
 
 The Keithley and MFC ports are chosen in the inputs panel too, and default to
 the addresses S2 has them at. A station that picks others has them remembered
@@ -373,9 +385,20 @@ FILE_BLOCK_INPUTS = (("record_time", "user_initials"), "sample_id")
 #: otherwise decide how wide the whole panel has to be.
 FILE_BLOCK_ENTRY_CHARS = 8
 
-#: How a saved file is named before the part the user types: the date, then
-#: whose initials are in User Initials, e.g. `261121_DV_`.
+#: How a saved file is named after the part the user types: whose initials
+#: are in User Initials, then the date, e.g. `LSM2080_DV_261123`.
 FILENAME_DATE_FORMAT = "%y%m%d"
+
+#: Most characters the two typed parts of a filename may run to. Everything
+#: else in the name is fixed width, so these two settle how long the longest
+#: name can be: a sample, a set of initials and a six-figure date, parted by
+#: three underscores, then the step number and `.csv`. At the sizes below
+#: that is at most 43 characters, or 46 for the rare name that has to be
+#: made unique, which leaves a Windows path its 260 characters even from a
+#: Documents folder redirected into OneDrive and still has room for wherever
+#: the data is unzipped at the other end.
+MAX_SAMPLE_ID = 24
+MAX_INITIALS = 3
 
 
 def cap_entry_width(widget, characters=FILE_BLOCK_ENTRY_CHARS):
@@ -473,8 +496,8 @@ def move_inputs_to_file_block(window, names=FILE_BLOCK_INPUTS):
         index += 1
 
 
-def dated_filename_prefix(window, now=None, name="user_initials"):
-    """Work out the locked start of a filename: the date and the initials.
+def dated_filename_suffix(window, now=None, name="user_initials"):
+    """Work out the locked end of a filename: the initials and the date.
 
     Neither is typed into the filename: the date is today's, and the initials
     are whatever User Initials says, so that changing that field renames the
@@ -486,27 +509,27 @@ def dated_filename_prefix(window, now=None, name="user_initials"):
         name: the parameter holding the user's initials.
 
     Returns:
-        The prefix, e.g. `261121_DV_`, ending in the separator that the part
-        the user types follows. Initials left blank leave just the date.
+        The suffix, e.g. `_DV_261123`, opening with the separator that parts
+        it from the sample. Initials left blank leave just the date.
     """
     stamp = (now or datetime.now()).strftime(FILENAME_DATE_FORMAT)
     field = getattr(window.inputs, name, None)
-    initials = filename_tail(field.value()) if field is not None else ""
+    initials = filename_part(field.value(), MAX_INITIALS) if field else ""
     if not initials:
-        return "{}_".format(stamp)
-    return "{}_{}_".format(stamp, initials)
+        return "_{}".format(stamp)
+    return "_{}_{}".format(initials, stamp)
 
 
-def lock_filename_prefix(window):
-    """Give the filename field a locked start and an editable end.
+def lock_filename_suffix(window):
+    """Give the filename field an editable start and a locked end.
 
-    The start is today's date and the User Initials, which are not typed into
-    the name itself: it is shown greyed out, beside the field, and cannot be
-    typed in. What follows it is the user's, and is filled in from Sample ID,
-    see :func:`follow_sample_id`.
+    The start is the user's, and is filled in from Sample ID, see
+    :func:`follow_sample_id`. What follows it is the User Initials and
+    today's date, neither of which is typed into the name itself: they are
+    shown greyed out, beside the field, and cannot be typed in.
 
-    The prefix is worked out afresh whenever it is shown or used, so a GUI
-    left open overnight files the next morning's experiment under the new
+    The locked part is worked out afresh whenever it is shown or used, so a
+    GUI left open overnight files the next morning's experiment under the new
     date, and an experiment is filed under whoever's initials are in the
     panel when it is queued rather than when the window opened.
 
@@ -514,64 +537,69 @@ def lock_filename_prefix(window):
         window: the main window.
 
     Returns:
-        A function giving the prefix as it stands, which also refreshes what
-        the field shows, or `None` if the panel has no filename field.
+        A function giving the whole name a file is saved under, before its
+        step number, which also refreshes what the field shows. `None` if
+        the panel has no filename field.
     """
     file_input = getattr(window, "file_input", None)
     filename_input = getattr(file_input, "filename_input", None)
     layout = file_input.layout() if file_input is not None else None
     index = layout.indexOf(filename_input) if layout is not None else -1
     if filename_input is None or index < 0:
-        log.warning("No filename field to lock a prefix on")
+        log.warning("No filename field to lock an ending on")
         return None
 
-    prefix_field = QtWidgets.QLineEdit()
-    prefix_field.setReadOnly(True)
-    prefix_field.setEnabled(False)
-    prefix_field.setFocusPolicy(QtCore.Qt.NoFocus)
-    prefix_field.setToolTip(
-        "Named for you: today's date and the User Initials above. The rest "
-        "of the name, after it, is yours, and starts as the Sample ID."
+    filename_input.setMaxLength(MAX_SAMPLE_ID)
+    suffix_field = QtWidgets.QLineEdit()
+    suffix_field.setReadOnly(True)
+    suffix_field.setEnabled(False)
+    suffix_field.setFocusPolicy(QtCore.Qt.NoFocus)
+    suffix_field.setToolTip(
+        "Named for you: the User Initials above and today's date. The start "
+        "of the name, before it, is yours, and starts as the Sample ID."
     )
 
-    # The locked start and the part the user types are drawn as one field in
+    # The part the user types and the locked ending are drawn as one field in
     # two halves, so the whole name reads left to right on one line
     row = QtWidgets.QWidget()
     row_layout = QtWidgets.QHBoxLayout(row)
     row_layout.setContentsMargins(0, 0, 0, 0)
     row_layout.setSpacing(2)
     layout.removeWidget(filename_input)
-    row_layout.addWidget(prefix_field, 0)
     row_layout.addWidget(filename_input, 1)
+    row_layout.addWidget(suffix_field, 0)
     layout.insertWidget(index, row)
 
     def refresh():
-        """Show the prefix as it now stands, and give it back."""
-        text = dated_filename_prefix(window)
-        if prefix_field.text() != text:
-            prefix_field.setText(text)
+        """Show the locked ending as it stands, and give the whole name."""
+        text = dated_filename_suffix(window)
+        if suffix_field.text() != text:
+            suffix_field.setText(text)
         # Measured every time rather than once: the field is built before it
         # is in the panel, so the font it is finally drawn in may not be the
         # one it started with
-        metrics = prefix_field.fontMetrics()
+        metrics = suffix_field.fontMetrics()
         if hasattr(metrics, "horizontalAdvance"):
             width = metrics.horizontalAdvance(text)
         else:  # Qt older than 5.11
             width = metrics.width(text)
-        prefix_field.setFixedWidth(width + 12)
-        return text
+        suffix_field.setFixedWidth(width + 12)
+        sample = file_input.filename_base.strip()
+        # Nothing typed leaves the separator with nothing before it
+        return sample + text if sample else text.lstrip("_")
 
     refresh()
     # Whose initials the files carry is read from the panel as it is typed
     initials = getattr(window.inputs, "user_initials", None)
     if initials is not None and hasattr(initials, "textChanged"):
+        initials.setMaxLength(MAX_INITIALS)
         initials.textChanged.connect(lambda *_: refresh())
     else:
         log.warning("No User Initials input to name files after")
     return refresh
 
 
-def filename_tail(text):
+def filename_part(text, limit=None):
     """Turn what the user typed into something a filename will take.
 
     Spaces and anything Windows or PyMeasure will not take in a name become
@@ -580,16 +608,43 @@ def filename_tail(text):
 
     Args:
         text: a Sample ID or a set of initials, as typed.
+        limit: most characters to keep, `None` to keep all of them.
 
     Returns:
-        The name to end the file with, which may be empty.
+        The part of the name, which may be empty.
     """
     cleaned = re.sub(r'[<>:"/\\|?*{}\s]+', "_", str(text).strip())
+    if limit is not None:
+        cleaned = cleaned[:limit]
     return cleaned.strip("_")
 
 
+def missing_inputs(window):
+    """Say what the inputs panel is missing before anything is queued.
+
+    A run with no Sample ID writes files named for nothing but the day and
+    whoever ran them, which is no way to find the sample again afterwards.
+    That is worth stopping at the point it can still be fixed, rather than
+    leaving someone to work out months later what was in the furnace.
+
+    Args:
+        window: the main window.
+
+    Returns:
+        One line per problem, empty if the panel is ready to run.
+    """
+    problems = []
+    field = getattr(window.inputs, "sample_id", None)
+    if field is not None and not filename_part(field.value(), MAX_SAMPLE_ID):
+        problems.append(
+            "Sample ID is blank. Every data file is named after it, so it "
+            "has to say something."
+        )
+    return problems
+
+
 def follow_sample_id(window, name="sample_id"):
-    """Fill the editable end of the filename in from the Sample ID.
+    """Fill the editable start of the filename in from the Sample ID.
 
     Typing a Sample ID names the file after it, which is what the name is
     wanted for; the field stays editable, so a name typed there by hand
@@ -603,9 +658,10 @@ def follow_sample_id(window, name="sample_id"):
     if field is None or not hasattr(field, "textChanged"):
         log.warning("No input named %s to name files after", name)
         return
+    field.setMaxLength(MAX_SAMPLE_ID)
 
     def update(text):
-        window.file_input.filename = filename_tail(text)
+        window.file_input.filename = filename_part(text, MAX_SAMPLE_ID)
 
     field.textChanged.connect(update)
     update(field.value())
@@ -1802,11 +1858,14 @@ def main(*args):
     )
 
     move_inputs_to_file_block(window)
-    # The panel names the start of each file and the user types the end of
-    # it, see `lock_filename_prefix`. `queue` reads the prefix once per queue,
-    # so every step of one experiment is filed the same way.
-    window.filename_prefix = lock_filename_prefix(window)
+    # The user types the start of each file's name and the panel names the
+    # end of it, see `lock_filename_suffix`. `queue` reads the whole name
+    # once per queue, so every step of one experiment is filed the same way.
+    window.filename_stem = lock_filename_suffix(window)
     follow_sample_id(window)
+    # Nothing is queued while the panel is missing something it names files
+    # after, see `missing_inputs`
+    window.input_errors = lambda: missing_inputs(window)
     pair_inputs(window.inputs)
     mfc_warning["label"] = add_mfc_warning(window.inputs)
     add_input_sections(window.inputs)

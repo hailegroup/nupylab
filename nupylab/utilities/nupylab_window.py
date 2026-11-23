@@ -395,6 +395,21 @@ class NupylabWindow(ManagedDockWindow):
 
     def queue(self, procedure=None) -> None:
         """Queue all rows in parameters table. Overwrites parent method."""
+        # A GUI that will not run on what its inputs panel is holding, a
+        # Sample ID left blank say, sets `input_errors` to something callable
+        # giving one line per problem. Asked first, since nothing has been
+        # read yet and the panel is where the user has to go back to.
+        check = getattr(self, "input_errors", None)
+        problems: List[str] = list(check() or ()) if callable(check) else []
+        if problems:
+            details = "\n".join(problems)
+            log.error("Experiment not queued:\n%s", details)
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Nothing Queued",
+                "Nothing was queued. Fill the inputs panel in:\n\n" + details,
+            )
+            return
         log.info("Reading experiment parameters.")
         table_widget = self.tabs.widget(0)
         table_model = table_widget.table.model()
@@ -420,15 +435,13 @@ class NupylabWindow(ManagedDockWindow):
         current_step: int = 1
         previous_procedure = None
 
-        # A GUI that names its own files sets `filename_prefix` to something
-        # callable giving the locked start of the name, e.g. the date and
-        # whose experiment it is. Read once here, so that every step of one
-        # queue is filed the same way, and the user's part of the name
-        # follows it.
-        prefix_source = getattr(self, "filename_prefix", None)
-        locked_prefix: Optional[str] = (
-            prefix_source() if callable(prefix_source) else None
-        )
+        # A GUI that names its own files sets `filename_stem` to something
+        # callable giving the whole name a file is saved under, before its
+        # step number: what the user typed and what the panel named, in
+        # whichever order that GUI puts them. Read once here, so that every
+        # step of one queue is filed the same way.
+        stem_source = getattr(self, "filename_stem", None)
+        stem: Optional[str] = stem_source() if callable(stem_source) else None
 
         for table_row in converted_df.itertuples(index=False):
             procedure: NupylabProcedure = self.make_procedure()
@@ -442,22 +455,16 @@ class NupylabWindow(ManagedDockWindow):
             if self.store_measurement:
                 _experiments_dir = os.path.join(self.directory, "Experiments")
                 os.makedirs(_experiments_dir, exist_ok=True)
-                filename_base = self.file_input.filename_base.strip()
                 ext = self.file_input.filename_extension
-                if locked_prefix is None:
+                if stem is None:
                     # Filename input sets the prefix,
                     # e.g. "EXPRDATA" -> EXPRDATA_<date>_1.csv
+                    filename_base = self.file_input.filename_base.strip()
                     prefix = f"{filename_base or 'EXPRDATA'}_"
                     datetimeformat = "%Y-%m-%d"
                 else:
-                    # The locked prefix carries the date itself, and ends in
-                    # the separator the user's part follows: one separator too
-                    # many when the user has left that part empty.
-                    prefix = (
-                        locked_prefix + filename_base
-                        if filename_base
-                        else locked_prefix.rstrip("_")
-                    )
+                    # The GUI has named the file in full, date included
+                    prefix = stem
                     datetimeformat = ""
                 try:
                     filename: str = unique_filename(
