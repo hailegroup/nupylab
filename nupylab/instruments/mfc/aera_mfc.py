@@ -231,6 +231,7 @@ class AeraMFC(NupylabInstrument):
         self._visa_library_in_use: Optional[str] = None
         self._ranges: List[float] = [math.nan] * count
         self._ramp_times: List[float] = [math.nan] * count
+        self._digital: List[Optional[bool]] = [None] * count
         self._panel = None
         # Set by the control panel, so that a disconnection from elsewhere,
         # e.g. when an experiment is queued, reaches its button. Emitting a Qt
@@ -512,6 +513,9 @@ class AeraMFC(NupylabInstrument):
                     # Read once, because a channel that ramps explains a
                     # setpoint that does not arrive where it was put
                     self._ramp_times[index] = float(channel.ramp_time)
+                    # And one in analog mode explains a setpoint that arrives
+                    # and then does nothing
+                    self._digital[index] = bool(channel.digital_mode_enabled)
                 except Exception as e:
                     self._close_port()
                     raise NupylabError(
@@ -526,6 +530,19 @@ class AeraMFC(NupylabInstrument):
             if math.isfinite(self._ramp_times[index])
             and self._ramp_times[index] > 0
         ]
+        analog = [
+            self.channel_name(index)
+            for index in range(self.channel_count)
+            if self._digital[index] is False
+        ]
+        if analog:
+            log.warning(
+                "These MFCs are in analog mode, so they take their setpoint "
+                "from their analog input and will not follow one set from "
+                "here, however willingly they report it: %s. Put them in "
+                "digital mode to control them from this program.",
+                ", ".join(analog),
+            )
         if ramping:
             # Worth knowing before a setpoint appears not to have arrived
             log.warning(
@@ -550,6 +567,79 @@ class AeraMFC(NupylabInstrument):
             Ramp time in seconds, NaN until the bank has connected.
         """
         return self._ramp_times[index]
+
+    def digital_mode(self, index: int) -> Optional[bool]:
+        """Get whether one MFC takes its setpoint from this program.
+
+        Read once when the bank connects. An MFC in analog mode follows the
+        voltage on its analog input instead, and stores a setpoint written to
+        it without acting on it, so a setpoint can read back correctly while
+        the flow never moves.
+
+        Args:
+            index: channel index, counting from zero.
+
+        Returns:
+            Whether it is in digital mode, or `None` if that could not be
+            read.
+        """
+        return self._digital[index]
+
+    def read_valve_mode(self, index: int) -> str:
+        """Read what one MFC's valve is being told to do.
+
+        Args:
+            index: channel index, counting from zero.
+
+        Returns:
+            `flow`, `close` or `open`, or `unknown` if the answer did not
+            make sense, which is worth reporting rather than raising: this is
+            asked while explaining something else that went wrong.
+
+        Raises:
+            NupylabError: if the bank is not connected.
+        """
+        with self.lock:
+            try:
+                return str(self._channel(index).valve_mode)
+            except NupylabError:
+                raise
+            except Exception as e:
+                log.warning(
+                    "%s valve mode could not be read: %s",
+                    self.channel_name(index), e
+                )
+                return "unknown"
+
+    def set_digital_mode(
+        self, index: Optional[int] = None, enabled: bool = True
+    ) -> None:
+        """Put one MFC, or all of them, under this program's control.
+
+        An MFC in digital mode follows the setpoint written to it; one in
+        analog mode follows the voltage on its analog input. Switching is a
+        change to how the instrument behaves, not just to what this program
+        reads, so nothing here does it on its own.
+
+        Args:
+            index: channel index, counting from zero, or `None` for every
+                channel.
+            enabled: `True` for digital mode, `False` to hand it back to the
+                analog input.
+
+        Raises:
+            NupylabError: if the bank is not connected.
+        """
+        indices = range(self.channel_count) if index is None else (index,)
+        with self.lock:
+            for channel_index in indices:
+                self._channel(channel_index).digital_mode_enabled = enabled
+                self._digital[channel_index] = enabled
+        log.info(
+            "Put %s in %s mode",
+            ", ".join(self.channel_name(i) for i in indices),
+            "digital" if enabled else "analog",
+        )
 
     def _channel(self, index: int) -> "AeraChannel":
         """Get the driver channel of one MFC. Call while holding the lock."""
@@ -945,6 +1035,16 @@ class AeraMFC(NupylabInstrument):
                 )
                 self.clear_btn.clicked.connect(self.clear_faults)
                 top_row.addWidget(self.clear_btn)
+
+                self.digital_btn = QtWidgets.QPushButton("Digital Mode")
+                self.digital_btn.setToolTip(
+                    "Put every MFC under this program's control. One in "
+                    "analog mode follows the voltage on its analog input "
+                    "instead, and stores a setpoint written to it without "
+                    "acting on it."
+                )
+                self.digital_btn.clicked.connect(self.set_digital_mode)
+                top_row.addWidget(self.digital_btn)
                 layout.addLayout(top_row)
 
                 # Two lines per MFC: what it is being set to on the first,
@@ -1266,12 +1366,32 @@ class AeraMFC(NupylabInstrument):
                         ),
                         steady=False,
                     )
+                elif not self._will_flow(index, name, asked):
+                    pass  # Already said why it will not
                 else:
                     self._show_status("{} set".format(name))
                 _control_log.info(
                     "%s set to %s", name, self._format(percent, flow)
                 )
                 self.update_readings()
+
+            def set_digital_mode(self):
+                """Put every MFC under this program's control."""
+                self._abort_if_needed()
+                try:
+                    self._ensure_connected()
+                    instrument.set_digital_mode()
+                except Exception as e:
+                    self._show_status(
+                        "Digital mode not set — {}".format(e), steady=False
+                    )
+                    _control_log.error("Aera MFC digital mode failed: %s", e)
+                    return
+                self.refresh_labels()
+                self._show_status("Every MFC is in digital mode")
+                _control_log.info(
+                    "Every Aera MFC now takes its setpoint from this program"
+                )
 
             def clear_faults(self):
                 """Clear every MFC's latched alarms and errors."""
@@ -1290,6 +1410,52 @@ class AeraMFC(NupylabInstrument):
                     "Cleared the latched alarms and errors of every Aera MFC"
                 )
                 self.update_readings()
+
+            def _will_flow(self, index, name, asked):
+                """Check that a setpoint just written can reach the gas.
+
+                A setpoint can be written, read back correctly, and still do
+                nothing: the valve may not have come off closed, or the MFC
+                may be taking its setpoint from its analog input instead.
+                Both are worth saying at the moment Apply is pressed.
+
+                Args:
+                    index: channel index, counting from zero.
+                    name: what to call the MFC.
+                    asked: the setpoint written, in percent of range.
+
+                Returns:
+                    Whether nothing is known to be standing in the way.
+                """
+                if instrument.digital_mode(index) is False:
+                    self._show_status(
+                        "{} is in analog mode, so it will not follow this "
+                        "setpoint".format(name),
+                        steady=False,
+                    )
+                    _control_log.warning(
+                        "%s is in analog mode and takes its setpoint from its "
+                        "analog input. Press Digital Mode to control it from "
+                        "here.", name
+                    )
+                    return False
+                if not asked:
+                    return True
+                mode = instrument.read_valve_mode(index)
+                if mode == "flow":
+                    return True
+                self._show_status(
+                    "{} setpoint written, but its valve is {}".format(
+                        name, mode
+                    ),
+                    steady=False,
+                )
+                _control_log.warning(
+                    "%s was set to %.2f %% and its valve was told to flow, "
+                    "but it reports %r. Nothing will flow until it comes off "
+                    "that.", name, asked, mode
+                )
+                return False
 
             def close_channel(self, index):
                 """Shut one MFC's valve."""
