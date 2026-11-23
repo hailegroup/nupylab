@@ -43,8 +43,10 @@ import pyvisa
 BAUD_RATE = 9600
 DATA_BITS = 8
 
-#: VISA backends to try, in order, and what to call them.
-BACKENDS = (("", "the system VISA"), ("@py", "pyvisa-py"))
+#: VISA backends to try, in order, and what to call them. pyvisa-py first,
+#: as the GUI does: an Aera is a plain serial device, and it finds ports the
+#: system VISA may never have enumerated.
+BACKENDS = (("@py", "pyvisa-py"), ("", "the system VISA"))
 
 #: Status characters an Aera puts in front of a reply.
 STATUSES = {

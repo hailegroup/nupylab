@@ -44,6 +44,24 @@ log.addHandler(logging.NullHandler())
 #: Instruments' VISA installed is that.
 VISA_LIBRARY_NAMES = {"": "the system VISA", "@py": "pyvisa-py"}
 
+#: VISA backend an Aera bank opens its port with.
+#:
+#: An Aera speaks plain serial, and `pyvisa-py` reaches a COM port through
+#: `pyserial`, so that is the whole of what this needs. The system VISA is
+#: wanted for the GPIB instruments that share a station, not for this.
+#:
+#: Preferring it also steps around National Instruments' VISA knowing only
+#: the serial ports it enumerated. A USB RS-485 converter that Windows has
+#: given a COM number is not always among them, and S2's is not: it is
+#: missing from `list_resources` and opening it fails with
+#: `VI_ERROR_RSRC_NFOUND`, however well the converter works for everything
+#: else on the machine, the vendor's own utility included.
+DEFAULT_VISA_LIBRARY: str = "@py"
+
+#: Tried if :data:`DEFAULT_VISA_LIBRARY` cannot be loaded, or turns out not
+#: to have the port either. Whichever backend `pyvisa` loads by itself.
+FALLBACK_VISA_LIBRARY: str = ""
+
 
 def visa_library_name(library: str) -> str:
     """Get a readable name for a VISA backend.
@@ -123,17 +141,6 @@ class AeraMFC(NupylabInstrument):
     #: Units a setpoint may be given in, see :meth:`apply_setpoint`.
     UNITS: Tuple[str, ...] = ("sccm", "%")
 
-    #: VISA backend to fall back on when the one in use has no such port.
-    #:
-    #: National Instruments' VISA only knows the serial ports it enumerated,
-    #: and a USB RS-485 converter that Windows has given a COM number is not
-    #: always among them: `list_resources` leaves it out and opening it fails
-    #: with `VI_ERROR_RSRC_NFOUND`, however well the converter works for
-    #: everything else on the machine. `pyvisa-py` reaches a COM port through
-    #: `pyserial` instead and is not affected, so the port is tried again
-    #: through it before the connection is given up on.
-    FALLBACK_VISA_LIBRARY: str = "@py"
-
     def __init__(
         self,
         port: str,
@@ -143,7 +150,7 @@ class AeraMFC(NupylabInstrument):
         channel_names: Optional[Sequence[str]] = None,
         gases: Optional[Sequence[str]] = None,
         calibrations: Optional[Sequence[Optional[MFCCalibration]]] = None,
-        visa_library: str = "",
+        visa_library: str = DEFAULT_VISA_LIBRARY,
         name: str = "Aera MFC",
     ) -> None:
         """Initialize the bank, its labels, and its connection parameters.
@@ -163,8 +170,9 @@ class AeraMFC(NupylabInstrument):
             calibrations: flow calibration of each channel, `None` where there
                 is none. Optional.
             visa_library: VISA backend to open the port with, as `pyvisa`
-                names it. The default is whichever one it loads by itself.
-                See :attr:`FALLBACK_VISA_LIBRARY`.
+                names it. See :data:`DEFAULT_VISA_LIBRARY`, and
+                :data:`FALLBACK_VISA_LIBRARY` for what is tried if it does
+                not work out.
             name: name of instrument.
 
         Raises:
@@ -270,7 +278,7 @@ class AeraMFC(NupylabInstrument):
         """Get the VISA backend the port was last opened with.
 
         `None` until the bank has connected. Worth saying out loud when it is
-        not the one that was asked for, see :attr:`FALLBACK_VISA_LIBRARY`.
+        not the one that was asked for, see :data:`FALLBACK_VISA_LIBRARY`.
         """
         return self._visa_library_in_use
 
@@ -469,8 +477,8 @@ class AeraMFC(NupylabInstrument):
         with self.lock:
             self._close_port()
             libraries = [self._visa_library]
-            if self.FALLBACK_VISA_LIBRARY not in libraries:
-                libraries.append(self.FALLBACK_VISA_LIBRARY)
+            if FALLBACK_VISA_LIBRARY not in libraries:
+                libraries.append(FALLBACK_VISA_LIBRARY)
             failures = []
             for library in libraries:
                 try:

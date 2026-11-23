@@ -25,7 +25,10 @@ not an experiment is queued. A queued experiment records all three as well,
 unless neither meter answers, in which case it runs without them.
 
 The four mass flow controllers are Aera FC-PA78x units sharing one serial port
-through an RS-485 converter, at the addresses :data:`MFC_ADDRESSES`. The GUI
+through an RS-485 converter, at the addresses :data:`MFC_ADDRESSES`. They are
+opened with `pyvisa-py` rather than the system VISA, which on S2 has never
+enumerated the converter's COM port, and the port list offered for them is
+what either backend can see. The GUI
 calls them MFC 1 to MFC 4 in that order. An Aera is set and read in percent of
 its own range, so each one carries the gas it is flowing and a flow
 calibration, `Q = m p + b`, which turns that percent into sccm. Both are chosen
@@ -899,17 +902,45 @@ def resource_choices(resources, *expected):
     selected at all.
 
     Args:
-        resources: VISA resources found on this machine.
+        resources: VISA resources found on this machine, from one backend or
+            several.
         *expected: resource names to offer even when they were not found.
 
     Returns:
-        Tuple of resource names, found ones first.
+        Tuple of resource names, found ones first, each once: two backends
+        asked about the same machine agree about most of what is on it.
     """
-    choices = list(resources)
-    for resource in expected:
+    choices = []
+    for resource in list(resources) + list(expected):
         if resource and resource not in choices:
             choices.append(resource)
     return tuple(choices)
+
+
+def serial_resources(backend="@py"):
+    """Get the serial ports one VISA backend can see.
+
+    The MFCs are opened with `pyvisa-py`, see
+    :data:`~nupylab.instruments.mfc.aera_mfc.DEFAULT_VISA_LIBRARY`, which
+    finds serial ports the system VISA may not have. Those ports are worth
+    offering, or the only one selectable would be whichever this module
+    names.
+
+    Args:
+        backend: the backend to ask, as `pyvisa` names it.
+
+    Returns:
+        Tuple of serial resource names, empty if that backend cannot be
+        loaded or cannot list them, which is no reason not to start.
+    """
+    try:
+        found = list_resources(backend=backend)
+    except Exception as e:
+        log.warning("Could not list serial ports with %s: %s", backend, e)
+        return ()
+    return tuple(
+        name for name in found if str(name).upper().startswith("ASRL")
+    )
 
 
 def make_heater(furnace_type, port, address, data_label=FURNACE_DATA_LABEL):
@@ -1000,9 +1031,12 @@ class S2Procedure(nupylab_procedure.NupylabProcedure):
         SETTINGS.get("nanovoltmeter_port", ""),
         SETTINGS.get("voltmeter_port", ""),
     )
-    # The MFCs share one serial port, offered the same way
+    # The MFCs share one serial port, offered the same way, and from both
+    # backends: theirs finds ports the system VISA has not got
     mfc_resources = resource_choices(
-        resources, MFC_PORT, SETTINGS.get("mfc_port", "")
+        tuple(resources) + serial_resources(),
+        MFC_PORT,
+        SETTINGS.get("mfc_port", ""),
     )
 
     # Who ran it and on what: recorded in the data file's header, and the
