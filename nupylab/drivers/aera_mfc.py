@@ -287,11 +287,21 @@ class AeraChannel(Channel):
     valve_mode = Channel.control(
         "\x02{ch}RVM", "\x02{ch}%s",
         """Control the MFC valve mode.
-        Valid options are `flow`, `close`, and `open`.""",
+
+        Valid options are `flow`, `reset`, `close`, and `open`. The first two
+        both ask for flow control and differ only in what is sent: `flow`
+        sends `SVN`, which matches the `FN` this command reports and the
+        `SVC` and `SVO` that close and open the valve, while `reset` sends
+        `SRS`, which is what this driver asked for originally. On S2's
+        FC-PA78x, `SRS` does not bring a valve off closed: it is accepted and
+        the valve goes on reporting `FC`. Reading the mode back afterwards is
+        the only way to know, see
+        :meth:`nupylab.instruments.mfc.aera_mfc.AeraMFC._write_setpoint`.""",
         validator=strict_discrete_set,
-        values=('flow', 'close', 'open'),
+        values=('flow', 'reset', 'close', 'open'),
         get_process=lambda v: {'FN': 'flow', 'FC': 'close', 'FO': 'open'}[v],
-        set_process=lambda v: {'flow': 'SRS', 'close': 'SVC', 'open': 'SVO'}[v],
+        set_process=lambda v: {'flow': 'SVN', 'reset': 'SRS',
+                               'close': 'SVC', 'open': 'SVO'}[v],
         check_set_errors=True,
         cast=str
     )

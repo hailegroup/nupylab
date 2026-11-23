@@ -722,6 +722,12 @@ class AeraMFC(NupylabInstrument):
     def _write_setpoint(self, index: int, percent: float, close: bool) -> None:
         """Set one channel's setpoint and valve. Call while holding the lock.
 
+        Setting the valve to flow is checked rather than assumed, and the
+        commands in :attr:`VALVE_FLOW_MODES` are tried in turn until the
+        valve reports itself flowing. A valve that stays closed is the one
+        failure that looks like success everywhere else: the setpoint is
+        accepted, reads back correctly, and no gas moves.
+
         Args:
             index: channel index, counting from zero.
             percent: setpoint as a percentage of the MFC range.
@@ -729,7 +735,37 @@ class AeraMFC(NupylabInstrument):
         """
         channel = self._channel(index)
         channel.setpoint = percent
-        channel.valve_mode = "close" if close else "flow"
+        if close:
+            channel.valve_mode = "close"
+            return
+        for attempt, mode in enumerate(self.VALVE_FLOW_MODES):
+            channel.valve_mode = mode
+            try:
+                released = str(channel.valve_mode) == "flow"
+            except Exception as e:
+                log.warning(
+                    "%s valve mode could not be read back: %s",
+                    self.channel_name(index), e
+                )
+                return  # Nothing to check it against, so leave it be
+            if released:
+                if attempt:
+                    log.info(
+                        "%s valve came off closed on %r rather than %r",
+                        self.channel_name(index), mode,
+                        self.VALVE_FLOW_MODES[0],
+                    )
+                return
+            log.warning(
+                "%s valve was told to flow with %r and still reports closed",
+                self.channel_name(index), mode,
+            )
+        log.warning(
+            "%s valve will not come off closed, so it flows nothing whatever "
+            "its setpoint says. Tried %s.",
+            self.channel_name(index),
+            " and ".join(repr(mode) for mode in self.VALVE_FLOW_MODES),
+        )
 
     def apply_setpoint(
         self, index: int, value: float, unit: str = "sccm"
@@ -801,6 +837,13 @@ class AeraMFC(NupylabInstrument):
                 channel = self._channel(channel_index)
                 channel.clear_alarms()
                 channel.clear_errors()
+
+    #: What to send to bring a valve back to flow control, in the order it
+    #: is tried. Both ask for the same thing and differ only in the command,
+    #: see :attr:`~nupylab.drivers.aera_mfc.AeraChannel.valve_mode`. The
+    #: valve is read back after each, since one that is not released reports
+    #: itself closed and flows nothing while the setpoint reads correctly.
+    VALVE_FLOW_MODES: Tuple[str, ...] = ("flow", "reset")
 
     #: How far a setpoint read back may sit from the one written, in percent
     #: of range, before it is worth saying so. An Aera reports its setpoint to
