@@ -884,6 +884,13 @@ class AeraMFC(NupylabInstrument):
 
                     name_label = QtWidgets.QLabel(instrument.channel_name(index))
                     name_label.setStyleSheet("font-weight: bold;")
+                    # The bank's numbering need not follow the bus addresses,
+                    # and a fault is logged against the address
+                    name_label.setToolTip(
+                        "Answers to address {} on the bus".format(
+                            instrument.addresses[index]
+                        )
+                    )
                     if index:
                         name_label.setContentsMargins(0, 8, 0, 0)
                     grid.addWidget(name_label, top, 0)

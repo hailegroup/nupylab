@@ -25,7 +25,10 @@ not an experiment is queued. A queued experiment records all three as well,
 unless neither meter answers, in which case it runs without them.
 
 The four mass flow controllers are Aera FC-PA78x units sharing one serial port
-through an RS-485 converter, at the addresses :data:`MFC_ADDRESSES`. They are
+through an RS-485 converter. The station calls them MFC 1 to MFC 4, which is
+not the order of the addresses they answer to: :data:`MFC_ADDRESSES` is where
+the two are matched up, and a fault logged against an address is the MFC whose
+place in that tuple it holds. They are
 opened with `pyvisa-py` rather than the system VISA, which on S2 has never
 enumerated the converter's COM port, and the port list offered for them is
 what either backend can see. The GUI
@@ -194,11 +197,14 @@ PO2_NANOVOLTMETER_PORT = "GPIB0::7::INSTR"  # Keithley 2182A, sensor thermocoupl
 PO2_VOLTMETER_PORT = "GPIB0::8::INSTR"  # Keithley 182, sensor potential
 
 # S2's four Aera FC-PA78x mass flow controllers share one serial port through a
-# BSU485-AE1 RS-485 converter. Their digital addresses are 5 to 8; the GUI
-# calls them MFC 1 to MFC 4, in that order, and this is the one place the two
-# namings meet.
+# BSU485-AE1 RS-485 converter. The station calls them MFC 1 to MFC 4 and they
+# answer to addresses 5 to 8, but the two do not run in step: MFC 1 is the one
+# at address 7, MFC 2 is at 8, MFC 3 is at 5 and MFC 4 is at 6. This tuple is
+# in MFC_NAMES order, so its nth entry is the address of MFC n+1, and it is
+# the one place the two numberings meet. Everything else in the GUI goes by
+# the name, and the drivers go by the address.
 MFC_PORT = "ASRL6::INSTR"
-MFC_ADDRESSES: Tuple[int, ...] = (5, 6, 7, 8)
+MFC_ADDRESSES: Tuple[int, ...] = (7, 8, 5, 6)
 MFC_NAMES: Tuple[str, ...] = tuple(
     "MFC {}".format(i) for i in range(1, len(MFC_ADDRESSES) + 1)
 )
