@@ -776,11 +776,12 @@ class AeraMFC(NupylabInstrument):
     def _write_setpoint(self, index: int, percent: float, close: bool) -> None:
         """Set one channel's setpoint and valve. Call while holding the lock.
 
-        Setting the valve to flow is checked rather than assumed, and the
-        commands in :attr:`VALVE_FLOW_MODES` are tried in turn until the
-        valve reports itself flowing. A valve that stays closed is the one
-        failure that looks like success everywhere else: the setpoint is
-        accepted, reads back correctly, and no gas moves.
+        A valve forced open or closed is brought back to flow control first,
+        see :meth:`_release_valve`, and the setpoint is then written with a
+        command that acts on it rather than only storing it. Both halves
+        matter: a valve that stays closed is the one failure that looks like
+        success everywhere else, since the setpoint is accepted and reads
+        back correctly while no gas moves.
 
         Args:
             index: channel index, counting from zero.
