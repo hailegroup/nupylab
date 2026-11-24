@@ -18,8 +18,8 @@ fails with `VI_ERROR_RSRC_NFOUND`, however well the converter works for
 everything else on the machine. `pyvisa-py` reaches a COM port through
 `pyserial` instead, and is not affected.
 
-Every command sent here is a read: `RFX` asks an MFC what it is flowing and
-`RVN` asks its version and serial number. Nothing is set, no valve moves, and
+Every command sent here is a read: `RFX` asks an MFC what it is flowing, and
+`RVM` and `RVD` ask what its valve is doing. Nothing is set, no valve moves, and
 nothing is written to any EEPROM, so this is safe to run while gas flows.
 
 An Aera answers a read with a status character, one of `N`, `A`, `E`, `X` or
@@ -187,12 +187,24 @@ def probe(instrument, address):
         return "?", reply
 
 
-def version(instrument, address):
-    """Ask one address for its version and serial number, or say why not."""
-    try:
-        return instrument.query("\x02{:02x}RVN".format(address)).strip()[1:]
-    except pyvisa.Error as e:
-        return "could not be read: {}".format(e)
+def valve_state(instrument, address):
+    """Ask one address what its valve is doing, or say why not.
+
+    `RVM` gives the state as `FN`, `FO` or `FC`, and `RVD` the valve drive as
+    a percentage. The manual lists no command for a version or a serial
+    number, so there is nothing to identify a unit by beyond these.
+    """
+    answers = []
+    for command, label in (("RVM", "state"), ("RVD", "drive")):
+        try:
+            reply = instrument.query(
+                "\x02{:02x}{}".format(address, command)
+            ).strip()
+        except pyvisa.Error as e:
+            answers.append("{} could not be read: {}".format(label, e))
+            continue
+        answers.append("{} {}".format(label, reply[1:] or reply))
+    return ", ".join(answers)
 
 
 def open_port(opened, port, baud, timeout):
@@ -275,8 +287,8 @@ def scan_port(opened, port, addresses, baud, timeout):
                 "({:.0f} ms)".format(address, value, STATUSES[status], elapsed)
             )
             print(
-                "               version and serial {}".format(
-                    version(instrument, address)
+                "               valve {}".format(
+                    valve_state(instrument, address)
                 )
             )
     finally:

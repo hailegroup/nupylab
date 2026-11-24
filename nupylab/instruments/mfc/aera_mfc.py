@@ -611,6 +611,34 @@ class AeraMFC(NupylabInstrument):
                     )
         return list(self._digital)
 
+    def read_valve_voltage(self, index: int) -> float:
+        """Read how hard one MFC is driving its valve, as a percentage.
+
+        Not a flow. See
+        :attr:`~nupylab.drivers.aera_mfc.AeraChannel.valve_voltage`.
+
+        Args:
+            index: channel index, counting from zero.
+
+        Returns:
+            Valve drive in percent of full power, or NaN if it could not be
+            read.
+
+        Raises:
+            NupylabError: if the bank is not connected.
+        """
+        with self.lock:
+            try:
+                return float(self._channel(index).valve_voltage)
+            except NupylabError:
+                raise
+            except Exception as e:
+                log.warning(
+                    "%s valve drive could not be read: %s",
+                    self.channel_name(index), e
+                )
+                return math.nan
+
     def read_valve_mode(self, index: int) -> str:
         """Read what one MFC's valve is being told to do.
 
@@ -760,37 +788,51 @@ class AeraMFC(NupylabInstrument):
             close: whether to shut the valve rather than flow.
         """
         channel = self._channel(index)
-        channel.setpoint = percent
         if close:
+            channel.setpoint = 0.0
             channel.valve_mode = "close"
             return
-        for attempt, mode in enumerate(self.VALVE_FLOW_MODES):
-            channel.valve_mode = mode
-            try:
-                released = str(channel.valve_mode) == "flow"
-            except Exception as e:
-                log.warning(
-                    "%s valve mode could not be read back: %s",
-                    self.channel_name(index), e
-                )
-                return  # Nothing to check it against, so leave it be
-            if released:
-                if attempt:
-                    log.info(
-                        "%s valve came off closed on %r rather than %r",
-                        self.channel_name(index), mode,
-                        self.VALVE_FLOW_MODES[0],
-                    )
-                return
-            log.warning(
-                "%s valve was told to flow with %r and still reports closed",
-                self.channel_name(index), mode,
-            )
+        self._release_valve(index, channel)
+        channel.setpoint = percent
+
+    def _release_valve(self, index: int, channel) -> None:
+        """Take one valve off forced open or closed, if it is on one.
+
+        `SVN` is invalid for a valve already under normal control and
+        answers `NG`, so the state is read first and the command sent only to
+        a valve that is forced. Call while holding the lock.
+
+        Args:
+            index: channel index, counting from zero.
+            channel: that channel's driver object.
+        """
+        name = self.channel_name(index)
+        try:
+            forced = str(channel.valve_mode)
+        except Exception as e:
+            log.warning("%s valve mode could not be read: %s", name, e)
+            return  # Nothing to compare against, so leave the valve alone
+        if forced == "flow":
+            return
+        channel.valve_mode = "flow"
+        try:
+            now = str(channel.valve_mode)
+        except Exception as e:
+            log.warning("%s valve mode could not be read back: %s", name, e)
+            return
+        if now == "flow":
+            log.info("%s valve came off %s and is under flow control", name, forced)
+            return
+        try:
+            drive = "{:.0f} %".format(float(channel.valve_voltage))
+        except Exception:
+            drive = "not known"
         log.warning(
-            "%s valve will not come off closed, so it flows nothing whatever "
-            "its setpoint says. Tried %s.",
-            self.channel_name(index),
-            " and ".join(repr(mode) for mode in self.VALVE_FLOW_MODES),
+            "%s valve was told to come off %s and still reports %s, with its "
+            "drive at %s. It flows nothing whatever its setpoint says. The "
+            "manual notes that an input on terminal 1 takes priority over the "
+            "valve commands, so check what is wired to it.",
+            name, forced, now, drive,
         )
 
     def apply_setpoint(
@@ -863,13 +905,6 @@ class AeraMFC(NupylabInstrument):
                 channel = self._channel(channel_index)
                 channel.clear_alarms()
                 channel.clear_errors()
-
-    #: What to send to bring a valve back to flow control, in the order it
-    #: is tried. Both ask for the same thing and differ only in the command,
-    #: see :attr:`~nupylab.drivers.aera_mfc.AeraChannel.valve_mode`. The
-    #: valve is read back after each, since one that is not released reports
-    #: itself closed and flows nothing while the setpoint reads correctly.
-    VALVE_FLOW_MODES: Tuple[str, ...] = ("flow", "reset")
 
     #: How far a setpoint read back may sit from the one written, in percent
     #: of range, before it is worth saying so. An Aera reports its setpoint to

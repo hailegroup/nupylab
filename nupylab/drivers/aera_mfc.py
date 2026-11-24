@@ -260,8 +260,27 @@ class AeraChannel(Channel):
     )
 
     setpoint = Channel.control(
-        "\x02{ch}RFD", "\x02{ch}SFD%.1f",
-        """Control the setpoint in % of MFC range.""",
+        "\x02{ch}RFD", "\x02{ch}SDC%.2f",
+        """Control the setpoint in % of MFC range.
+
+        Set with `SDC`, which the manual gives as "changes the flow rate
+        immediately after executing this command". `SFD`, which this driver
+        set it with before, only "stores the set flow rate in the memory
+        (RAM): the flow rate remains unchanged unless the SRS command is
+        input", so setting it alone moved no gas. Both halves of that are
+        still here as :attr:`stored_setpoint` and :meth:`start_setpoint`.""",
+        validator=strict_range,
+        values=(0, 100),
+        check_set_errors=True,
+    )
+
+    stored_setpoint = Channel.setting(
+        "\x02{ch}SFD%.2f",
+        """Set the setpoint in % of MFC range without acting on it.
+
+        The flow rate does not change until :meth:`start_setpoint` is called.
+        :attr:`setpoint` does both in one command and is what to reach for
+        unless the two have to be apart.""",
         validator=strict_range,
         values=(0, 100),
         check_set_errors=True,
@@ -288,23 +307,46 @@ class AeraChannel(Channel):
         "\x02{ch}RVM", "\x02{ch}%s",
         """Control the MFC valve mode.
 
-        Valid options are `flow`, `reset`, `close`, and `open`. The first two
-        both ask for flow control and differ only in what is sent: `flow`
-        sends `SVN`, which matches the `FN` this command reports and the
-        `SVC` and `SVO` that close and open the valve, while `reset` sends
-        `SRS`, which is what this driver asked for originally. On S2's
-        FC-PA78x, `SRS` does not bring a valve off closed: it is accepted and
-        the valve goes on reporting `FC`. Reading the mode back afterwards is
-        the only way to know, see
-        :meth:`nupylab.instruments.mfc.aera_mfc.AeraMFC._write_setpoint`.""",
+        Valid options are `flow`, `close`, and `open`. `flow` sends `SVN`,
+        which "returns the valves fully opened or closed to the normal
+        control state". The manual adds that it "is invalid if the valve is
+        in the normal control state", so sending it to a valve that is
+        already flowing answers `NG`: ask :attr:`valve_mode` first and only
+        send it to a valve that is forced.
+
+        The manual also warns, of both `SVO` and `SVC`, that "when the valve
+        operation is carried out together with the operation using terminal
+        1, the priority will be given to the input to terminal 1". A valve
+        that will not come off closed however often it is told to is worth
+        checking against that terminal.""",
         validator=strict_discrete_set,
-        values=('flow', 'reset', 'close', 'open'),
+        values=('flow', 'close', 'open'),
         get_process=lambda v: {'FN': 'flow', 'FC': 'close', 'FO': 'open'}[v],
-        set_process=lambda v: {'flow': 'SVN', 'reset': 'SRS',
-                               'close': 'SVC', 'open': 'SVO'}[v],
+        set_process=lambda v: {'flow': 'SVN', 'close': 'SVC', 'open': 'SVO'}[v],
         check_set_errors=True,
         cast=str
     )
+
+    valve_voltage = Channel.measurement(
+        "\x02{ch}RVD",
+        """Measure the valve drive as a percentage, where 100 % is full power.
+
+        How hard the controller is working the valve to hold the flow it has,
+        rather than a flow itself. Climbing at an unchanged flow says the
+        supply is falling away or something is blocking; sitting at the top
+        while the flow is short of its setpoint says there is not enough
+        inlet pressure to reach it.""",
+    )
+
+    def start_setpoint(self):
+        """Flow the setpoint last written with :attr:`stored_setpoint`.
+
+        The `SRS` half of the two-command form, which the manual gives as
+        "starts to change the flow rate to the one set with SFD command".
+        Nothing to do with the valve.
+        """
+        self.write(f"\x02{self.hex_id}SRS")
+        self.check_set_errors()
 
     ##########
     # Alarms #
@@ -454,11 +496,6 @@ class AeraChannel(Channel):
         "\x02{ch}RER",
         """Get error status as two-character string.""",
         cast=str
-    )
-
-    version = Channel.measurement(
-        "\x02{ch}RVN",
-        """Get the version and series number. Returns x.xx<TAB>S/N """,
     )
 
     def clear_alarms(self):
