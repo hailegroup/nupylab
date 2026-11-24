@@ -663,7 +663,7 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                 )
             panels_layout.addWidget(holder)
 
-        # Recording controls — instrument selector + record/save/delete buttons
+        # Recording controls — a box per instrument, and record/save/delete
         rec_group = QtWidgets.QGroupBox("Data Recording")
         if self._recording_beside_panels:
             rec_layout = QtWidgets.QVBoxLayout()
@@ -671,12 +671,21 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         else:
             rec_layout = QtWidgets.QHBoxLayout()
 
-        rec_layout.addWidget(QtWidgets.QLabel("Instrument:"))
-        self._instrument_selector = QtWidgets.QComboBox()
+        rec_layout.addWidget(QtWidgets.QLabel("Instruments:"))
+        # One box each rather than one choice between them: an experiment run
+        # by hand is usually several instruments at once, and each writes its
+        # own file anyway, since they have their own columns and their own
+        # idea of how often there is something to write
+        self._instrument_checks = []
         for panel in self._panels:
-            name = getattr(panel, 'instrument_name', panel.__class__.__name__)
-            self._instrument_selector.addItem(name)
-        rec_layout.addWidget(self._instrument_selector)
+            name = self._panel_name(panel)
+            box = QtWidgets.QCheckBox(name)
+            box.setToolTip(
+                "Record {} to a file of its own, in a {} folder beside the "
+                "experiment data.".format(name, name)
+            )
+            self._instrument_checks.append(box)
+            rec_layout.addWidget(box)
 
         self._record_btn = QtWidgets.QPushButton("Record")
         self._record_btn.setCheckable(True)
@@ -718,7 +727,8 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         if not self._recording_beside_panels:
             layout.addWidget(rec_group)
 
-        self._recorder = None
+        # One recorder per instrument being recorded, by panel index
+        self._recorders = {}
 
         # Bottom: plots and log side by side
         bottom_layout = QtWidgets.QHBoxLayout()
@@ -787,73 +797,121 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         )
         return 0
 
-    def _get_selected_panel(self):
-        idx = self._instrument_selector.currentIndex()
-        if 0 <= idx < len(self._panels):
-            return self._panels[idx]
-        return None
+    @staticmethod
+    def _panel_name(panel):
+        """Get what to call one panel's instrument."""
+        return getattr(panel, 'instrument_name', panel.__class__.__name__)
+
+    def _checked_panels(self):
+        """Get the panels whose box is ticked, with the index of each."""
+        return [
+            (index, panel)
+            for index, (panel, box) in enumerate(
+                zip(self._panels, self._instrument_checks)
+            )
+            if box.isChecked()
+        ]
 
     def _on_record(self, checked):
-        if checked:
-            panel = self._get_selected_panel()
-            if panel is None:
-                self._record_btn.setChecked(False)
-                return
-            instrument_name = getattr(panel, 'instrument_name', panel.__class__.__name__)
-            columns = getattr(panel, 'record_columns', ['Value'])
-            self._recorder = DataRecorder(instrument_name, columns, self._directory)
-            try:
-                filepath = self._recorder.start()
-                fname = os.path.basename(filepath)
-                self._rec_status.setText(f"Recording: {fname}")
-                self._rec_status.setStyleSheet("color: red;")
-                self._record_btn.setText("Recording...")
-                self._save_btn.setEnabled(True)
-                self._delete_btn.setEnabled(True)
-                self._instrument_selector.setEnabled(False)
-                # Connect panel's data signal to recorder
-                if hasattr(panel, 'data_recorded'):
-                    panel.data_recorded.connect(self._recorder.write)
-            except Exception as e:
-                self._record_btn.setChecked(False)
-                self._rec_status.setText(f"Error: {e}")
-                _control_log.error("Recording failed: %s", e)
-        else:
+        if not checked:
             self._on_save()
+            return
+        selected = self._checked_panels()
+        if not selected:
+            self._record_btn.setChecked(False)
+            self._rec_status.setText("Tick an instrument to record")
+            self._rec_status.setStyleSheet("color: #cc0000;")
+            return
+
+        started, failed = [], []
+        for index, panel in selected:
+            name = self._panel_name(panel)
+            recorder = DataRecorder(
+                name, getattr(panel, 'record_columns', ['Value']),
+                self._directory,
+            )
+            try:
+                recorder.start()
+            except Exception as e:
+                failed.append(f"{name}: {e}")
+                _control_log.error("Recording %s failed: %s", name, e)
+                continue
+            self._recorders[index] = recorder
+            if hasattr(panel, 'data_recorded'):
+                panel.data_recorded.connect(recorder.write)
+            started.append(name)
+
+        if not started:
+            # Nothing is recording, so the button should not say it is
+            self._record_btn.setChecked(False)
+            self._rec_status.setText("Error: " + "; ".join(failed))
+            self._rec_status.setStyleSheet("color: #cc0000;")
+            return
+        self._record_btn.setText("Recording...")
+        self._save_btn.setEnabled(True)
+        self._delete_btn.setEnabled(True)
+        for box in self._instrument_checks:
+            box.setEnabled(False)
+        self._rec_status.setText("Recording: " + ", ".join(started))
+        self._rec_status.setStyleSheet("color: red;")
+        if failed:
+            # Said in the log, since the status line is saying what is
+            # recording and that is the more useful of the two
+            _control_log.warning(
+                "Recording started for %s but not for %s",
+                ", ".join(started), "; ".join(failed),
+            )
+
+    def _stop_recording(self, keep):
+        """Stop every recorder, and keep or discard what each has written.
+
+        Args:
+            keep: whether to keep the files.
+
+        Returns:
+            The instruments that were recording.
+        """
+        stopped = []
+        for index, recorder in self._recorders.items():
+            panel = self._panels[index]
+            if hasattr(panel, 'data_recorded'):
+                try:
+                    panel.data_recorded.disconnect(recorder.write)
+                except Exception:
+                    pass
+            try:
+                if keep:
+                    recorder.save()
+                else:
+                    recorder.delete()
+            except Exception as e:
+                _control_log.error(
+                    "Could not %s the %s recording: %s",
+                    "save" if keep else "delete", self._panel_name(panel), e
+                )
+            stopped.append(self._panel_name(panel))
+        self._recorders.clear()
+        self._record_btn.setChecked(False)
+        self._record_btn.setText("Record")
+        self._save_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+        for box in self._instrument_checks:
+            box.setEnabled(True)
+        return stopped
 
     def _on_save(self):
-        panel = self._get_selected_panel()
-        if panel and hasattr(panel, 'data_recorded'):
-            try:
-                panel.data_recorded.disconnect(self._recorder.write)
-            except Exception:
-                pass
-        if self._recorder:
-            self._recorder.save()
-        self._record_btn.setChecked(False)
-        self._record_btn.setText("Record")
-        self._save_btn.setEnabled(False)
-        self._delete_btn.setEnabled(False)
-        self._rec_status.setText("Saved")
+        stopped = self._stop_recording(keep=True)
+        self._rec_status.setText(
+            "Saved: {}".format(", ".join(stopped)) if stopped else "Saved"
+        )
         self._rec_status.setStyleSheet("color: green;")
-        self._instrument_selector.setEnabled(True)
 
     def _on_delete(self):
-        panel = self._get_selected_panel()
-        if panel and hasattr(panel, 'data_recorded'):
-            try:
-                panel.data_recorded.disconnect(self._recorder.write)
-            except Exception:
-                pass
-        if self._recorder:
-            self._recorder.delete()
-        self._record_btn.setChecked(False)
-        self._record_btn.setText("Record")
-        self._save_btn.setEnabled(False)
-        self._delete_btn.setEnabled(False)
-        self._rec_status.setText("Deleted")
+        stopped = self._stop_recording(keep=False)
+        self._rec_status.setText(
+            "Deleted: {}".format(", ".join(stopped)) if stopped else "Deleted"
+        )
         self._rec_status.setStyleSheet("color: gray;")
-        self._instrument_selector.setEnabled(True)
 
     def _on_control_action(self):
         if self._experiment_running and self._abort_callback:
