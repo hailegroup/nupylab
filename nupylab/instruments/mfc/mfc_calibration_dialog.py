@@ -85,31 +85,31 @@ class AddMFCCalibrationDialog(QtWidgets.QDialog):
         calibrations: Sequence[MFCCalibration],
         mfc: str = "",
         gas: str = "",
-        mfc_names: Sequence[str] = (),
         parent=None,
     ):
         """Build the form.
 
         Args:
-            calibrations: calibrations already recorded, whose calibrators,
-                MFCs and gases fill the drop-downs.
-            mfc: MFC the form opens on.
+            calibrations: calibrations already recorded, whose calibrators
+                and gases fill the drop-downs.
+            mfc: MFC the form records against. Shown rather than chosen, see
+                :meth:`_setup_ui`.
             gas: gas the form opens on, for both gas fields, since a
                 calibration is usually taken in the gas it is used for.
-            mfc_names: MFCs to offer whether or not they have been calibrated.
             parent: parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("Add MFC Calibration")
+        self.setWindowTitle(
+            "Add Calibration for {}".format(mfc) if mfc else "Add MFC Calibration"
+        )
         self._calibration: Optional[MFCCalibration] = None
-        self._setup_ui(calibrations, mfc, gas, mfc_names)
+        self._setup_ui(calibrations, mfc, gas)
 
     def _setup_ui(
         self,
         calibrations: Sequence[MFCCalibration],
         mfc: str,
         gas: str,
-        mfc_names: Sequence[str],
     ) -> None:
         layout = QtWidgets.QFormLayout()
 
@@ -128,13 +128,17 @@ class AddMFCCalibrationDialog(QtWidgets.QDialog):
         self.calibrator_box.setCurrentText("")
         layout.addRow("Calibrator:", self.calibrator_box)
 
-        self.mfc_box = QtWidgets.QComboBox()
-        self.mfc_box.setEditable(True)
-        self.mfc_box.addItems(
-            _combo_values([c.mfc for c in calibrations], list(mfc_names))
+        # Fixed, not chosen. This form is opened from one MFC's entry in the
+        # inputs panel, and a calibration filed against another by a slip of
+        # the hand would then be used for the wrong instrument.
+        self.mfc = mfc
+        mfc_label = QtWidgets.QLabel(mfc or "not known")
+        mfc_label.setStyleSheet("font-weight: bold;")
+        mfc_label.setToolTip(
+            "The MFC this calibration was taken on. It is whichever one this "
+            "was opened from, since a calibration belongs to its instrument."
         )
-        self.mfc_box.setCurrentText(mfc)
-        layout.addRow("MFC:", self.mfc_box)
+        layout.addRow("MFC:", mfc_label)
 
         known_gases = _combo_values(
             [c.gas for c in calibrations] + [c.calibration_gas for c in calibrations],
@@ -214,7 +218,7 @@ class AddMFCCalibrationDialog(QtWidgets.QDialog):
     def _on_accept(self) -> None:
         """Check the form over, and accept it only once it reads."""
         calibrator = self.calibrator_box.currentText().strip()
-        mfc = self.mfc_box.currentText().strip()
+        mfc = self.mfc.strip()
         calibration_gas = self.calibration_gas_box.currentText().strip()
         gas = self.gas_box.currentText().strip()
         if not calibrator:
@@ -280,25 +284,25 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
         path: str = CALIBRATION_FILE,
         mfc: str = "",
         gas: str = "",
-        mfc_names: Sequence[str] = (),
         parent=None,
     ):
         """Build the list.
 
         Args:
             path: calibration file to list and to add to.
-            mfc: MFC whose calibrations to show first.
+            mfc: MFC whose calibrations to list. Only that MFC's are listed,
+                whatever else the file holds.
             gas: gas whose calibrations to show first.
-            mfc_names: MFCs to offer in the add form.
             parent: parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("MFC Calibrations")
+        self.setWindowTitle(
+            "{} Calibrations".format(mfc) if mfc else "MFC Calibrations"
+        )
         self.resize(820, 400)
         self._path = path
         self._mfc = mfc
         self._gas = gas
-        self._mfc_names = list(mfc_names)
         self._all: List[MFCCalibration] = []
         self._shown: List[MFCCalibration] = []
         self._chosen: Optional[MFCCalibration] = None
@@ -309,14 +313,17 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout()
 
         self.filter_box = QtWidgets.QCheckBox(
-            "Only {} in {}".format(self._mfc or "this MFC", self._gas or "this gas")
+            "Only calibrations for {}".format(self._gas or "this gas")
         )
-        self.filter_box.setChecked(bool(self._mfc and self._gas))
-        self.filter_box.setEnabled(bool(self._mfc and self._gas))
+        self.filter_box.setChecked(bool(self._gas))
+        self.filter_box.setEnabled(bool(self._gas))
         self.filter_box.setToolTip(
-            "A calibration is looked up by the MFC and the gas it is used "
-            "for. Unticking this shows every calibration on file, including "
-            "ones taken on other MFCs."
+            "Unticking this shows what else {} has been calibrated for, which "
+            "is worth seeing when a gas has none of its own and a similar one "
+            "would do. Calibrations taken on the other MFCs are never listed: "
+            "one belongs to the instrument it was taken on.".format(
+                self._mfc or "this MFC"
+            )
         )
         self.filter_box.toggled.connect(lambda *_: self.refresh())
         layout.addWidget(self.filter_box)
@@ -393,21 +400,29 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
         else:
             self.status_label.setStyleSheet("color: gray;")
 
+        # Only ever this MFC's. A calibration describes the instrument it
+        # was taken on, so another MFC's is not a worse answer but no answer,
+        # and it should not be on offer at all.
+        whose = self._mfc or "any MFC"
+        mine = (
+            [c for c in self._all if match_key(c.mfc) == match_key(self._mfc)]
+            if self._mfc
+            else list(self._all)
+        )
         if self.filter_box.isChecked():
-            self._shown = calibrations_for(self._all, self._mfc, self._gas)
-            what = "for {} in {}".format(self._mfc, self._gas)
-        else:
-            self._shown = list(self._all)
-            what = "in total"
-        if self._all or self._shown:
-            self.status_label.setText(
-                "{} calibration(s) {}, out of {} in {}".format(
-                    len(self._shown), what, len(self._all), self._path
-                )
+            self._shown = calibrations_for(mine, self._mfc, self._gas)
+            summary = "{} calibration(s) for {} in {}, of {} for it in all".format(
+                len(self._shown), whose, self._gas, len(mine)
             )
+        else:
+            self._shown = mine
+            summary = "{} calibration(s) for {}".format(len(mine), whose)
+        if mine:
+            self.status_label.setText("{}, in {}".format(summary, self._path))
         elif self.status_label.styleSheet() != "color: red;":
             self.status_label.setText(
-                "No calibrations recorded yet in {}".format(self._path)
+                "Nothing recorded for {} in {}, of {} calibration(s) "
+                "there".format(whose, self._path, len(self._all))
             )
 
         self.table.setRowCount(len(self._shown))
@@ -459,9 +474,7 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
 
     def _on_add(self) -> None:
         """Record a new calibration, then select it."""
-        form = AddMFCCalibrationDialog(
-            self._all, self._mfc, self._gas, self._mfc_names, self
-        )
+        form = AddMFCCalibrationDialog(self._all, self._mfc, self._gas, self)
         if not form.exec():
             return
         calibration = form.calibration
@@ -480,8 +493,8 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
             calibration.m,
             calibration.b,
         )
-        # A calibration added for another MFC or gas would otherwise vanish
-        # behind the filter the moment it is recorded
+        # A calibration added for another gas would otherwise vanish behind
+        # the filter the moment it is recorded
         if self.filter_box.isChecked() and not calibration.is_for(
             self._mfc, self._gas
         ):
@@ -495,16 +508,14 @@ def choose_calibration(
     path: str = CALIBRATION_FILE,
     mfc: str = "",
     gas: str = "",
-    mfc_names: Sequence[str] = (),
     parent=None,
 ) -> Optional[str]:
     """Open the calibration list, and return whichever one the user takes.
 
     Args:
         path: calibration file to list and to add to.
-        mfc: MFC whose calibrations to show first.
+        mfc: MFC whose calibrations to list, and to record a new one against.
         gas: gas whose calibrations to show first.
-        mfc_names: MFCs to offer in the add form.
         parent: parent widget.
 
     Returns:
@@ -513,7 +524,7 @@ def choose_calibration(
         `None` if the user cancelled. A calibration the user adds is written
         to the file whether or not they then take it into use.
     """
-    dialog = SelectMFCCalibrationDialog(path, mfc, gas, mfc_names, parent)
+    dialog = SelectMFCCalibrationDialog(path, mfc, gas, parent)
     if dialog.exec() and dialog.chosen is not None:
         chosen = dialog.chosen
         # The row is recorded against its own MFC and gas, which is what it
@@ -665,9 +676,6 @@ class MFCCalibrationInput(Input, QtWidgets.QWidget):
 
     #: Emitted when the calibration in use changes, for any reason.
     calibration_changed = QtCore.Signal()
-
-    #: MFCs offered in the add form. Set by the GUI, which knows them all.
-    mfc_names: Sequence[str] = ()
 
     def __init__(self, parameter, parent=None, **kwargs):
         """Build the entry.
@@ -860,9 +868,7 @@ class MFCCalibrationInput(Input, QtWidgets.QWidget):
     def select_calibration(self) -> None:
         """Open the calibrations, and take up whichever the user chooses."""
         path, mfc, gas, _ = decode_selection(self._value)
-        selection = choose_calibration(
-            path or CALIBRATION_FILE, mfc, gas, self.mfc_names, self
-        )
+        selection = choose_calibration(path or CALIBRATION_FILE, mfc, gas, self)
         if selection is None:
             self._refresh()  # A calibration may have been added without use
             return

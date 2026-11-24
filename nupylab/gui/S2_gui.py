@@ -1829,8 +1829,6 @@ def main(*args):
 
     for index, mfc_name in enumerate(MFC_NAMES):
         entry = calibration_input(index)
-        # The add form offers every MFC the station has, not just this one
-        entry.mfc_names = MFC_NAMES
         # The gas the GUI opens on may differ from the one the remembered
         # selection was written for, e.g. after the settings file was edited
         entry.set_context(mfc=mfc_name, gas=gas_input(index).value())
