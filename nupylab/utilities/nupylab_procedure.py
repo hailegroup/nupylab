@@ -36,6 +36,12 @@ class NupylabProcedure(Procedure):
             previous instrument connections.
     """
 
+    #: How long an instrument may go without answering, while a step expects
+    #: it to, before it is reported in the log. A read that fails is tried
+    #: again on the next cycle without comment, since one timeout is usually
+    #: nothing; this is for one that has stopped answering altogether.
+    SILENT_INSTRUMENT_S: float = 10.0
+
     # Parameters common to all NUPyLab procedures
     record_time = FloatParameter("Record Time", units="s", default=2.0)
     num_steps = IntegerParameter("Number of Measurement Steps")
@@ -136,7 +142,11 @@ class NupylabProcedure(Procedure):
         for instrument in self.active_instruments:
             queue = SimpleQueue()
             queues.append(queue)
-            thread = Thread(target=self._sub_loop, args=(instrument.get_data, queue))
+            thread = Thread(
+                target=self._sub_loop,
+                args=(instrument.get_data, queue),
+                kwargs={"instrument_name": instrument.name},
+            )
             threads.append(thread)
 
         self._start_time = monotonic()
@@ -192,32 +202,60 @@ class NupylabProcedure(Procedure):
         return True
 
     def _sub_loop(
-        self, process: Callable[..., None], queue: SimpleQueue, *args
+        self,
+        process: Callable[..., None],
+        queue: SimpleQueue,
+        *args,
+        instrument_name: str = "An instrument",
     ) -> None:
         """Implement generic sub-loop for concurrent instrument communication.
 
         All sub-loops are synchronized with the main loop.
 
+        A read that fails is tried again on the next cycle rather than given
+        up on, since one failure is usually a timeout the next read gets
+        through, and an instrument that cannot be reached at all leaves its
+        columns empty while the rest of the step carries on. One that has not
+        answered for :attr:`SILENT_INSTRUMENT_S` is reported, once, and
+        reported again as answering if it comes back.
+
         Args:
             process: function to loop, typically an instrument read.
             queue: queue to place data in.
             *args: additional args to pass to `process`
+            instrument_name: what to call the instrument in the log.
         """
         counter: int = 0
+        last_answer: float = monotonic()
+        reported: bool = False
         while not self.should_stop() and not self.finished:
             if counter != self._counter:
                 try:
                     queue.put(process(*args))
                 except Exception as e:
-                    # Tried again on the next cycle rather than given up on.
-                    # A read that fails is usually a timeout the next one
-                    # gets through, and an instrument that cannot be reached
-                    # at all leaves its columns empty while the rest of the
-                    # step carries on, which is what every other part of this
-                    # package does with an instrument it cannot reach.
-                    log.debug(
-                        "Reading failed, trying again next cycle: %s", e
-                    )
+                    silent = monotonic() - last_answer
+                    if silent > self.SILENT_INSTRUMENT_S and not reported:
+                        # Said once rather than every cycle: the point is that
+                        # it has stopped, not how many times it was asked
+                        reported = True
+                        log.error(
+                            "%s has not answered for %.0f s, and its columns "
+                            "are empty meanwhile. Still trying: %s",
+                            instrument_name, silent, e,
+                        )
+                    else:
+                        log.debug(
+                            "%s read failed, trying again next cycle: %s",
+                            instrument_name, e,
+                        )
+                else:
+                    if reported:
+                        log.info(
+                            "%s is answering again, after %.0f s",
+                            instrument_name, monotonic() - last_answer,
+                        )
+                        reported = False
+                    last_answer = monotonic()
                 counter = self._counter
                 sleep_time: float = self.record_time * self._counter - (
                     monotonic() - self._start_time
