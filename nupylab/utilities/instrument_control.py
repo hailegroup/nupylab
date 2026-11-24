@@ -7,7 +7,7 @@ import logging
 import math
 import os
 from datetime import datetime
-from typing import List, Callable, Optional
+from typing import List, Callable, Optional, Sequence
 
 from pymeasure.display.Qt import QtWidgets, QtCore
 
@@ -224,24 +224,81 @@ class QtLogHandler(logging.Handler):
 
 
 class DataRecorder:
-    """Records instrument data to a CSV file."""
+    """Records one or more instruments to a single CSV file.
 
-    def __init__(self, instrument_name: str, columns: List[str], directory: str):
+    Every instrument keeps its own columns, side by side in one row, and a
+    row is written each time one of them reports: that instrument's columns
+    hold its reading and the rest are left empty. Nothing is carried from one
+    row to the next, so a cell holds a reading that was taken or nothing at
+    all, and a file never claims a value for an instant it was not measured.
+
+    That leaves gaps, since the instruments report when they please: the pO2
+    sensor and the MFCs every couple of seconds, the valve only when it is
+    applied, the potentiostat in a burst of rows per EIS sweep. The
+    :attr:`SOURCE_COLUMN` says which instrument each row came from, which is
+    what to filter or group on when reading the file back, and forward
+    filling it is one line in pandas for anyone who wants a dense table.
+    """
+
+    #: Column naming the instrument a row came from.
+    SOURCE_COLUMN = "Instrument"
+
+    #: Columns every row opens with.
+    LEADING_COLUMNS = ("System Time", "Time (s)", SOURCE_COLUMN)
+
+    def __init__(self, sources: Sequence, filepath: str):
         """Initialize recorder.
 
         Args:
-            instrument_name: name used for folder and filename prefix
-            columns: list of column header strings
-            directory: base data directory (same as experiment data directory)
+            sources: `(instrument name, columns)` for each instrument, in the
+                order their columns appear in the file.
+            filepath: the file to write. Its folder is created if it is not
+                there, and an existing file is overwritten, which is what
+                the user was asked to confirm when they chose it.
         """
-        self._instrument_name = instrument_name
-        self._columns = columns
-        self._directory = directory
+        self._names = [str(name) for name, _ in sources]
+        self._columns = [list(columns) for _, columns in sources]
+        self._headings = self._disambiguate(self._names, self._columns)
+        # Where each instrument's columns start, past the leading ones
+        self._offsets = []
+        running = 0
+        for columns in self._columns:
+            self._offsets.append(running)
+            running += len(columns)
+        self._width = running
+        self._filepath = filepath
         self._file = None
         self._writer = None
-        self._filepath = None
         self._recording = False
         self._start_time = None
+        self._slots = {}
+
+    @staticmethod
+    def _disambiguate(names: Sequence[str], columns: Sequence[Sequence[str]]):
+        """Get the header, with any name two instruments share made distinct.
+
+        Most columns are already unique, since an instrument that measures
+        something names it for itself. Two of a kind on one station, two
+        Eurotherms say, would otherwise give one heading twice.
+
+        Args:
+            names: instrument names, in order.
+            columns: each instrument's columns, in the same order.
+
+        Returns:
+            One heading per column, flat.
+        """
+        seen = {}
+        for group in columns:
+            for column in group:
+                seen[column] = seen.get(column, 0) + 1
+        headings = []
+        for name, group in zip(names, columns):
+            for column in group:
+                headings.append(
+                    "{} {}".format(name, column) if seen[column] > 1 else column
+                )
+        return headings
 
     @property
     def recording(self) -> bool:
@@ -252,35 +309,68 @@ class DataRecorder:
         return self._filepath
 
     def start(self) -> str:
-        """Start recording — create file and write header. Returns filepath."""
+        """Start recording — create the file and write its header.
+
+        Returns:
+            The path written to.
+
+        Raises:
+            OSError: if the file cannot be opened, which the caller reports
+                rather than starting.
+        """
         import time
-        # Resolve directory (may be callable to get current window directory)
-        base_dir = self._directory() if callable(self._directory) else self._directory
-        # Create instrument subfolder
-        folder = os.path.join(base_dir, self._instrument_name)
-        os.makedirs(folder, exist_ok=True)
-
-        # Generate filename: InstrumentName_YYYY-MM-DD_HHMMSS.csv
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        filename = f"{self._instrument_name}_{timestamp}.csv"
-        self._filepath = os.path.join(folder, filename)
-
+        folder = os.path.dirname(self._filepath)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
         self._file = open(self._filepath, 'w', newline='')
         self._writer = csv.writer(self._file)
-        self._writer.writerow(["System Time", "Time (s)"] + self._columns)
+        self._writer.writerow(list(self.LEADING_COLUMNS) + self._headings)
         self._file.flush()
         self._recording = True
         self._start_time = time.monotonic()
-        _control_log.info("Recording started: %s", self._filepath)
+        _control_log.info(
+            "Recording %s to %s",
+            ", ".join(self._names), self._filepath,
+        )
         return self._filepath
 
-    def write(self, values: List):
-        """Write a row of data."""
+    def writer_for(self, index: int):
+        """Get the callable that writes one instrument's rows.
+
+        The same callable every time, so that it can be disconnected from the
+        panel's signal again.
+
+        Args:
+            index: which of the instruments given to this recorder.
+
+        Returns:
+            A callable taking that instrument's row of values.
+        """
+        if index not in self._slots:
+            def write(values, _index=index):
+                self.write(_index, values)
+
+            self._slots[index] = write
+        return self._slots[index]
+
+    def write(self, index: int, values: List):
+        """Write one instrument's reading as a row of its own.
+
+        Args:
+            index: which of the instruments reported.
+            values: its reading, one per column it declared. Extra values are
+                dropped and missing ones left empty, so a panel that changes
+                what it reports cannot shift another instrument's columns.
+        """
         if not self._recording or self._writer is None:
             return
         import time
         elapsed = time.monotonic() - self._start_time
-        row = [datetime.now().isoformat(), f"{elapsed:.3f}"] + [str(v) for v in values]
+        row = [datetime.now().isoformat(), f"{elapsed:.3f}", self._names[index]]
+        row += [""] * self._width
+        start = len(self.LEADING_COLUMNS) + self._offsets[index]
+        for position, value in enumerate(values[: len(self._columns[index])]):
+            row[start + position] = str(value)
         self._writer.writerow(row)
         self._file.flush()
 
@@ -687,8 +777,9 @@ class InstrumentControlWidget(QtWidgets.QWidget):
             name = self._panel_name(panel)
             box = QtWidgets.QCheckBox(name)
             box.setToolTip(
-                "Record {} to a file of its own, in a {} folder beside the "
-                "experiment data.".format(name, name)
+                "Include {} in the recording. Everything ticked goes into one "
+                "file, which you are asked where to save when you press "
+                "Record.".format(name)
             )
             self._instrument_checks.append(box)
             rec_layout.addWidget(box)
@@ -746,8 +837,10 @@ class InstrumentControlWidget(QtWidgets.QWidget):
         if not self._recording_beside_panels:
             layout.addWidget(rec_group)
 
-        # One recorder per instrument being recorded, by panel index
-        self._recorders = {}
+        # One recorder for everything being recorded, and the panels it is
+        # connected to, in the order their columns appear in the file
+        self._recorder = None
+        self._recorded_panels = []
 
         # Bottom: plots and log side by side
         bottom_layout = QtWidgets.QHBoxLayout()
@@ -842,62 +935,102 @@ class InstrumentControlWidget(QtWidgets.QWidget):
             self._rec_status.setStyleSheet("color: #cc0000;")
             return
 
-        started, failed = [], []
-        for index, panel in selected:
-            name = self._panel_name(panel)
-            recorder = DataRecorder(
-                name, getattr(panel, 'record_columns', ['Value']),
-                self._directory,
-            )
-            try:
-                recorder.start()
-            except Exception as e:
-                failed.append(f"{name}: {e}")
-                _control_log.error("Recording %s failed: %s", name, e)
-                continue
-            self._recorders[index] = recorder
-            if hasattr(panel, 'data_recorded'):
-                panel.data_recorded.connect(recorder.write)
-            started.append(name)
-
-        if not started:
-            # Nothing is recording, so the button should not say it is
+        panels = [panel for _, panel in selected]
+        filepath = self._ask_where_to_save(panels)
+        if not filepath:
+            # Cancelled the file dialog, so nothing was meant to start
             self._record_btn.setChecked(False)
-            self._rec_status.setText("Error: " + "; ".join(failed))
-            self._rec_status.setStyleSheet("color: #cc0000;")
+            self._rec_status.setText("Not recording")
+            self._rec_status.setStyleSheet("color: gray;")
             return
+
+        recorder = DataRecorder(
+            [
+                (self._panel_name(panel),
+                 getattr(panel, 'record_columns', ['Value']))
+                for panel in panels
+            ],
+            filepath,
+        )
+        try:
+            recorder.start()
+        except Exception as e:
+            self._record_btn.setChecked(False)
+            self._rec_status.setText("Could not record: {}".format(e))
+            self._rec_status.setStyleSheet("color: #cc0000;")
+            _control_log.error("Recording to %s failed: %s", filepath, e)
+            return
+
+        self._recorder = recorder
+        self._recorded_panels = panels
+        for position, panel in enumerate(panels):
+            if hasattr(panel, 'data_recorded'):
+                panel.data_recorded.connect(recorder.writer_for(position))
+
         self._record_btn.setText("Recording...")
         self._save_btn.setEnabled(True)
         self._delete_btn.setEnabled(True)
         for box in self._instrument_checks:
             box.setEnabled(False)
-        self._rec_status.setText("Recording: " + ", ".join(started))
-        self._rec_status.setStyleSheet("color: red;")
-        if failed:
-            # Said in the log, since the status line is saying what is
-            # recording and that is the more useful of the two
-            _control_log.warning(
-                "Recording started for %s but not for %s",
-                ", ".join(started), "; ".join(failed),
+        self._rec_status.setText(
+            "Recording {} to {}".format(
+                ", ".join(self._panel_name(p) for p in panels),
+                os.path.basename(filepath),
             )
+        )
+        self._rec_status.setStyleSheet("color: red;")
 
-    def _stop_recording(self, keep):
-        """Stop every recorder, and keep or discard what each has written.
+    def _ask_where_to_save(self, panels):
+        """Ask where the recording should go.
 
         Args:
-            keep: whether to keep the files.
+            panels: the panels about to be recorded, which name the file.
 
         Returns:
-            The instruments that were recording.
+            The path to write, or an empty string if the user cancelled.
         """
-        stopped = []
-        for index, recorder in self._recorders.items():
-            panel = self._panels[index]
-            if hasattr(panel, 'data_recorded'):
-                try:
-                    panel.data_recorded.disconnect(recorder.write)
-                except Exception:
-                    pass
+        base = self._directory() if callable(self._directory) else self._directory
+        stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        suggestion = os.path.join(
+            base or os.getcwd(), "ManualControl_{}.csv".format(stamp)
+        )
+        filepath, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save recording of {}".format(
+                ", ".join(self._panel_name(p) for p in panels)
+            ),
+            suggestion,
+            "CSV files (*.csv);;All files (*)",
+        )
+        if not filepath:
+            return ""
+        if not os.path.splitext(filepath)[1]:
+            filepath += ".csv"
+        return filepath
+
+    def _stop_recording(self, keep):
+        """Stop recording, and keep or discard the file.
+
+        Args:
+            keep: whether to keep the file.
+
+        Returns:
+            The name of the file, or an empty string if nothing was
+            recording.
+        """
+        recorder, self._recorder = self._recorder, None
+        panels, self._recorded_panels = self._recorded_panels, []
+        name = ""
+        if recorder is not None:
+            for position, panel in enumerate(panels):
+                if hasattr(panel, 'data_recorded'):
+                    try:
+                        panel.data_recorded.disconnect(
+                            recorder.writer_for(position)
+                        )
+                    except Exception:
+                        pass
+            name = os.path.basename(recorder.filepath or "")
             try:
                 if keep:
                     recorder.save()
@@ -905,30 +1038,26 @@ class InstrumentControlWidget(QtWidgets.QWidget):
                     recorder.delete()
             except Exception as e:
                 _control_log.error(
-                    "Could not %s the %s recording: %s",
-                    "save" if keep else "delete", self._panel_name(panel), e
+                    "Could not %s the recording: %s",
+                    "save" if keep else "delete", e
                 )
-            stopped.append(self._panel_name(panel))
-        self._recorders.clear()
         self._record_btn.setChecked(False)
         self._record_btn.setText("Record")
         self._save_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
         for box in self._instrument_checks:
             box.setEnabled(True)
-        return stopped
+        return name
 
     def _on_save(self):
-        stopped = self._stop_recording(keep=True)
-        self._rec_status.setText(
-            "Saved: {}".format(", ".join(stopped)) if stopped else "Saved"
-        )
+        name = self._stop_recording(keep=True)
+        self._rec_status.setText("Saved {}".format(name) if name else "Saved")
         self._rec_status.setStyleSheet("color: green;")
 
     def _on_delete(self):
-        stopped = self._stop_recording(keep=False)
+        name = self._stop_recording(keep=False)
         self._rec_status.setText(
-            "Deleted: {}".format(", ".join(stopped)) if stopped else "Deleted"
+            "Deleted {}".format(name) if name else "Deleted"
         )
         self._rec_status.setStyleSheet("color: gray;")
 
