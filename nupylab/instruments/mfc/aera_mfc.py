@@ -44,6 +44,22 @@ log.addHandler(logging.NullHandler())
 #: Instruments' VISA installed is that.
 VISA_LIBRARY_NAMES = {"": "the system VISA", "@py": "pyvisa-py"}
 
+#: What the valve drive is, for the tooltip on the panel's Valve column.
+#: Said at length because it is the one reading there that is not a flow,
+#: and reads like one.
+VALVE_DRIVE_EXPLANATION: str = (
+    "Valve drive: how hard the controller is working the valve to hold the "
+    "flow it has, as a percentage of full power. It is not a flow itself.\n\n"
+    "At a steady flow it says what the gas supply is doing. Climbing over "
+    "days or weeks at the same flow means the valve is working harder for "
+    "the same result, usually a clogging filter or a cylinder running "
+    "down.\n\n"
+    "Near 100 % while the flow sits below its setpoint means the valve is "
+    "as open as it goes and there is still not enough inlet pressure to "
+    "reach the setpoint.\n\n"
+    "Well above zero with nothing asked for means the valve is not seating."
+)
+
 #: VISA backend an Aera bank opens its port with.
 #:
 #: An Aera speaks plain serial, and `pyvisa-py` reaches a COM port through
@@ -137,6 +153,13 @@ class AeraMFC(NupylabInstrument):
         "Setpoint (cc/min)",
         "Flow (cc/min)",
     )
+
+    #: What the Manual Control panel shows for each channel: the four
+    #: recorded quantities and the valve drive. The last is not a
+    #: DATA_COLUMNS entry, since a queued experiment records what the gas did
+    #: rather than how hard the valve worked to do it, but it is worth
+    #: watching by hand, see :data:`VALVE_DRIVE_EXPLANATION`.
+    PANEL_SUFFIXES: Tuple[str, ...] = DATA_SUFFIXES + ("Valve (%)",)
 
     #: Units a setpoint may be given in, see :meth:`apply_setpoint`.
     UNITS: Tuple[str, ...] = ("sccm", "%")
@@ -976,19 +999,27 @@ class AeraMFC(NupylabInstrument):
             self._write_setpoint(index, 0.0, close=True)
             return 0.0, self._read_back(index, 0.0)
 
-    def read_channel(self, index: int) -> Tuple[float, float, float, float]:
-        """Read one channel's setpoint and flow.
+    def read_channel(
+        self, index: int
+    ) -> Tuple[float, float, float, float, float]:
+        """Read one channel's setpoint, flow and valve drive.
+
+        All three queries go out under one lock, since they are read together
+        every couple of seconds while the panel is monitoring.
 
         Args:
             index: channel index, counting from zero.
 
         Returns:
-            Setpoint in percent, flow in percent, setpoint in sccm and flow in
-            sccm, the last two NaN on a channel with no calibration. The order
-            matches :attr:`DATA_SUFFIXES`.
+            Setpoint in percent, flow in percent, setpoint in sccm, flow in
+            sccm, and valve drive in percent. The sccm pair is NaN on a
+            channel with no calibration, and the valve drive is NaN if it
+            could not be read, which does not fail the reading. The order
+            matches :attr:`PANEL_SUFFIXES`, whose first entries are
+            :attr:`DATA_SUFFIXES`.
 
         Raises:
-            NupylabError: if the channel cannot be read.
+            NupylabError: if the setpoint or the flow cannot be read.
         """
         with self.lock:
             channel = self._channel(index)
@@ -1001,14 +1032,24 @@ class AeraMFC(NupylabInstrument):
                         self.channel_name(index), self._addresses[index], e
                     )
                 ) from e
+            try:
+                drive = float(channel.valve_voltage)
+            except Exception as e:
+                # Worth going without rather than losing the flow reading
+                log.debug(
+                    "%s valve drive could not be read: %s",
+                    self.channel_name(index), e
+                )
+                drive = math.nan
         return (
             setpoint,
             flow,
             self.percent_to_flow(index, setpoint),
             self.percent_to_flow(index, flow),
+            drive,
         )
 
-    def read_all(self) -> List[Tuple[float, float, float, float]]:
+    def read_all(self) -> List[Tuple[float, float, float, float, float]]:
         """Read every channel's setpoint and flow.
 
         Returns:
@@ -1030,8 +1071,13 @@ class AeraMFC(NupylabInstrument):
             NupylabError: if a channel cannot be read, naming which.
         """
         data: List[DataTuple] = []
+        recorded = len(self.DATA_SUFFIXES)
         for index, readings in enumerate(self.read_all()):
-            for label, value in zip(self._label_groups[index], readings):
+            # The valve drive is read with them and shown in the panel, but
+            # is not one of this instrument's recorded columns
+            for label, value in zip(
+                self._label_groups[index], readings[:recorded]
+            ):
                 data.append(DataTuple(label, value))
         return data
 
@@ -1080,7 +1126,11 @@ class AeraMFC(NupylabInstrument):
         class AeraMFCPanel(QtWidgets.QGroupBox):
             plot_title = "MFC Flows"
             instrument_name = instrument.name
-            record_columns = list(instrument.data_label)
+            record_columns = [
+                "{} {}".format(name, suffix)
+                for name in instrument.channel_names
+                for suffix in instrument.PANEL_SUFFIXES
+            ]
             data_recorded = QtCore.Signal(list)
             #: Emitted when the bank is disconnected from anywhere, so that
             #: the button says so even when the tab did not do it
@@ -1171,7 +1221,8 @@ class AeraMFC(NupylabInstrument):
                 grid.setHorizontalSpacing(8)
                 grid.setVerticalSpacing(2)
                 for column, heading in (
-                    (1, "Setpoint"), (2, "Units"), (3, "Set"), (4, "Actual")
+                    (1, "Setpoint"), (2, "Units"), (3, "Set"), (4, "Actual"),
+                    (5, "Valve"),
                 ):
                     label = QtWidgets.QLabel(heading)
                     label.setStyleSheet("font-weight: bold;")
@@ -1179,6 +1230,8 @@ class AeraMFC(NupylabInstrument):
                         label.setAlignment(
                             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
                         )
+                    if heading == "Valve":
+                        label.setToolTip(VALVE_DRIVE_EXPLANATION)
                     grid.addWidget(label, 0, column)
 
                 self.gas_labels = []
@@ -1191,6 +1244,7 @@ class AeraMFC(NupylabInstrument):
                 self.set_flow_labels = []
                 self.actual_pct_labels = []
                 self.actual_flow_labels = []
+                self.valve_labels = []
                 for index in range(instrument.channel_count):
                     top = 1 + 2 * index
                     bottom = top + 1
@@ -1269,7 +1323,17 @@ class AeraMFC(NupylabInstrument):
                         labels.append(reading)
                         grid.addWidget(reading, bottom, column)
 
-                grid.setColumnStretch(5, 1)
+                    # One number for the MFC rather than one per line, so it
+                    # sits across both of them
+                    valve_label = QtWidgets.QLabel()
+                    valve_label.setAlignment(
+                        QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                    )
+                    valve_label.setToolTip(VALVE_DRIVE_EXPLANATION)
+                    self.valve_labels.append(valve_label)
+                    grid.addWidget(valve_label, top, 5, 2, 1)
+
+                grid.setColumnStretch(6, 1)
                 layout.addLayout(grid)
                 self._clear_readouts()
 
@@ -1362,12 +1426,17 @@ class AeraMFC(NupylabInstrument):
                 )
                 self.actual_flow_labels[index].setText(self._flow_text(flow))
 
+            def _show_valve(self, index, drive):
+                """Write how hard one MFC is working its valve."""
+                self.valve_labels[index].setText(self._percent_text(drive))
+
             def _clear_readouts(self):
                 for labels in (
                     self.set_pct_labels,
                     self.set_flow_labels,
                     self.actual_pct_labels,
                     self.actual_flow_labels,
+                    self.valve_labels,
                 ):
                     for label in labels:
                         label.setText(self.NO_READING)
@@ -1657,9 +1726,10 @@ class AeraMFC(NupylabInstrument):
                     flows = []
                     recorded = []
                     for index, values in enumerate(readings):
-                        set_pct, flow_pct, set_sccm, flow_sccm = values
+                        set_pct, flow_pct, set_sccm, flow_sccm, drive = values
                         self._show_set(index, set_pct, set_sccm)
                         self._show_actual(index, flow_pct, flow_sccm)
+                        self._show_valve(index, drive)
                         flows.append(flow_pct)
                         recorded.extend(values)
                     self.live_plot.add_points(flows)
