@@ -70,6 +70,13 @@ class LabJackSolenoid(NupylabInstrument):
     the control panel. The `channel` argument is kept so that a station wired
     to AO0 only needs a different value here.
 
+    A U12 cannot report what an analog output is doing, so the only way to read
+    the drive voltage is to jumper that output to an analog input and read the
+    input instead. S2 has such a jumper, and `sense_channel` says which input
+    it lands on. Note that this reads what the U12 is putting out, not that the
+    valve moved: a fault between the output and the coil reads the same as a
+    valve that is working.
+
     Attributes:
         u12: LabJack U12 driver instance, or None until connected.
         name: name of instrument.
@@ -86,6 +93,10 @@ class LabJackSolenoid(NupylabInstrument):
     STATE_LABELS: dict = {True: "Gas Mix 1", False: "Gas Mix 2"}
     #: Where :meth:`_record_write` keeps the last state this GUI applied.
     DEFAULT_STATE_FILE: Path = Path.home() / ".nupylab" / "solenoid_valve.json"
+    #: Analog input the jumper from the valve's output lands on.
+    DEFAULT_SENSE_CHANNEL: int = 0
+    #: Single-ended analog inputs a U12 offers, AI0 to AI7.
+    SENSE_CHANNELS: tuple = (0, 1, 2, 3, 4, 5, 6, 7)
 
     def __init__(
         self,
@@ -95,6 +106,7 @@ class LabJackSolenoid(NupylabInstrument):
         data_label: str = "Solenoid Valve Voltage (V)",
         name: str = "Solenoid Valve",
         state_file: Optional[Union[str, os.PathLike]] = None,
+        sense_channel: Optional[int] = DEFAULT_SENSE_CHANNEL,
     ) -> None:
         """Initialize solenoid valve connection parameters.
 
@@ -110,13 +122,18 @@ class LabJackSolenoid(NupylabInstrument):
             state_file: where to record each write, or None for
                 :attr:`DEFAULT_STATE_FILE`. Pass an empty string to record
                 nothing.
+            sense_channel: analog input, 0 to 7, that the valve's output is
+                jumpered to, or None if there is no jumper and the voltage
+                therefore cannot be read.
 
         Raises:
-            ValueError: if `channel` or `drive_voltage` is out of range.
+            ValueError: if `channel`, `drive_voltage` or `sense_channel` is out
+                of range.
         """
         self.u12: Optional[labjack_u12.U12] = None
         self._panel = None
         self._channel: int = self._check_channel(channel)
+        self._sense_channel: Optional[int] = self._check_sense_channel(sense_channel)
         self._drive_voltage: float = self._check_voltage(drive_voltage)
         self._id_num: int = int(id_num)
         self._state: bool = True
@@ -144,6 +161,18 @@ class LabJackSolenoid(NupylabInstrument):
         return channel
 
     @classmethod
+    def _check_sense_channel(cls, channel: Optional[int]) -> Optional[int]:
+        if channel is None:
+            return None
+        channel = int(channel)
+        if channel not in cls.SENSE_CHANNELS:
+            raise ValueError(
+                f"Sense channel must be one of {cls.SENSE_CHANNELS} or None, "
+                f"not {channel}."
+            )
+        return channel
+
+    @classmethod
     def _check_voltage(cls, voltage: float) -> float:
         voltage = float(voltage)
         if not 0.0 <= voltage <= cls.MAX_VOLTAGE:
@@ -167,6 +196,23 @@ class LabJackSolenoid(NupylabInstrument):
     def drive_voltage(self) -> float:
         """Get voltage written to power the valve, in volts."""
         return self._drive_voltage
+
+    @property
+    def sense_channel(self) -> Optional[int]:
+        """Get the analog input the valve's output is jumpered to, or None."""
+        return self._sense_channel
+
+    @property
+    def sense_channel_name(self) -> Optional[str]:
+        """Get the name of that analog input, `AI0` to `AI7`, or None."""
+        if self._sense_channel is None:
+            return None
+        return f"AI{self._sense_channel}"
+
+    @property
+    def can_sense(self) -> bool:
+        """Get whether the valve's drive voltage can be read back."""
+        return self._sense_channel is not None
 
     @property
     def state(self) -> bool:
@@ -368,7 +414,18 @@ class LabJackSolenoid(NupylabInstrument):
         self._connected = True
 
     def disconnect(self) -> None:
-        """Drop the driver reference, leaving the valve as it is."""
+        """Drop the driver reference, leaving the valve as it is.
+
+        Stops the panel monitoring the sense channel first, if it is, so that
+        its timer cannot fire against a LabJack that has gone away. Queueing
+        an experiment disconnects every control panel, so this is the usual
+        way monitoring ends.
+        """
+        if self._panel is not None:
+            try:
+                self._panel.stop_monitor()
+            except Exception as e:
+                log.debug("Solenoid valve monitor could not be stopped: %s", e)
         self.u12 = None
         self._connected = False
 
@@ -402,6 +459,71 @@ class LabJackSolenoid(NupylabInstrument):
             )
         self._applied_voltage = voltage
         self._record_write(self._state, voltage)
+
+    def read_input(self, channel: int) -> float:
+        """Read one single-ended analog input.
+
+        Reading an input leaves both analog outputs alone, so this can be
+        called while the valve is powered without disturbing it.
+
+        Args:
+            channel: analog input to read, 0 to 7.
+
+        Returns:
+            Voltage in volts. Single-ended inputs span -10 to 10 V in 12 bits,
+            so the reading is good to about 5 mV.
+
+        Raises:
+            NupylabError: if the LabJack is not connected or does not answer.
+            ValueError: if `channel` is not an analog input.
+        """
+        channel = self._check_sense_channel(channel)
+        if channel is None:
+            raise ValueError("A channel is needed to read an analog input.")
+        if self.u12 is None:
+            raise NupylabError("LabJack U12 is not connected.")
+        try:
+            with self.lock:
+                reading = self.u12.eAnalogIn(channel, idNum=self._id_num)
+        except Exception as e:
+            raise NupylabError(f"LabJack U12 AI{channel} could not be read: {e}") from e
+        return float(reading["voltage"])
+
+    def read_sense_voltage(self) -> float:
+        """Read the voltage on the valve's drive line through the jumper.
+
+        Returns:
+            Voltage in volts on :attr:`sense_channel`.
+
+        Raises:
+            NupylabError: if the LabJack is not connected or does not answer.
+            ValueError: if there is no sense channel to read.
+        """
+        if self._sense_channel is None:
+            raise ValueError(
+                f"{self.name} has no sense channel, so its drive voltage "
+                "cannot be read. Jumper the output to an analog input and "
+                "pass that input as `sense_channel`."
+            )
+        return self.read_input(self._sense_channel)
+
+    def survey_inputs(self) -> dict:
+        """Read every single-ended analog input once.
+
+        Useful for finding which input a jumper actually lands on, since that
+        is a question about the wiring that the U12 cannot answer directly.
+        An input that cannot be read is left out rather than failing the lot.
+
+        Returns:
+            Mapping of input name to voltage, for those that answered.
+        """
+        readings = {}
+        for channel in self.SENSE_CHANNELS:
+            try:
+                readings[f"AI{channel}"] = self.read_input(channel)
+            except Exception as e:
+                log.debug("AI%d could not be read: %s", channel, e)
+        return readings
 
     def set_parameters(self, state: bool) -> None:
         """Set the selector state to apply on the next call to :meth:`start`.
@@ -467,8 +589,13 @@ class LabJackSolenoid(NupylabInstrument):
 
         class SolenoidPanel(QtWidgets.QGroupBox):
             instrument_name = "Solenoid Valve"
-            record_columns = ["Solenoid Valve Voltage (V)"]
+            record_columns = [
+                "Written Voltage (V)",
+                "Sense Voltage (V)",
+            ]
             data_recorded = QtCore.Signal(list)
+            #: How often monitoring reads the sense channel, in milliseconds.
+            MONITOR_INTERVAL_MS = 1000
             # Short enough that a column of its own would be mostly empty, so
             # it goes under the panel before it, the pO2 sensor on S2
             stack_with_previous = True
@@ -476,6 +603,8 @@ class LabJackSolenoid(NupylabInstrument):
             def __init__(self):
                 super().__init__("Solenoid Valve - LabJack U12")
                 self._abort_callback = abort_callback
+                self._last_sense = None
+                self._surveyed = False
                 instrument._panel = self
                 # The output and the drive voltage are set in code rather than
                 # from here, so they are stated where they can still be seen
@@ -515,8 +644,45 @@ class LabJackSolenoid(NupylabInstrument):
                 self.apply_btn = QtWidgets.QPushButton("Apply")
                 self.apply_btn.clicked.connect(self.apply_state)
                 btn_layout.addWidget(self.apply_btn)
+
+                # The sense channel is a jumper from the valve's output to an
+                # analog input, since a U12 will not report an output itself
+                self.monitor_btn = QtWidgets.QPushButton("Monitor")
+                self.monitor_btn.setCheckable(True)
+                self.monitor_btn.setEnabled(instrument.can_sense)
+                self.monitor_btn.setStyleSheet(
+                    "QPushButton:checked { background-color: #cc0000; "
+                    "color: white; }"
+                )
+                self.monitor_btn.setToolTip(
+                    f"Read {instrument.sense_channel_name} every "
+                    f"{self.MONITOR_INTERVAL_MS / 1000:.0f} s"
+                    if instrument.can_sense
+                    else "No analog input is jumpered to the valve's output"
+                )
+                self.monitor_btn.clicked.connect(self.toggle_monitor)
+                btn_layout.addWidget(self.monitor_btn)
                 btn_layout.addStretch()
                 layout.addLayout(btn_layout)
+
+                self.sense_label = QtWidgets.QLabel(
+                    f"{instrument.sense_channel_name}: not monitoring"
+                    if instrument.can_sense
+                    else "No sense channel"
+                )
+                # Wraps like the lines below it, since a failure puts a whole
+                # error message here and the column is narrow
+                self.sense_label.setWordWrap(True)
+                self.sense_label.setMinimumHeight(
+                    2 * self.sense_label.fontMetrics().height()
+                )
+                layout.addWidget(self.sense_label)
+
+                self.monitor_timer = QtCore.QTimer(self)
+                # Read on the GUI thread rather than a worker, since the UW
+                # driver is the one the station's LabVIEW calls in its UI
+                # thread, and a read takes milliseconds
+                self.monitor_timer.timeout.connect(self.read_sense)
 
                 # One status line rather than separate applied and status
                 # lines, which only ever said the same thing, and the panel is
@@ -561,6 +727,16 @@ class LabJackSolenoid(NupylabInstrument):
             def _selected_state(self) -> bool:
                 return instrument.state_for(self.state_combo.currentText())
 
+            def _emit_row(self):
+                """Send one row to the recorder, blank where there is no value."""
+                written = instrument.applied_voltage
+                self.data_recorded.emit(
+                    [
+                        "" if written is None else f"{written:.3f}",
+                        "" if self._last_sense is None else f"{self._last_sense:.3f}",
+                    ]
+                )
+
             def _show_applied(self):
                 voltage = instrument.applied_voltage
                 self.record_label.setText(instrument.last_record_summary())
@@ -572,9 +748,63 @@ class LabJackSolenoid(NupylabInstrument):
                     f"{instrument.label_for(instrument.state)}, "
                     f"{instrument.channel_name} at {voltage:.2f} V"
                 )
-                self.data_recorded.emit([f"{voltage:.3f}"])
 
             # Actions #
+
+            def toggle_monitor(self, checked):
+                if not checked:
+                    self.stop_monitor()
+                    return
+                try:
+                    if not instrument.connected:
+                        instrument.connect()
+                except Exception as e:
+                    self.stop_monitor()
+                    self.sense_label.setText(f"Cannot monitor: {e}")
+                    self.sense_label.setStyleSheet("color: #cc0000;")
+                    _control_log.error("Solenoid valve monitor failed: %s", e)
+                    return
+                # Read every input once, so that a jumper on an input other
+                # than the configured one can be found without a multimeter
+                if not self._surveyed:
+                    self._surveyed = True
+                    readings = instrument.survey_inputs()
+                    if readings:
+                        _control_log.info(
+                            "LabJack analog inputs: %s",
+                            ", ".join(
+                                f"{name} {volts:.2f} V"
+                                for name, volts in readings.items()
+                            ),
+                        )
+                self.monitor_btn.setText("Monitoring...")
+                self.monitor_timer.start(self.MONITOR_INTERVAL_MS)
+                _control_log.info(
+                    "Solenoid valve monitoring %s", instrument.sense_channel_name
+                )
+                self.read_sense()
+
+            def stop_monitor(self):
+                """Stop monitoring, whether the user asked or the LabJack went."""
+                self.monitor_timer.stop()
+                self.monitor_btn.setChecked(False)
+                self.monitor_btn.setText("Monitor")
+
+            def read_sense(self):
+                try:
+                    voltage = instrument.read_sense_voltage()
+                except Exception as e:
+                    self.stop_monitor()
+                    self.sense_label.setText(f"Cannot monitor: {e}")
+                    self.sense_label.setStyleSheet("color: #cc0000;")
+                    _control_log.error("Solenoid valve sense read failed: %s", e)
+                    return
+                self._last_sense = voltage
+                self.sense_label.setStyleSheet("")
+                self.sense_label.setText(
+                    f"{instrument.sense_channel_name}: {voltage:.2f} V"
+                )
+                self._emit_row()
 
             def apply_state(self):
                 self._abort_if_needed()
@@ -584,6 +814,12 @@ class LabJackSolenoid(NupylabInstrument):
                         instrument.connect()
                     instrument.set_state(state)
                     self._show_applied()
+                    # Reading straight back confirms the write landed, and
+                    # keeps one row per apply rather than two
+                    if self.monitor_timer.isActive():
+                        self.read_sense()
+                    else:
+                        self._emit_row()
                     _control_log.info(
                         "Solenoid valve set to %s, %s written %.2f V",
                         instrument.label_for(state),
