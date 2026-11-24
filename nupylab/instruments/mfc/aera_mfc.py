@@ -696,7 +696,11 @@ class AeraMFC(NupylabInstrument):
         An MFC in digital mode follows the setpoint written to it; one in
         analog mode follows the voltage on its analog input. Switching is a
         change to how the instrument behaves, not just to what this program
-        reads, so nothing here does it on its own.
+        reads: an MFC moved to digital stops following whatever was driving
+        its analog input. Nothing in the GUI calls this, deliberately, so
+        that it cannot happen by a mis-click; it is here for a script, and
+        for the warning the bank logs when it finds a channel in analog
+        mode.
 
         Args:
             index: channel index, counting from zero, or `None` for every
@@ -1190,28 +1194,6 @@ class AeraMFC(NupylabInstrument):
                 )
                 self.clear_btn.clicked.connect(self.clear_faults)
                 top_row.addWidget(self.clear_btn)
-
-                self.digital_btn = QtWidgets.QPushButton("Digital Mode")
-                self.digital_btn.setToolTip(
-                    "Put every MFC under this program's control, so that it "
-                    "follows the setpoint written to it."
-                )
-                self.digital_btn.clicked.connect(
-                    lambda _checked=False: self.set_control_mode(True)
-                )
-                top_row.addWidget(self.digital_btn)
-
-                self.analog_btn = QtWidgets.QPushButton("Analog Mode")
-                self.analog_btn.setToolTip(
-                    "Hand every MFC back to the voltage on its analog input. "
-                    "It will then ignore any setpoint written from here, and "
-                    "flow whatever that voltage asks for, which is nothing "
-                    "if nothing is driving it."
-                )
-                self.analog_btn.clicked.connect(
-                    lambda _checked=False: self.set_control_mode(False)
-                )
-                top_row.addWidget(self.analog_btn)
                 layout.addLayout(top_row)
 
                 # Two lines per MFC: what it is being set to on the first,
@@ -1561,53 +1543,6 @@ class AeraMFC(NupylabInstrument):
                 )
                 self.update_readings()
 
-            def set_control_mode(self, digital):
-                """Put every MFC in digital or analog mode.
-
-                Args:
-                    digital: `True` to have them follow the setpoint written
-                        from here, `False` to hand them back to the voltage
-                        on their analog input.
-                """
-                self._abort_if_needed()
-                wanted = "digital" if digital else "analog"
-                try:
-                    self._ensure_connected()
-                    instrument.set_digital_mode(enabled=digital)
-                    reported = instrument.read_control_modes()
-                except Exception as e:
-                    self._show_status(
-                        "{} mode not set — {}".format(wanted.title(), e),
-                        steady=False,
-                    )
-                    _control_log.error(
-                        "Aera MFC %s mode failed: %s", wanted, e
-                    )
-                    return
-                self.refresh_labels()
-                refused = [
-                    instrument.channel_name(index)
-                    for index, is_digital in enumerate(reported)
-                    if is_digital is not None and is_digital is not digital
-                ]
-                if refused:
-                    self._show_status(
-                        "{} did not take {} mode".format(
-                            ", ".join(refused), wanted
-                        ),
-                        steady=False,
-                    )
-                    _control_log.warning(
-                        "%s still report the other control mode after being "
-                        "put in %s mode", ", ".join(refused), wanted
-                    )
-                    return
-                self._show_status("Every MFC is in {} mode".format(wanted))
-                _control_log.info(
-                    "Every Aera MFC is in %s mode, confirmed by reading it "
-                    "back", wanted
-                )
-
             def clear_faults(self):
                 """Clear every MFC's latched alarms and errors."""
                 self._abort_if_needed()
@@ -1650,8 +1585,9 @@ class AeraMFC(NupylabInstrument):
                     )
                     _control_log.warning(
                         "%s is in analog mode and takes its setpoint from its "
-                        "analog input. Press Digital Mode to control it from "
-                        "here.", name
+                        "analog input, so nothing set here reaches it. Put it "
+                        "in digital mode on the instrument, or with "
+                        "`set_digital_mode`.", name
                     )
                     return False
                 if not asked:
