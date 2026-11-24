@@ -588,6 +588,12 @@ class InstrumentControlWidget(QtWidgets.QWidget):
 
     _BUSY_MIN_MS = 300  # keep busy shading visible for fast actions
 
+    #: Width in pixels the Data Recording pane is held to where it stands as a
+    #: column beside the instrument panels. What is recording is named in it,
+    #: which with several instruments ticked is longer than the pane wants to
+    #: be, so it is capped and the line wraps inside it.
+    RECORDING_PANE_WIDTH = 240
+
     def _add_button_feedback(self):
         self.setStyleSheet(
             self.styleSheet()
@@ -707,9 +713,22 @@ class InstrumentControlWidget(QtWidgets.QWidget):
 
         self._rec_status = QtWidgets.QLabel("Not recording")
         self._rec_status.setStyleSheet("color: gray;")
+        # Names what is recording, or what failed to start, either of which
+        # runs past the width of the pane. It wraps rather than stretching it,
+        # and keeps room for the lines it wraps onto, since a layout sizing a
+        # wrapped label from its one-line hint would leave them clipped.
+        self._rec_status.setWordWrap(True)
+        self._rec_status.setMinimumHeight(
+            (3 if self._recording_beside_panels else 2)
+            * self._rec_status.fontMetrics().height()
+        )
         rec_layout.addWidget(self._rec_status)
 
         rec_group.setLayout(rec_layout)
+        if self._recording_beside_panels:
+            # A column of its own, so it is held to a width the status line
+            # can wrap inside rather than one it can stretch
+            rec_group.setMaximumWidth(self.RECORDING_PANE_WIDTH)
 
         if self._recording_beside_panels:
             panels_layout.addWidget(rec_group)
