@@ -87,6 +87,17 @@ def parse_args(argv):
         default=400,
         help="milliseconds to wait for an answer. Default: 400.",
     )
+    parser.add_argument(
+        "--command",
+        action="append",
+        dest="commands",
+        metavar="COMMAND",
+        help="send one command and print the reply, e.g. 07RVM, instead of "
+        "scanning. The address goes in front, and the STX byte and the "
+        "carriage return are added. Repeat the option to send several in "
+        "order down one open port. THIS CAN WRITE: 07SVO forces a valve "
+        "fully open, which on an MFC means flowing as hard as it can.",
+    )
     return parser.parse_args(argv)
 
 
@@ -281,6 +292,47 @@ def scan_port(opened, port, addresses, baud, timeout):
     return found, opener
 
 
+def send_commands(opened, port, commands, baud, timeout):
+    """Send commands down one port in order and print what comes back.
+
+    For trying a command against the hardware when it is not clear which one
+    the firmware wants, with the vendor's manual or its own utility to hand.
+    Nothing is interpreted: the reply is printed as it arrives.
+
+    Args:
+        opened: the backends, as :func:`managers` returns them.
+        port: the resource to open.
+        commands: commands to send, each with its address in front.
+        baud: baud rate.
+        timeout: milliseconds to wait for an answer.
+
+    Returns:
+        Zero if every command was answered.
+    """
+    instrument, opener = open_port(opened, port, baud, timeout)
+    if instrument is None:
+        print("{} could not be opened. {}".format(port, opener))
+        return 1
+    print("{} opened with {}".format(port, opener))
+    answered = True
+    try:
+        for command in commands:
+            print("  -> {!r}".format(command))
+            try:
+                reply = instrument.query("\x02{}".format(command)).strip()
+            except pyvisa.Error as e:
+                print("     no reply: {}".format(e))
+                answered = False
+                continue
+            print("     <- {!r}".format(reply))
+    finally:
+        try:
+            instrument.close()
+        except Exception:
+            pass
+    return 0 if answered else 1
+
+
 def main(argv=None):
     """Scan the ports and say what was found."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
@@ -289,6 +341,17 @@ def main(argv=None):
     if not opened:
         print("No VISA backend could be loaded at all.")
         return 1
+
+    if args.commands:
+        if len(args.ports) != 1:
+            print(
+                "Name exactly one port to send commands to, e.g. "
+                "ASRL6::INSTR --command 07RVM"
+            )
+            return 1
+        return send_commands(
+            opened, args.ports[0], args.commands, args.baud, args.timeout
+        )
 
     if args.ports:
         ports = list(args.ports)

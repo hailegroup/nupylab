@@ -585,6 +585,32 @@ class AeraMFC(NupylabInstrument):
         """
         return self._digital[index]
 
+    def read_control_modes(self) -> List[Optional[bool]]:
+        """Read whether each MFC is in digital mode, now rather than at connect.
+
+        Returns:
+            Whether each channel is in digital mode, in channel order, with
+            `None` where it could not be read.
+
+        Raises:
+            NupylabError: if the bank is not connected.
+        """
+        with self.lock:
+            for index in range(self.channel_count):
+                try:
+                    self._digital[index] = bool(
+                        self._channel(index).digital_mode_enabled
+                    )
+                except NupylabError:
+                    raise
+                except Exception as e:
+                    self._digital[index] = None
+                    log.warning(
+                        "%s control mode could not be read: %s",
+                        self.channel_name(index), e
+                    )
+        return list(self._digital)
+
     def read_valve_mode(self, index: int) -> str:
         """Read what one MFC's valve is being told to do.
 
@@ -1081,13 +1107,25 @@ class AeraMFC(NupylabInstrument):
 
                 self.digital_btn = QtWidgets.QPushButton("Digital Mode")
                 self.digital_btn.setToolTip(
-                    "Put every MFC under this program's control. One in "
-                    "analog mode follows the voltage on its analog input "
-                    "instead, and stores a setpoint written to it without "
-                    "acting on it."
+                    "Put every MFC under this program's control, so that it "
+                    "follows the setpoint written to it."
                 )
-                self.digital_btn.clicked.connect(self.set_digital_mode)
+                self.digital_btn.clicked.connect(
+                    lambda _checked=False: self.set_control_mode(True)
+                )
                 top_row.addWidget(self.digital_btn)
+
+                self.analog_btn = QtWidgets.QPushButton("Analog Mode")
+                self.analog_btn.setToolTip(
+                    "Hand every MFC back to the voltage on its analog input. "
+                    "It will then ignore any setpoint written from here, and "
+                    "flow whatever that voltage asks for, which is nothing "
+                    "if nothing is driving it."
+                )
+                self.analog_btn.clicked.connect(
+                    lambda _checked=False: self.set_control_mode(False)
+                )
+                top_row.addWidget(self.analog_btn)
                 layout.addLayout(top_row)
 
                 # Two lines per MFC: what it is being set to on the first,
@@ -1418,22 +1456,51 @@ class AeraMFC(NupylabInstrument):
                 )
                 self.update_readings()
 
-            def set_digital_mode(self):
-                """Put every MFC under this program's control."""
+            def set_control_mode(self, digital):
+                """Put every MFC in digital or analog mode.
+
+                Args:
+                    digital: `True` to have them follow the setpoint written
+                        from here, `False` to hand them back to the voltage
+                        on their analog input.
+                """
                 self._abort_if_needed()
+                wanted = "digital" if digital else "analog"
                 try:
                     self._ensure_connected()
-                    instrument.set_digital_mode()
+                    instrument.set_digital_mode(enabled=digital)
+                    reported = instrument.read_control_modes()
                 except Exception as e:
                     self._show_status(
-                        "Digital mode not set — {}".format(e), steady=False
+                        "{} mode not set — {}".format(wanted.title(), e),
+                        steady=False,
                     )
-                    _control_log.error("Aera MFC digital mode failed: %s", e)
+                    _control_log.error(
+                        "Aera MFC %s mode failed: %s", wanted, e
+                    )
                     return
                 self.refresh_labels()
-                self._show_status("Every MFC is in digital mode")
+                refused = [
+                    instrument.channel_name(index)
+                    for index, is_digital in enumerate(reported)
+                    if is_digital is not None and is_digital is not digital
+                ]
+                if refused:
+                    self._show_status(
+                        "{} did not take {} mode".format(
+                            ", ".join(refused), wanted
+                        ),
+                        steady=False,
+                    )
+                    _control_log.warning(
+                        "%s still report the other control mode after being "
+                        "put in %s mode", ", ".join(refused), wanted
+                    )
+                    return
+                self._show_status("Every MFC is in {} mode".format(wanted))
                 _control_log.info(
-                    "Every Aera MFC now takes its setpoint from this program"
+                    "Every Aera MFC is in %s mode, confirmed by reading it "
+                    "back", wanted
                 )
 
             def clear_faults(self):
