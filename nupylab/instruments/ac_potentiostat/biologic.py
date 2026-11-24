@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import re
 import logging
+import time
 from typing import Sequence, Union, TYPE_CHECKING, Optional, List, Type, Callable
 
 import numpy as np
@@ -74,6 +75,10 @@ class Biologic(NupylabInstrument):
         self._model = model
         self._eclib_path = eclib_path
         self._panel = None
+        # Set by the control panel, so that a disconnection from elsewhere,
+        # e.g. when an experiment is queued, reaches its button. Emitting a Qt
+        # signal is safe from any thread; touching widgets is not.
+        self._disconnected = None
         super().__init__(data_label, name)
 
     def set_connection(self, port: str, model: str) -> None:
@@ -127,6 +132,11 @@ class Biologic(NupylabInstrument):
                     pass
             self._measuring_ocv = False
             self._connected = False
+        if self._disconnected is not None:
+            try:
+                self._disconnected()
+            except Exception:
+                pass
 
     def _initialize_eis(
         self,
@@ -391,6 +401,14 @@ class Biologic(NupylabInstrument):
         class BiologicPanel(QtWidgets.QGroupBox):
             plot_title = "EIS — Nyquist"
             instrument_name = "Biologic"
+            CONNECT_TEXT = "Connect"
+            DISCONNECT_TEXT = "Disconnect"
+            # A double click would otherwise connect and disconnect again; a
+            # second toggle this soon after one lands is ignored
+            TOGGLE_GUARD_S = 1.0
+            #: Emitted when the potentiostat is closed from anywhere, so that
+            #: the button says so even when the panel did not do it
+            connection_closed = QtCore.Signal()
             record_columns = [
                 "Frequency (Hz)",
                 "Z_re (ohm)",
@@ -409,6 +427,7 @@ class Biologic(NupylabInstrument):
                 self._running = False
                 self._final_poll = False
                 self._abort_callback = abort_callback
+                self._last_toggle = 0.0
                 self._z_re: List[float] = []
                 self._z_im: List[float] = []
                 self.live_plot = LivePlotWidget(
@@ -420,7 +439,11 @@ class Biologic(NupylabInstrument):
                 # Ewe/I readout while connected, independent of EIS runs
                 self.monitor_timer = QtCore.QTimer()
                 self.monitor_timer.timeout.connect(self.update_monitor)
+                self.connection_closed.connect(
+                    lambda: self._set_connected(False)
+                )
                 instrument._panel = self
+                instrument._disconnected = self.connection_closed.emit
 
             def _setup_ui(self):
                 layout = QtWidgets.QFormLayout()
@@ -436,22 +459,22 @@ class Biologic(NupylabInstrument):
                 self.initial_step = UnitEntry(
                     POTENTIAL_UNITS, -10, 10, 0, decimals=4, default="mV"
                 )
-                layout.addRow("Initial Ewe or I:", self.initial_step)
+                self._labelled_row(layout, "Initial:", self.initial_step, "Initial Ewe for PEIS and SPEIS, or initial I for GEIS and SGEIS")
 
                 self.duration_step = UnitEntry(
                     (("min", 1.0),), 0, 9999, 0, decimals=2
                 )
-                layout.addRow("Hold before EIS:", self.duration_step)
+                self._labelled_row(layout, "Hold:", self.duration_step, "How long to hold the initial value before EIS")
 
                 self.max_freq = UnitEntry(
                     FREQUENCY_UNITS, 1e-5, 7e6, 1e6, decimals=5, default="Hz"
                 )
-                layout.addRow("Max Frequency:", self.max_freq)
+                layout.addRow("Max freq:", self.max_freq)
 
                 self.min_freq = UnitEntry(
                     FREQUENCY_UNITS, 1e-5, 7e6, 1, decimals=5, default="Hz"
                 )
-                layout.addRow("Min Frequency:", self.min_freq)
+                layout.addRow("Min freq:", self.min_freq)
 
                 self.amplitude = UnitEntry(
                     POTENTIAL_UNITS, 0.0001, 1.0, 0.01, decimals=4, default="mV"
@@ -461,33 +484,88 @@ class Biologic(NupylabInstrument):
                 self.ppd = QtWidgets.QSpinBox()
                 self.ppd.setRange(1, 100)
                 self.ppd.setValue(10)
-                layout.addRow("Points per Decade:", self.ppd)
+                layout.addRow("Points/decade:", self.ppd)
 
                 self.record_time = UnitEntry(
                     (("s", 1.0),), 0.01, 3600, 1, decimals=2
                 )
-                layout.addRow("Record Time:", self.record_time)
+                self._labelled_row(layout, "Record every:", self.record_time, "How often a point is recorded")
 
                 btn_layout = QtWidgets.QHBoxLayout()
-                self.connect_btn = QtWidgets.QPushButton("Connect")
+                btn_layout.setSpacing(4)
+                self.connect_btn = QtWidgets.QPushButton(self.CONNECT_TEXT)
+                self.connect_btn.setToolTip(
+                    "Open the potentiostat, or close it if it is already open."
+                )
                 self.run_btn = QtWidgets.QPushButton("Run EIS")
                 self.stop_btn = QtWidgets.QPushButton("Stop")
-                self.disconnect_btn = QtWidgets.QPushButton("Disconnect")
-                self.connect_btn.clicked.connect(self.connect_instrument)
+                self.connect_btn.clicked.connect(self.toggle_connection)
                 self.run_btn.clicked.connect(self.run_eis)
                 self.stop_btn.clicked.connect(self.stop_eis)
-                self.disconnect_btn.clicked.connect(self.disconnect_instrument)
                 btn_layout.addWidget(self.connect_btn)
                 btn_layout.addWidget(self.run_btn)
                 btn_layout.addWidget(self.stop_btn)
-                btn_layout.addWidget(self.disconnect_btn)
                 layout.addRow(btn_layout)
 
                 self.ewe_label = QtWidgets.QLabel("Ewe: —    I: —")
                 self.status_label = QtWidgets.QLabel("Status: Not connected")
+                # An error message is as long as it is, and this panel sits
+                # beside three others, so it wraps rather than widening it
+                self.status_label.setWordWrap(True)
+                self.status_label.setMinimumHeight(
+                    2 * self.status_label.fontMetrics().height()
+                )
                 layout.addRow(self.ewe_label)
                 layout.addRow(self.status_label)
                 self.setLayout(layout)
+
+            @staticmethod
+            def _labelled_row(layout, title, field, tip):
+                """Add a form row whose label carries an explanation.
+
+                The labels are short, to keep the panel narrow, so what each
+                one means goes in a tooltip on both halves of the row rather
+                than in the label itself.
+
+                Args:
+                    layout: the form layout to add to.
+                    title: the label text.
+                    field: the input widget.
+                    tip: what to say about it on hover.
+                """
+                label = QtWidgets.QLabel(title)
+                label.setToolTip(tip)
+                field.setToolTip(tip)
+                layout.addRow(label, field)
+
+            def _set_connected(self, connected):
+                """Keep the single button in step with the instrument."""
+                self.connect_btn.setText(
+                    self.DISCONNECT_TEXT if connected else self.CONNECT_TEXT
+                )
+
+            def toggle_connection(self):
+                """Open the potentiostat, or close it if it is already open.
+
+                Ignores a repeat click that lands within
+                :attr:`TOGGLE_GUARD_S` of the previous one finishing, so that
+                a double click cannot connect and disconnect again. The
+                window is measured from the end of the previous action, since
+                connecting blocks the event loop while it runs.
+                """
+                now = time.monotonic()
+                if now - self._last_toggle < self.TOGGLE_GUARD_S:
+                    _control_log.info(
+                        "Ignoring repeat click on the Biologic connect button"
+                    )
+                    return
+                try:
+                    if instrument.connected:
+                        self.disconnect_instrument()
+                    else:
+                        self.connect_instrument()
+                finally:
+                    self._last_toggle = time.monotonic()
 
             def _on_technique_changed(self, technique):
                 # PEIS/SPEIS are potential controlled, GEIS/SGEIS current
@@ -510,6 +588,7 @@ class Biologic(NupylabInstrument):
                 try:
                     instrument.connect()
                     self.monitor_timer.start(2000)
+                    self._set_connected(True)
                     self.status_label.setText("Status: Connected")
                     _control_log.info(
                         "Biologic %s connected on %s",
@@ -529,6 +608,7 @@ class Biologic(NupylabInstrument):
                             worker.wait(2000)
                     instrument.disconnect()
                     self._set_running(False)
+                    self._set_connected(False)
                     self.status_label.setText("Status: Disconnected")
                     self.ewe_label.setText("Ewe: —    I: —")
                     _control_log.info("Biologic disconnected")
