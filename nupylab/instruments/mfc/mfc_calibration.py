@@ -22,7 +22,15 @@ roughly 20 percent O2 in nitrogen, is close enough to use for 10 percent O2 in
 nitrogen, and recording both says which it is: `calibration_gas` is what
 really went through the MFC, `gas` is what the row is being used for. A row
 where they differ is a substitution, and :attr:`MFCCalibration.substituted`
-says so, so that it can be seen rather than forgotten.
+says so, so that it can be seen rather than forgotten. Taking one gas's
+calibration into use for another writes a row of its own saying so, rather
+than quietly pointing at the first gas's row, which is what those two columns
+are for.
+
+The last column is a comment, for whatever the numbers do not say: which flow
+meter it was checked against, what the inlet pressure was, that the MFC had
+just been serviced. A file written before the column existed is read without
+it.
 
 Gases are offered from a list which starts at :data:`DEFAULT_GASES`, grows with
 every gas named in the calibration file, and grows again with any the user
@@ -70,7 +78,13 @@ CALIBRATION_FIELDS: Tuple[str, ...] = (
     "gas",
     "m",
     "b",
+    "comment",
 )
+
+#: Columns a row must have. The comment came later, so a file written before
+#: it is read without one rather than refused: the rows already in a
+#: station's file are the point of the file.
+REQUIRED_FIELDS: Tuple[str, ...] = CALIBRATION_FIELDS[:-1]
 
 #: Gases offered before anything has been calibrated in them. The list also
 #: holds every gas named in the calibration file and every gas the user has
@@ -114,6 +128,7 @@ class MFCCalibration(NamedTuple):
     gas: str = ""
     calibrated_by: str = ""
     date: Optional[date] = None
+    comment: str = ""
 
     # What it converts #
 
@@ -225,6 +240,7 @@ class MFCCalibration(NamedTuple):
             self.gas,
             repr(self.m),
             repr(self.b),
+            self.comment,
         ]
 
 
@@ -258,19 +274,24 @@ def _parse_row(row: Sequence[str], path: str, number: int) -> MFCCalibration:
         NupylabError: if the row is short, or its date or coefficients cannot
             be read.
     """
-    if len(row) < len(CALIBRATION_FIELDS):
+    if len(row) < len(REQUIRED_FIELDS):
         raise NupylabError(
-            "MFC calibration file {}, row {}: expected {} columns ({}), "
-            "found {}.".format(
+            "MFC calibration file {}, row {}: expected at least {} columns "
+            "({}), found {}.".format(
                 path,
                 number,
-                len(CALIBRATION_FIELDS),
-                ", ".join(CALIBRATION_FIELDS),
+                len(REQUIRED_FIELDS),
+                ", ".join(REQUIRED_FIELDS),
                 len(row),
             )
         )
     taken, calibrator, mfc, calibration_gas, gas, m, b = (
-        cell.strip() for cell in row[: len(CALIBRATION_FIELDS)]
+        cell.strip() for cell in row[: len(REQUIRED_FIELDS)]
+    )
+    comment = (
+        row[len(REQUIRED_FIELDS)].strip()
+        if len(row) > len(REQUIRED_FIELDS)
+        else ""
     )
     try:
         when = _parse_date(taken)
@@ -294,6 +315,7 @@ def _parse_row(row: Sequence[str], path: str, number: int) -> MFCCalibration:
         gas=gas,
         calibrated_by=calibrator,
         date=when,
+        comment=comment,
     )
 
 

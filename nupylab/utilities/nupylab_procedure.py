@@ -206,7 +206,18 @@ class NupylabProcedure(Procedure):
         counter: int = 0
         while not self.should_stop() and not self.finished:
             if counter != self._counter:
-                queue.put(process(*args))
+                try:
+                    queue.put(process(*args))
+                except Exception as e:
+                    # Tried again on the next cycle rather than given up on.
+                    # A read that fails is usually a timeout the next one
+                    # gets through, and an instrument that cannot be reached
+                    # at all leaves its columns empty while the rest of the
+                    # step carries on, which is what every other part of this
+                    # package does with an instrument it cannot reach.
+                    log.debug(
+                        "Reading failed, trying again next cycle: %s", e
+                    )
                 counter = self._counter
                 sleep_time: float = self.record_time * self._counter - (
                     monotonic() - self._start_time

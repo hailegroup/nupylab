@@ -183,6 +183,13 @@ class AddMFCCalibrationDialog(QtWidgets.QDialog):
             box.currentTextChanged.connect(self._show_substitution)
         self._show_substitution()
 
+        self.comment_edit = QtWidgets.QLineEdit()
+        self.comment_edit.setPlaceholderText(
+            "anything the numbers do not say, e.g. checked against the "
+            "bubble meter at 20 psi"
+        )
+        layout.addRow("Comment:", self.comment_edit)
+
         self.error_label = QtWidgets.QLabel()
         self.error_label.setStyleSheet("color: red;")
         self.error_label.setWordWrap(True)
@@ -258,6 +265,7 @@ class AddMFCCalibrationDialog(QtWidgets.QDialog):
             # Read field by field, since the bindings differ over how a QDate
             # converts to a Python date
             date=date_type(chosen.year(), chosen.month(), chosen.day()),
+            comment=self.comment_edit.text().strip(),
         )
         # A gas named here is worth offering from now on
         for name in (calibration_gas, gas):
@@ -277,6 +285,7 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
         "Used For Gas",
         "m (sccm/%)",
         "b (sccm)",
+        "Comment",
     )
 
     def __init__(
@@ -435,6 +444,7 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
                 calibration.gas,
                 "{:g}".format(calibration.m),
                 "{:g}".format(calibration.b),
+                calibration.comment,
             )
             for column, text in enumerate(cells):
                 item = QtWidgets.QTableWidgetItem(text)
@@ -463,12 +473,72 @@ class SelectMFCCalibrationDialog(QtWidgets.QDialog):
             return self._shown[row]
         return None
 
+    def _record_reuse(self, source: MFCCalibration) -> Optional[MFCCalibration]:
+        """Write a row using `source`'s coefficients for the gas in use.
+
+        Reusing one gas's calibration for another is allowed and sometimes
+        right, which is why the file keeps the gas a calibration was taken in
+        apart from the gas it is used for. Recording it, rather than only
+        pointing at the other gas's row, is what makes those two columns
+        worth having: the new row says what was measured, what it is being
+        used for, and that the two differ.
+
+        The date is the day the measurement was taken, not today, so that the
+        reused row is as old as the numbers in it and goes stale with them.
+
+        Args:
+            source: the calibration whose coefficients to reuse.
+
+        Returns:
+            The row to take into use, which is an existing one if this
+            substitution has been recorded before, or `None` if it could not
+            be written.
+        """
+        note = "Reused from the {} calibration of {}".format(
+            source.calibration_gas or "unknown gas", source.short_date
+        )
+        reused = source._replace(
+            gas=self._gas,
+            comment="{}; {}".format(source.comment, note)
+            if source.comment
+            else note,
+        )
+        for existing in self._all:
+            if (
+                existing.is_for(self._mfc, self._gas)
+                and existing.date == reused.date
+                and existing.m == reused.m
+                and existing.b == reused.b
+                and match_key(existing.calibration_gas)
+                == match_key(reused.calibration_gas)
+            ):
+                return existing  # Recorded already, no need for it twice
+        try:
+            append_calibration(reused, self._path)
+        except Exception as e:
+            self.status_label.setText(str(e))
+            self.status_label.setStyleSheet("color: red;")
+            return None
+        log.info(
+            "Recorded %s as a %s calibration for %s used for %s: %s",
+            self._path, reused.calibration_gas, reused.mfc, reused.gas, note,
+        )
+        return reused
+
     def _on_use(self) -> None:
-        """Take the selected calibration into use and close."""
+        """Take the selected calibration into use and close.
+
+        One taken in a different gas from the one in use is recorded against
+        the gas in use first, see :meth:`_record_reuse`.
+        """
         calibration = self._selected()
         if calibration is None:
             self.status_label.setText("Select a calibration first.")
             return
+        if self._gas and match_key(calibration.gas) != match_key(self._gas):
+            calibration = self._record_reuse(calibration)
+            if calibration is None:
+                return  # Could not be written, and the error says so
         self._chosen = calibration
         self.accept()
 
